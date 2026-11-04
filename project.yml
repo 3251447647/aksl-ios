@@ -1,6 +1,7 @@
 name: AKChat
 options:
   bundleIdPrefix: com.yixin
+  projectFormat: xcode15_0
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
