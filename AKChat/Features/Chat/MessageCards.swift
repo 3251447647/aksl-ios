@@ -70,7 +70,7 @@ struct MessageBody: View {
 
     private var imageBubble: some View {
         Group {
-            if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? message.content)) {
+            if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? message.content ?? "")) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
                         image.resizable().scaledToFill()

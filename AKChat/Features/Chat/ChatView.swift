@@ -268,9 +268,9 @@ struct ChatView: View {
             isGroup: isGroup,
             member: members.first { $0.uid == msg.fromUid },
             myAvatar: app.user?.avatar,
-            playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content),
+            playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content ?? ""),
             onVoiceTap: {
-                voice.play(path: VoiceService.cleanPath(msg.text ?? msg.content))
+                voice.play(path: VoiceService.cleanPath(msg.text ?? msg.content ?? ""))
             },
             onRetry: {
                 Task { await resend(msg) }
