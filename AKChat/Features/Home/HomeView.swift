@@ -12,15 +12,26 @@ struct IncomingCall: Identifiable {
     let callType: Int
 }
 
+/// 首页：与安卓 ConvListScreen 同一套布局——自绘顶栏（AK商聊 + 未读数 + 深色加号弹窗）、
+/// 搜索条、通讯录通知条、会话行（44 头像 / 右侧时间与未读窄列 / 置顶底色 / @我）。
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @State private var showCreateGroup = false
     @State private var showAddFriend = false
     @State private var showSearch = false
     @State private var showScanner = false
+    @State private var showRequests = false
+    @State private var showGroupInvites = false
     @State private var scanTarget: ScanTarget?
+    @State private var plusOpen = false
 
     private var filtered: [Conversation] { app.conversations }
+    /// 顶栏角标只算非免打扰会话
+    private var unreadBadge: Int {
+        app.conversations.filter { $0.isMute != 1 }.reduce(0) { $0 + $1.unread }
+    }
+    private var pendingFriends: Int { app.contacts?.pending ?? 0 }
+    private var groupInvites: Int { app.contacts?.groupInviteUnread ?? 0 }
 
     private func handleScan(_ code: String) {
         let text = code.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,17 +51,199 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                topBar
                 searchBar
-                List {
-                    ForEach(filtered) { conv in
-                        NavigationLink {
-                            ChatView(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
-                        } label: {
-                            ConversationRow(conv: conv)
-                        }
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                        .listRowSeparatorTint(AKColor.line)
-                        .contextMenu {
+                if pendingFriends > 0 || groupInvites > 0 {
+                    noticeBar
+                }
+                conversationList
+            }
+            .background(AKColor.bg)
+            .toolbar(.hidden, for: .navigationBar)
+            .refreshable { await app.refreshConversations() }
+            .task {
+                await app.refreshConversations()
+                await app.loadContacts()
+            }
+            .sheet(isPresented: $showCreateGroup) {
+                NavigationStack { CreateGroupView() }
+            }
+            .sheet(isPresented: $showAddFriend) {
+                NavigationStack { AddFriendView() }
+            }
+            .sheet(isPresented: $showScanner) {
+                ScannerView { code in handleScan(code) }
+            }
+            .sheet(item: $scanTarget) { target in
+                NavigationStack { UserProfileView(uid: target.id) }
+            }
+            .sheet(isPresented: $showSearch) {
+                NavigationStack { SearchView() }
+            }
+            .sheet(isPresented: $showRequests) {
+                NavigationStack { FriendRequestsView() }
+            }
+            .sheet(isPresented: $showGroupInvites) {
+                NavigationStack { GroupInvitesView() }
+            }
+        }
+    }
+
+    /* ---------- 顶栏 ---------- */
+
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            Text("AK商聊")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(AKColor.text)
+                .kerning(0.5)
+            if unreadBadge > 0 {
+                Text("\(unreadBadge > 99 ? 99 : unreadBadge)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(AKColor.red)
+                    .frame(minWidth: 17, minHeight: 17)
+                    .background(AKColor.redSoft)
+                    .clipShape(Capsule())
+            }
+            Spacer(minLength: 0)
+            Button {
+                plusOpen = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(AKColor.card)
+        .overlay(alignment: .topTrailing) {
+            if plusOpen {
+                plusMenu
+            }
+        }
+        .overlay {
+            if plusOpen {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .onTapGesture { plusOpen = false }
+                    .zIndex(-1)
+            }
+        }
+    }
+
+    /// 与安卓一致：深色圆角浮层，168 宽，四项（发起群聊 / 添加好友·群 / 扫一扫 / 一键已读）
+    private var plusMenu: some View {
+        VStack(spacing: 0) {
+            plusItem("发起群聊", "person.3.fill") { plusOpen = false; showCreateGroup = true }
+            plusItem("添加好友/群", "person.badge.plus") { plusOpen = false; showAddFriend = true }
+            plusItem("扫一扫", "qrcode.viewfinder") { plusOpen = false; showScanner = true }
+            plusItem("一键已读", "checkmark.circle") {
+                plusOpen = false
+                Task { await app.markAllRead() }
+            }
+        }
+        .frame(width: 168)
+        .background(Color(hex: 0x252528).opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.top, 52)
+        .padding(.trailing, 8)
+    }
+
+    private func plusItem(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 42)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /* ---------- 搜索条 ---------- */
+
+    private var searchBar: some View {
+        Button {
+            showSearch = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                Text("搜索聊天、联系人")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(AKColor.fill)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(AKColor.card)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /* ---------- 通讯录通知条 ---------- */
+
+    private var noticeBar: some View {
+        HStack(spacing: 8) {
+            Text("通讯录通知")
+                .font(.system(size: 12.5))
+                .foregroundColor(AKColor.gold)
+            Spacer(minLength: 0)
+            if pendingFriends > 0 {
+                Button { showRequests = true } label: {
+                    Text("新朋友 \(pendingFriends) ›")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AKColor.link)
+                }
+                .buttonStyle(.plain)
+            }
+            if groupInvites > 0 {
+                Button { showGroupInvites = true } label: {
+                    Text("群邀请 \(groupInvites) ›")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AKColor.link)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AKColor.goldSoft)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
+    }
+
+    /* ---------- 会话列表 ---------- */
+
+    private var conversationList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(filtered) { conv in
+                    NavigationLink {
+                        ChatView(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
+                    } label: {
+                        ConversationRow(conv: conv)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
                             Button {
                                 Task { await app.togglePin(conv) }
                             } label: {
@@ -63,9 +256,7 @@ struct HomeView: View {
                             }
                             if conv.unread > 0 {
                                 Button {
-                                    Task {
-                                        await app.markRead(convType: conv.convType, convId: conv.convId, lastId: conv.lastMsgId)
-                                    }
+                                    Task { await app.markRead(convType: conv.convType, convId: conv.convId, lastId: conv.lastMsgId) }
                                 } label: {
                                     Label("标为已读", systemImage: "checkmark.circle")
                                 }
@@ -81,181 +272,124 @@ struct HomeView: View {
                                 Label("删除会话", systemImage: "trash")
                             }
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                Task { await app.deleteConversation(conv) }
-                            } label: {
-                                Label("删除", systemImage: "trash")
-                            }
-                            Button {
-                                Task { await app.togglePin(conv) }
-                            } label: {
-                                Label(conv.isTop == 1 ? "取消置顶" : "置顶", systemImage: "pin")
-                            }
-                            .tint(AKColor.gold)
-                        }
-                        .swipeActions(edge: .leading) {
-                            Button {
-                                Task { await app.toggleMute(conv) }
-                            } label: {
-                                Label(conv.isMute == 1 ? "取消免打扰" : "免打扰", systemImage: "bell.slash")
-                            }
-                            .tint(AKColor.sub)
-                        }
+                }
+                if filtered.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 38))
+                            .foregroundColor(AKColor.hint)
+                        Text("还没有聊天，去通讯录找人聊聊")
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.muted)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 120)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .overlay {
-                    if filtered.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .font(.system(size: 38)).foregroundColor(AKColor.hint)
-                            Text("还没有聊天，去通讯录找人聊聊")
-                                .font(.system(size: 13)).foregroundColor(AKColor.muted)
-                        }
-                    }
-                }
-            }
-            .background(AKColor.bg)
-            .navigationTitle("AK商聊")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button {
-                            showScanner = true
-                        } label: {
-                            Label("扫一扫", systemImage: "qrcode.viewfinder")
-                        }
-                        Button {
-                            showCreateGroup = true
-                        } label: {
-                            Label("发起群聊", systemImage: "person.3")
-                        }
-                        Button {
-                            showAddFriend = true
-                        } label: {
-                            Label("添加好友", systemImage: "person.badge.plus")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle").foregroundColor(AKColor.text)
-                    }
-                }
-            }
-            .refreshable { await app.refreshConversations() }
-            .task { await app.refreshConversations() }
-            .sheet(isPresented: $showCreateGroup) {
-                NavigationStack { CreateGroupView() }
-            }
-            .sheet(isPresented: $showAddFriend) {
-                NavigationStack { AddFriendView() }
-            }
-            .sheet(isPresented: $showScanner) {
-                ScannerView { code in
-                    handleScan(code)
-                }
-            }
-            .sheet(item: $scanTarget) { target in
-                NavigationStack {
-                    UserProfileView(uid: target.id)
-                }
-            }
-            .sheet(isPresented: $showSearch) {
-                NavigationStack { SearchView() }
+                Spacer(minLength: 20)
             }
         }
-    }
-
-    private var searchBar: some View {
-        Button {
-            showSearch = true
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundColor(AKColor.muted)
-                Text("搜索聊天、联系人")
-                    .font(.system(size: 14))
-                    .foregroundColor(AKColor.muted)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .background(AKColor.fill)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(AKColor.card)
-        }
+        .background(AKColor.card)
+        .scrollIndicators(.hidden)
     }
 }
 
+/// 会话行：严格对齐安卓 ConvRow（44 头像 / 12·8 内边距 / 右侧 44 窄列 / 17 未读圆 / 置顶底色）
 private struct ConversationRow: View {
     let conv: Conversation
+    @Environment(\.colorScheme) private var scheme
+
+    private var rowBg: Color {
+        guard conv.isTop == 1 else { return AKColor.card }
+        return scheme == .dark ? Color(hex: 0x1E2128) : Color(hex: 0xF0F2F5)
+    }
+
+    private var title: String {
+        let n = conv.name ?? ""
+        if !n.isEmpty { return n }
+        return conv.convType == "group" ? "群聊" : "用户"
+    }
+
+    /// 摘要：@全体成员 > [谁@我] > 群内昵称：内容 > 内容
+    private var summary: Text {
+        var head: Text = Text("")
+        if conv.convType == "group" && conv.atAll > 0 {
+            head = Text("@全体成员 ").foregroundColor(AKColor.red)
+        } else if conv.convType == "group" && conv.atMe > 0 {
+            let from = conv.lastFromName
+            head = Text(from.isEmpty ? "[有人@我] " : "[\(from)@我] ").foregroundColor(AKColor.red)
+        }
+        let showName = conv.convType == "group" && conv.lastFrom != "me"
+            && conv.lastType != 11 && !conv.lastFromName.isEmpty
+        if showName {
+            head = head + Text("\(conv.lastFromName)：").foregroundColor(AKColor.sub)
+        }
+        let body = conv.digest?.isEmpty == false ? conv.digest! : "暂无消息"
+        return head + Text(body).foregroundColor(AKColor.hint)
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack(alignment: .topTrailing) {
-                AvatarView(url: conv.avatar, name: conv.name ?? "聊天", size: 48)
-                    .overlay(alignment: .bottomTrailing) {
-                        if conv.convType == "private" && conv.online == 1 {
-                            Circle().fill(AKColor.brand)
-                                .frame(width: 11, height: 11)
-                                .overlay(Circle().stroke(AKColor.card, lineWidth: 2))
-                                .offset(x: 2, y: 2)
-                        }
-                    }
-                if conv.unread > 0 && conv.isMute == 0 {
-                    Text(conv.unread > 99 ? "99+" : "\(conv.unread)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .frame(minWidth: 18, minHeight: 18)
-                        .background(AKColor.red)
-                        .clipShape(Capsule())
-                        .offset(x: 6, y: -6)
-                } else if conv.isMute == 1 && conv.unread > 0 {
-                    Circle().fill(AKColor.muted).frame(width: 8, height: 8).offset(x: 4, y: -2)
+            ZStack(alignment: .bottomTrailing) {
+                AvatarView(url: conv.avatar, name: title, size: 44)
+                if conv.convType == "private" && conv.online == 1 {
+                    Circle()
+                        .fill(Color(hex: 0x34C759))
+                        .frame(width: 11, height: 11)
+                        .overlay(Circle().stroke(AKColor.card, lineWidth: 2))
                 }
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    Text(conv.name ?? "聊天")
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 3) {
+                    Text(title)
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(AKColor.text)
                         .lineLimit(1)
                     if conv.isPretty == 1, let no = conv.prettyNo, !no.isEmpty {
-                        BadgeView(text: "靓 \(no)")
+                        PrettyBadge(number: no, isGroup: conv.convType == "group")
                     }
                     if conv.vipLevel > 0 {
-                        BadgeView(text: conv.vipLevel >= 2 ? "SVIP" : "VIP", color: AKColor.gold, background: AKColor.goldSoft)
-                    }
-                    if conv.isTop == 1 {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 9))
-                            .foregroundColor(AKColor.muted)
+                        VipBadge(level: conv.vipLevel)
                     }
                     Spacer(minLength: 0)
-                    Text(TimeText.short(conv.lastTime))
-                        .font(.system(size: 11))
-                        .foregroundColor(AKColor.muted)
                 }
-                HStack(spacing: 6) {
-                    if conv.atMe > 0 {
-                        Text("[有人@我]")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(AKColor.red)
-                    }
-                    Text(conv.digest?.isEmpty == false ? conv.digest! : "暂无消息")
-                        .font(.system(size: 13))
-                        .foregroundColor(AKColor.muted)
-                        .lineLimit(1)
+                summary
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+            }
+
+            /* 右侧固定窄列：时间在上，未读在下 */
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(TimeText.short(conv.lastTime))
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.hint)
+                    .lineLimit(1)
+                if conv.unread > 0 {
+                    Text(conv.unread > 99 ? "99+" : "\(conv.unread)")
+                        .font(.system(size: conv.unread > 9 ? 7.5 : 9, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(minWidth: 17, minHeight: 17)
+                        .background(conv.isMute == 1
+                                    ? (scheme == .dark ? Color(hex: 0x4A4E55) : Color(hex: 0xC7C9CC))
+                                    : Color(hex: 0xF54D4D))
+                        .clipShape(Capsule())
+                } else if conv.isMute == 1 {
+                    Image(systemName: "speaker.slash.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(AKColor.label)
                 }
             }
+            .frame(minWidth: 44, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(conv.isTop == 1 ? AKColor.cardAlt : AKColor.card)
-        .contentShape(Rectangle())
+        .padding(.leading, 12)
+        .padding(.trailing, 12)
+        .padding(.vertical, 8)
+        .background(rowBg)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AKColor.line)
+                .frame(height: 0.5)
+                .padding(.leading, 68)
+        }
     }
 }

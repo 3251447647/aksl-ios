@@ -156,6 +156,12 @@ final class AppState: ObservableObject {
         await refreshConversations()
     }
 
+    /// 一键已读（首页加号菜单）
+    func markAllRead() async {
+        await api.readAll()
+        await refreshConversations()
+    }
+
     func uploadImage(_ data: Data) async throws -> UploadData {
         try await APIClient.shared.upload(data: data, filename: "ios_\(Int(Date().timeIntervalSince1970)).jpg", kind: "chat")
     }

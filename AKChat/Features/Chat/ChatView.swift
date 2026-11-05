@@ -48,8 +48,8 @@ struct ChatView: View {
     @State private var showForward = false
     @State private var forwardMessages: [Message] = []
     @State private var chatBg: String?
-    @State private var bgPhotoItem: PhotosPickerItem?
-    @State private var showBgPicker = false
+    @State private var showLive = false
+    @State private var liveGid: Int64 = 0
     @State private var showCall = false
 
     private var myId: Int64 { app.user?.id ?? 0 }
@@ -149,11 +149,6 @@ struct ChatView: View {
                     }
                 }
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showBgPicker = true } label: {
-                    Image(systemName: "photo.on.rectangle.angled").foregroundColor(AKColor.text)
-                }
-            }
             if isGroup {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -214,27 +209,18 @@ struct ChatView: View {
                 reportTarget = nil
             }
         }
+        .fullScreenCover(isPresented: $showLive) {
+            NavigationStack { LiveRoomView(gid: liveGid) }
+        }
         .fullScreenCover(isPresented: $showCall) {
             CallScreen()
         }
-        .photosPicker(isPresented: $showBgPicker, selection: $bgPhotoItem, matching: .images)
-        .onChange(of: bgPhotoItem) { item in
-            guard let item else { return }
-            Task {
-                defer { bgPhotoItem = nil }
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
-                    let up = try await APIClient.shared.upload(data: data, filename: "bg.jpg", kind: "bg")
-                    let r = try await APIClient.shared.setChatBg(convType: convType, convId: convId, url: up.url)
-                    await MainActor.run { chatBg = r.bg }
-                } catch {
-                    await MainActor.run { errorText = error.localizedDescription }
-                }
-            }
-        }
         .task {
+            /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
+            chatBg = cachedBg()
             if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
                 chatBg = r.bg
+                storeBg(r.bg)
             }
             await load()
             await app.loadEmojis()
@@ -365,6 +351,10 @@ struct ChatView: View {
             },
             onAvatarTap: {
                 if msg.fromUid != myId { profileTarget = ProfileTarget(id: msg.fromUid) }
+            },
+            onOpenLive: { gid in
+                liveGid = gid
+                showLive = true
             }
         )
         .contentShape(Rectangle())
@@ -536,6 +526,16 @@ struct ChatView: View {
     }
 
     /* ---------------- 数据 ---------------- */
+
+    /* 聊天背景本地缓存：进会话先用缓存渲染，避免先白一下再出现背景 */
+    private var bgKey: String { "ios_chat_bg_\(convType)_\(convId)" }
+    private func cachedBg() -> String? {
+        let v = UserDefaults.standard.string(forKey: bgKey) ?? ""
+        return v.isEmpty ? nil : v
+    }
+    private func storeBg(_ url: String?) {
+        UserDefaults.standard.set(url ?? "", forKey: bgKey)
+    }
 
     private func load() async {
         loading = true
@@ -799,6 +799,7 @@ private struct ChatMessageRow: View {
     let onVoiceTap: () -> Void
     let onRetry: () -> Void
     let onAvatarTap: () -> Void
+    var onOpenLive: (Int64) -> Void = { _ in }
 
     private var displayName: String {
         let name = member?.name ?? message.fromName ?? ""
@@ -823,7 +824,7 @@ private struct ChatMessageRow: View {
             HStack(alignment: .top, spacing: 8) {
                 if mine { Spacer(minLength: 44) }
                 if !mine {
-                    AvatarView(url: message.fromAvatar, name: displayName, size: 38)
+                    AvatarView(url: message.fromAvatar, name: displayName, size: 34)
                         .onTapGesture { onAvatarTap() }
                 }
                 VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
@@ -856,7 +857,8 @@ private struct ChatMessageRow: View {
                         message: message,
                         mine: mine,
                         playingVoice: playingVoice,
-                        onVoiceTap: onVoiceTap
+                        onVoiceTap: onVoiceTap,
+                        onOpenLive: onOpenLive
                     )
                     if mine && message.status == 2 {
                         Button(action: onRetry) {
@@ -871,7 +873,7 @@ private struct ChatMessageRow: View {
                 }
                 if !mine { Spacer(minLength: 44) }
                 if mine {
-                    AvatarView(url: myAvatar, name: "我", size: 38)
+                    AvatarView(url: myAvatar, name: "我", size: 34)
                 }            }
         }
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct GroupInfoView: View {
     let groupId: Int64
@@ -10,6 +11,9 @@ struct GroupInfoView: View {
     @State private var loading = true
     @State private var errorText: String?
     @State private var confirmLeave = false
+    @State private var chatBg: String = ""
+    @State private var showBgPicker = false
+    @State private var bgItem: PhotosPickerItem?
 
     var body: some View {
         List {
@@ -93,6 +97,27 @@ struct GroupInfoView: View {
                     .padding(.vertical, 6)
                 }
 
+                Section("聊天") {
+                    Button {
+                        showBgPicker = true
+                    } label: {
+                        HStack {
+                            Text("聊天背景").foregroundColor(AKColor.text)
+                            Spacer()
+                            Text(chatBg.isEmpty ? "默认" : "已设置")
+                                .foregroundColor(chatBg.isEmpty ? AKColor.hint : AKColor.brand)
+                        }
+                    }
+                    .disabled(info.myRole != 1)
+                    if !chatBg.isEmpty && info.myRole == 1 {
+                        Button(role: .destructive) {
+                            Task { await clearBg() }
+                        } label: {
+                            Text("恢复默认背景")
+                        }
+                    }
+                }
+
                 Section {
                     Button(role: .destructive) {
                         confirmLeave = true
@@ -110,6 +135,21 @@ struct GroupInfoView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
+        .onChange(of: bgItem) { item in
+            guard let item else { return }
+            Task {
+                defer { bgItem = nil }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                    let up = try await APIClient.shared.upload(data: data, filename: "bg.jpg", kind: "bg")
+                    let r = try await APIClient.shared.setChatBg(convType: "group", convId: groupId, url: up.url)
+                    await MainActor.run { chatBg = r.bg ?? "" }
+                } catch {
+                    await MainActor.run { errorText = error.localizedDescription }
+                }
+            }
+        }
         .alert("退出群聊？", isPresented: $confirmLeave) {
             Button("取消", role: .cancel) {}
             Button("退出", role: .destructive) {
@@ -129,6 +169,15 @@ struct GroupInfoView: View {
             info = try await APIClient.shared.groupInfo(id: groupId)
         } catch {
             errorText = error.localizedDescription
+        }
+        if let r = try? await APIClient.shared.chatBg(convType: "group", convId: groupId) {
+            chatBg = r.bg ?? ""
+        }
+    }
+
+    private func clearBg() async {
+        if let r = try? await APIClient.shared.setChatBg(convType: "group", convId: groupId, url: "") {
+            await MainActor.run { chatBg = r.bg ?? "" }
         }
     }
 }

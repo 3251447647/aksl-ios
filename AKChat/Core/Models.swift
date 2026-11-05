@@ -81,6 +81,12 @@ struct Conversation: Decodable, Identifiable, Equatable {
     var prettyNo: String?
     var atMe: Int
     var online: Int
+    /// 群摘要里最后一条消息的发送者（群内昵称优先），首页摘要拼「昵称：内容」
+    var lastFromName: String
+    /// 最后一条消息是不是自己发的（"me" 时不拼昵称）
+    var lastFrom: String
+    /// @全体成员未读数
+    var atAll: Int
 
     var id: String { "\(convType):\(convId)" }
 
@@ -97,6 +103,9 @@ struct Conversation: Decodable, Identifiable, Equatable {
         case isPretty = "is_pretty"
         case prettyNo = "pretty_no"
         case atMe = "at_me"
+        case lastFromName = "last_from_name"
+        case lastFrom = "last_from"
+        case atAll = "at_all"
     }
 
     init(from decoder: Decoder) throws {
@@ -117,6 +126,9 @@ struct Conversation: Decodable, Identifiable, Equatable {
         prettyNo = try? c.decode(String.self, forKey: .prettyNo)
         atMe = (try? c.decode(Int.self, forKey: .atMe)) ?? 0
         online = (try? c.decode(Int.self, forKey: .online)) ?? 0
+        lastFromName = (try? c.decode(String.self, forKey: .lastFromName)) ?? ""
+        lastFrom = (try? c.decode(String.self, forKey: .lastFrom)) ?? ""
+        atAll = (try? c.decode(Int.self, forKey: .atAll)) ?? 0
     }
 }
 

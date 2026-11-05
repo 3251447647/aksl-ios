@@ -8,6 +8,8 @@ struct MessageBody: View {
     var myName: String = "我"
     var playingVoice: Bool = false
     var onVoiceTap: () -> Void = {}
+    /// 直播分享卡片点击：带入群 gid，由 ChatView 打开直播间
+    var onOpenLive: (Int64) -> Void = { _ in }
 
     private var ex: [String: JSONValue] { message.extraMap }
     private var rawText: String { message.text ?? message.content ?? "" }
@@ -46,6 +48,8 @@ struct MessageBody: View {
             chatRecordCard
         case 18:
             fileCard
+        case 19:
+            liveCard
         case 5:
             imageBubble
         case 6:
@@ -302,6 +306,40 @@ struct MessageBody: View {
         .frame(width: 236, alignment: .leading)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// 直播分享卡片（type=19）：gid/name/avatar/title/live_id，点击进直播间
+    private var liveCard: some View {
+        let name = ex.str("name").isEmpty ? "群直播" : ex.str("name")
+        let title = ex.str("title").isEmpty ? name : ex.str("title")
+        let gid = Int64(ex.int("gid"))
+        return HStack(spacing: 10) {
+            AvatarView(url: ex.str("avatar"), name: name, size: 38)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+                    .lineLimit(2)
+                HStack(spacing: 5) {
+                    Text("LIVE")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color(hex: 0xFF3B30))
+                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    Text("群直播").font(.system(size: 11)).foregroundColor(AKColor.muted)
+                }
+            }
+            Spacer(minLength: 0)
+            Text(gid > 0 ? "进入 ›" : "已结束").font(.system(size: 11)).foregroundColor(AKColor.hint)
+        }
+        .padding(11)
+        .frame(width: 236, alignment: .leading)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { if gid > 0 { onOpenLive(gid) } }
     }
 
     /// 通话记录：与 v1_call_digest 同一套文案（[群]视频/语音通话 + 状态）

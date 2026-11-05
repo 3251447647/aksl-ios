@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 struct UserProfileView: View {
     @Environment(\.dismiss) private var dismiss
@@ -14,6 +15,9 @@ struct UserProfileView: View {
     @State private var remarkText = ""
     @State private var showDelete = false
     @State private var showChat = false
+    @State private var chatBg: String = ""
+    @State private var showBgPicker = false
+    @State private var bgItem: PhotosPickerItem?
 
     var body: some View {
         ScrollView {
@@ -24,6 +28,7 @@ struct UserProfileView: View {
                     header(p)
                     actionRow(p)
                     detailCard(p)
+                    bgCard()
                 } else {
                     Text(error ?? "加载失败")
                         .font(.system(size: 13))
@@ -45,6 +50,21 @@ struct UserProfileView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
+        .onChange(of: bgItem) { item in
+            guard let item else { return }
+            Task {
+                defer { bgItem = nil }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                    let up = try await APIClient.shared.upload(data: data, filename: "bg.jpg", kind: "bg")
+                    let r = try await APIClient.shared.setChatBg(convType: "private", convId: uid, url: up.url)
+                    await MainActor.run { chatBg = r.bg ?? "" }
+                } catch {
+                    await MainActor.run { error = error.localizedDescription }
+                }
+            }
+        }
         .sheet(isPresented: $showQR) {
             if let p = profile {
                 QRCodeView(uid: p.id, name: p.remark.isEmpty ? p.nickname : p.remark, avatar: p.avatar)
@@ -213,6 +233,52 @@ struct UserProfileView: View {
         .frame(height: 48)
     }
 
+    /// 私聊聊天背景（仅自己可见）：放在好友设置页，与群背景同一套交互
+    private func bgCard() -> some View {
+        VStack(spacing: 8) {
+            Button {
+                showBgPicker = true
+            } label: {
+                HStack {
+                    Text("聊天背景")
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.text)
+                    Spacer()
+                    Text(chatBg.isEmpty ? "默认" : "已设置")
+                        .font(.system(size: 13))
+                        .foregroundColor(chatBg.isEmpty ? AKColor.hint : AKColor.brand)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(AKColor.placeholder)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 50)
+                .background(AKColor.card)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            if !chatBg.isEmpty {
+                Button(role: .destructive) {
+                    Task {
+                        if let r = try? await APIClient.shared.setChatBg(convType: "private", convId: uid, url: "") {
+                            await MainActor.run { chatBg = r.bg ?? "" }
+                        }
+                    }
+                } label: {
+                    Text("恢复默认背景")
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.red)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(AKColor.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     private func load() async {
         loading = true
         defer { loading = false }
@@ -221,6 +287,9 @@ struct UserProfileView: View {
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+        if let r = try? await APIClient.shared.chatBg(convType: "private", convId: uid) {
+            chatBg = r.bg ?? ""
         }
     }
 }
