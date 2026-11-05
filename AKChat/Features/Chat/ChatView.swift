@@ -50,6 +50,7 @@ struct ChatView: View {
     @State private var chatBg: String?
     @State private var bgPhotoItem: PhotosPickerItem?
     @State private var showBgPicker = false
+    @State private var showCall = false
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
@@ -130,6 +131,24 @@ struct ChatView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if !isGroup {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button {
+                            startCall(1)
+                        } label: {
+                            Label("语音通话", systemImage: "phone")
+                        }
+                        Button {
+                            startCall(2)
+                        } label: {
+                            Label("视频通话", systemImage: "video")
+                        }
+                    } label: {
+                        Image(systemName: "phone").foregroundColor(AKColor.text)
+                    }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showBgPicker = true } label: {
                     Image(systemName: "photo.on.rectangle.angled").foregroundColor(AKColor.text)
@@ -194,6 +213,9 @@ struct ChatView: View {
                 }
                 reportTarget = nil
             }
+        }
+        .fullScreenCover(isPresented: $showCall) {
+            CallScreen()
         }
         .photosPicker(isPresented: $showBgPicker, selection: $bgPhotoItem, matching: .images)
         .onChange(of: bgPhotoItem) { item in
@@ -598,6 +620,14 @@ struct ChatView: View {
             messages[idx].status = 2
         }
         errorText = why
+    }
+
+    private func startCall(_ type: Int) {
+        guard !isGroup else { return }
+        Task {
+            await CallManager.shared.start(peerUid: convId, name: title, avatar: nil, type: type)
+            showCall = true
+        }
     }
 
     private func send() async {

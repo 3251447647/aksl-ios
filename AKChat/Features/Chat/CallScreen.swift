@@ -1,0 +1,110 @@
+import SwiftUI
+import WebRTC
+
+/// 一对一通话界面：语音只显示头像，视频显示远端画面
+struct CallScreen: View {
+    @ObservedObject private var call = CallManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color(hex: 0x121417).ignoresSafeArea()
+
+            if call.callType == 2, call.phase == .connected, call.remoteTrack != nil {
+                RTCVideoView(track: call.remoteTrack)
+                    .ignoresSafeArea()
+            } else {
+                VStack(spacing: 14) {
+                    AsyncImage(url: APIClient.fullURL(call.peerAvatar)) { img in
+                        img.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.white.opacity(0.12)
+                    }
+                    .frame(width: 96, height: 96)
+                    .clipShape(Circle())
+
+                    Text(call.peerName.isEmpty ? "通话中" : call.peerName)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+
+                    Text(statusText)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.65))
+
+                    if let error = call.error {
+                        Text(error)
+                            .font(.system(size: 12))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                    }
+                }
+            }
+
+            VStack {
+                Spacer()
+                HStack(spacing: 26) {
+                    Button {
+                        call.toggleMute()
+                    } label: {
+                        circle(call.muted ? "mic.slash.fill" : "mic.fill", active: call.muted)
+                    }
+                    if call.callType == 2 {
+                        Button {
+                            call.toggleCamera()
+                        } label: {
+                            circle(call.cameraOn ? "video.fill" : "video.slash.fill", active: !call.cameraOn)
+                        }
+                    }
+                    Button {
+                        call.hangup()
+                        dismiss()
+                    } label: {
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(.white)
+                            .frame(width: 62, height: 62)
+                            .background(AKColor.red)
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.bottom, 44)
+            }
+        }
+        .onChange(of: call.phase) { phase in
+            if phase == .ended { dismiss() }
+        }
+    }
+
+    private var statusText: String {
+        switch call.phase {
+        case .calling: return call.callType == 2 ? "正在等待对方接听…" : "正在呼叫…"
+        case .connected: return call.callType == 2 ? "视频通话中" : "语音通话中"
+        case .ended: return "通话已结束"
+        default: return ""
+        }
+    }
+
+    private func circle(_ icon: String, active: Bool) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 20))
+            .foregroundColor(.white)
+            .frame(width: 54, height: 54)
+            .background(active ? Color.white.opacity(0.42) : Color.white.opacity(0.16))
+            .clipShape(Circle())
+    }
+}
+
+private struct RTCVideoView: UIViewRepresentable {
+    let track: RTCVideoTrack?
+
+    func makeUIView(context: Context) -> RTCMTLVideoView {
+        let v = RTCMTLVideoView()
+        v.videoContentMode = .scaleAspectFill
+        return v
+    }
+
+    func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {
+        track?.add(uiView)
+    }
+}
