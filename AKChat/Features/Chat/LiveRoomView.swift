@@ -13,6 +13,7 @@ struct LiveRoomView: View {
     @State private var lastCommentId: Int64 = 0
     @State private var commentText = ""
     @State private var pollTask: Task<Void, Never>?
+    @State private var showRoom = false
 
     var body: some View {
         ScrollView {
@@ -40,6 +41,11 @@ struct LiveRoomView: View {
         .task { await load() }
         .refreshable { await load() }
         .onDisappear { pollTask?.cancel() }
+        .fullScreenCover(isPresented: $showRoom) {
+            if let sfu = room?.sfu, let u = sfu.url, let t = sfu.token {
+                LiveKitRoomView(url: u, token: t, isHost: (room?.live?.myRole ?? 0) == 1)
+            }
+        }
     }
 
     private var commentSection: some View {
@@ -144,6 +150,23 @@ struct LiveRoomView: View {
             Text("观众 \(live.viewers) · 房间 \(room?.sfu?.room ?? "-")")
                 .font(.system(size: 11))
                 .foregroundColor(AKColor.muted)
+            if let sfu = room?.sfu, sfu.enabled == 1, let u = sfu.url, let t = sfu.token, !u.isEmpty, !t.isEmpty {
+                Button {
+                    showRoom = true
+                } label: {
+                    Text(live.myRole == 1 ? "进入直播间（主播）" : "进入直播间")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(AKColor.brand)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            } else {
+                Text("直播音视频通道暂不可用")
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.muted)
+            }
         }
         .padding(14)
         .background(AKColor.card)
