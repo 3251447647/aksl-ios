@@ -95,12 +95,12 @@ final class CallKitManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate
         if let c = pending {
             Task { await APIClient.shared.callHangup(callId: c.id) }
         }
-        CallManager.shared.hangup()
+        Task { @MainActor in CallManager.shared.hangup() }
         action.fulfill()
     }
 
     func providerDidReset(_ provider: CXProvider) {
-        CallManager.shared.reset()
+        Task { @MainActor in CallManager.shared.reset() }
         pending = nil
     }
 }
