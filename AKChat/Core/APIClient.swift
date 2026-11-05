@@ -384,6 +384,19 @@ final class APIClient {
     }
 
     /// 图片/文件上传，返回服务端相对地址
+    // MARK: - 聊天背景（私聊仅自己；群聊仅群主可设、全员可见）
+    func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
+        try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
+    }
+
+    func setChatBg(convType: String, convId: Int64, url: String) async throws -> ChatBgResp {
+        try await post("api/v1/chat/bg", body: [
+            "conv_type": convType,
+            "conv_id": convId,
+            "url": url
+        ])
+    }
+
     func upload(data: Data, filename: String, kind: String = "chat") async throws -> UploadData {
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()

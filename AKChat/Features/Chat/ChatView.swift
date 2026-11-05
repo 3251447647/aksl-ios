@@ -47,6 +47,9 @@ struct ChatView: View {
     @State private var profileTarget: ProfileTarget?
     @State private var showForward = false
     @State private var forwardMessages: [Message] = []
+    @State private var chatBg: String?
+    @State private var bgPhotoItem: PhotosPickerItem?
+    @State private var showBgPicker = false
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
@@ -83,10 +86,32 @@ struct ChatView: View {
 
             inputBar
         }
-        .background(AKColor.bg)
+        .background(
+            ZStack {
+                if let chatBg, let u = APIClient.fullURL(chatBg) {
+                    AsyncImage(url: u) { phase in
+                        if let img = phase.image {
+                            img.resizable().scaledToFill()
+                        } else {
+                            AKColor.bg
+                        }
+                    }
+                    .clipped()
+                    AKColor.bg.opacity(0.42)
+                } else {
+                    AKColor.bg
+                }
+            }
+            .ignoresSafeArea()
+        )
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { showBgPicker = true } label: {
+                    Image(systemName: "photo.on.rectangle.angled").foregroundColor(AKColor.text)
+                }
+            }
             if isGroup {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -147,7 +172,25 @@ struct ChatView: View {
                 reportTarget = nil
             }
         }
+        .photosPicker(isPresented: $showBgPicker, selection: $bgPhotoItem, matching: .images)
+        .onChange(of: bgPhotoItem) { item in
+            guard let item else { return }
+            Task {
+                defer { bgPhotoItem = nil }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                    let up = try await APIClient.shared.upload(data: data, filename: "bg.jpg", kind: "bg")
+                    let r = try await APIClient.shared.setChatBg(convType: convType, convId: convId, url: up.url)
+                    await MainActor.run { chatBg = r.bg }
+                } catch {
+                    await MainActor.run { errorText = error.localizedDescription }
+                }
+            }
+        }
         .task {
+            if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
+                chatBg = r.bg
+            }
             await load()
             await app.loadEmojis()
             await loadPin()

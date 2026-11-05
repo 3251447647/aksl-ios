@@ -525,3 +525,13 @@ struct MomentsData: Decodable {
         nextBeforeId = (try? c.decode(Int64.self, forKey: .nextBeforeId)) ?? 0
     }
 }
+
+struct ChatBgResp: Decodable {
+    let bg: String?
+    let isOwner: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case bg
+        case isOwner = "is_owner"
+    }
+}
