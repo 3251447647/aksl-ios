@@ -397,6 +397,22 @@ final class APIClient {
         try await post("api/v1/group/live/start", body: ["id": gid, "title": title])
     }
 
+    func livePoll(gid: Int64, liveId: Int64, lastCommentId: Int64) async throws -> LivePollData {
+        try await get("api/v1/group/live/poll", query: [
+            "id": String(gid),
+            "live_id": String(liveId),
+            "last_comment_id": String(lastCommentId)
+        ])
+    }
+
+    func liveComment(gid: Int64, liveId: Int64, content: String) async throws -> String {
+        try await postRaw("api/v1/group/live/comment", body: [
+            "id": gid,
+            "live_id": liveId,
+            "content": content
+        ])
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

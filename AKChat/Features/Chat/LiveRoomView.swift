@@ -9,6 +9,10 @@ struct LiveRoomView: View {
     @State private var error: String?
     @State private var title = ""
     @State private var starting = false
+    @State private var comments: [LiveComment] = []
+    @State private var lastCommentId: Int64 = 0
+    @State private var commentText = ""
+    @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -17,6 +21,7 @@ struct LiveRoomView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
                 } else if let live = room?.live {
                     liveCard(live)
+                    commentSection
                 } else {
                     emptyCard
                 }
@@ -34,6 +39,77 @@ struct LiveRoomView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    private var commentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("互动评论").font(.system(size: 13, weight: .medium)).foregroundColor(AKColor.sub)
+            ForEach(comments.suffix(50)) { c in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(c.nickname ?? "观众")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(c.system == 1 ? AKColor.gold : AKColor.link)
+                    Text(c.content)
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.text)
+                    Spacer()
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("说点什么…", text: $commentText)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                Button {
+                    Task { await sendComment() }
+                } label: {
+                    Text("发送")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(AKColor.brand)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(14)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func sendComment() async {
+        let content = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, let live = room?.live else { return }
+        do {
+            _ = try await APIClient.shared.liveComment(gid: gid, liveId: live.id, content: content)
+            commentText = ""
+            await poll()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task {
+            while !Task.isCancelled {
+                await poll()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    private func poll() async {
+        guard let live = room?.live else { return }
+        guard let data = try? await APIClient.shared.livePoll(gid: gid, liveId: live.id, lastCommentId: lastCommentId) else { return }
+        if let list = data.comments, !list.isEmpty {
+            comments.append(contentsOf: list)
+            if let maxId = data.maxCommentId { lastCommentId = maxId }
+        }
     }
 
     private func liveCard(_ live: LiveInfo) -> some View {
@@ -113,6 +189,7 @@ struct LiveRoomView: View {
         do {
             room = try await APIClient.shared.liveRoom(gid: gid)
             error = nil
+            if room?.live != nil { startPolling() }
         } catch {
             self.error = error.localizedDescription
         }
@@ -126,6 +203,7 @@ struct LiveRoomView: View {
         do {
             room = try await APIClient.shared.startLive(gid: gid, title: t)
             error = nil
+            if room?.live != nil { startPolling() }
         } catch {
             self.error = error.localizedDescription
         }

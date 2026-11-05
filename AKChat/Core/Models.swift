@@ -592,3 +592,33 @@ struct LiveRoomData: Decodable {
         case liveAllowed = "live_allowed"
     }
 }
+
+struct LiveComment: Decodable, Identifiable {
+    let id: Int64
+    let uid: Int64
+    let nickname: String?
+    let avatar: String?
+    let content: String
+    let createdAt: Int64
+    let system: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, uid, nickname, avatar, content, system
+        case createdAt = "created_at"
+    }
+}
+
+struct LivePollData: Decodable {
+    let active: Int?
+    let liveId: Int64?
+    let viewers: Int?
+    let comments: [LiveComment]?
+    let maxCommentId: Int64?
+    let title: String?
+
+    enum CodingKeys: String, CodingKey {
+        case active, viewers, comments, title
+        case liveId = "live_id"
+        case maxCommentId = "max_comment_id"
+    }
+}
