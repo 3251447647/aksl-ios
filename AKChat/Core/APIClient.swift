@@ -385,6 +385,10 @@ final class APIClient {
 
     /// 图片/文件上传，返回服务端相对地址
     // MARK: - 聊天背景（私聊仅自己；群聊仅群主可设、全员可见）
+    func appConfig() async throws -> AppConfigData {
+        try await get("api/v1/app-config")
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

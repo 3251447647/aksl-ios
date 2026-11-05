@@ -80,6 +80,29 @@ struct ChatView: View {
                     .padding(.bottom, 2)
             }
 
+            if !isGroup, convId == app.botUid, !app.botQuick.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(app.botQuick, id: \.self) { q in
+                            Button {
+                                text = q
+                                Task { await send() }
+                            } label: {
+                                Text(q)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AKColor.text)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(AKColor.card)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                }
+            }
+
             if showEmoji {
                 emojiPanel
             }

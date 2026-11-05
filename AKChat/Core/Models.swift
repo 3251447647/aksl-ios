@@ -535,3 +535,13 @@ struct ChatBgResp: Decodable {
         case isOwner = "is_owner"
     }
 }
+
+struct AppConfigData: Decodable {
+    let botUid: Int64?
+    let botQuickButtons: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case botUid = "bot_uid"
+        case botQuickButtons = "bot_quick_buttons"
+    }
+}

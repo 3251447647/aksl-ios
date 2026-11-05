@@ -15,6 +15,8 @@ final class AppState: ObservableObject {
     @Published var isLoggedIn: Bool
     @Published var loading = false
     @Published var errorText: String?
+    @Published var botUid: Int64 = 0
+    @Published var botQuick: [String] = []
 
     private let api = APIClient.shared
     private let ws = WSClient()
@@ -32,6 +34,7 @@ final class AppState: ObservableObject {
             user = me
             SessionStore.shared.user = me
             await refreshConversations()
+            await loadAppConfig()
             startSocket()
         } catch {
             if let apiError = error as? APIError, case .auth = apiError {
@@ -40,6 +43,12 @@ final class AppState: ObservableObject {
                 errorText = error.localizedDescription
             }
         }
+    }
+
+    func loadAppConfig() async {
+        guard let cfg = try? await api.appConfig() else { return }
+        botUid = cfg.botUid ?? 0
+        botQuick = cfg.botQuickButtons ?? []
     }
 
     func login(account: String, password: String) async {
@@ -54,6 +63,7 @@ final class AppState: ObservableObject {
             user = data.user
             isLoggedIn = true
             await refreshConversations()
+            await loadAppConfig()
             startSocket()
         } catch {
             errorText = error.localizedDescription
@@ -72,6 +82,7 @@ final class AppState: ObservableObject {
             user = data.user
             isLoggedIn = true
             await refreshConversations()
+            await loadAppConfig()
             startSocket()
         } catch {
             errorText = error.localizedDescription
