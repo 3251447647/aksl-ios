@@ -24,5 +24,8 @@ struct MainTabView: View {
                 .tag(3)
         }
         .tint(AKColor.brand)
+        .fullScreenCover(item: $app.incomingCall) { call in
+            CallScreen(incoming: call)
+        }
     }
 }

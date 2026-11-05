@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     @Published var emojis: [EmojiItem] = []
     @Published var incoming: Message?
     @Published var chatEvent: ChatEvent?
+    @Published var incomingCall: IncomingCall?
     @Published var unreadTotal: Int = 0
     @Published var isLoggedIn: Bool
     @Published var loading = false
@@ -292,6 +293,21 @@ final class AppState: ObservableObject {
         var convId = i64("conv_id")
         if convId == 0 && type == "group_top" { convId = i64("gid") }
         if convId == 0 && type == "group_read" { convId = i64("group_id") }
+
+        if type == "call" {
+            let status = Int(i64("status"))
+            if status == 0, CallManager.shared.phase == .idle || CallManager.shared.phase == .ended {
+                incomingCall = IncomingCall(
+                    id: i64("call_id"),
+                    callerId: i64("caller_id"),
+                    name: str("caller_name"),
+                    avatar: str("caller_avatar").isEmpty ? nil : str("caller_avatar"),
+                    callType: Int(i64("call_type"))
+                )
+            } else if status >= 2 {
+                incomingCall = nil
+            }
+        }
 
         chatEvent = ChatEvent(
             kind: type,

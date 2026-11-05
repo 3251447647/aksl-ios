@@ -4,6 +4,14 @@ struct ScanTarget: Identifiable {
     let id: Int64
 }
 
+struct IncomingCall: Identifiable {
+    let id: Int64
+    let callerId: Int64
+    let name: String
+    let avatar: String?
+    let callType: Int
+}
+
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @State private var showCreateGroup = false
