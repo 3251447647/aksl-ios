@@ -55,3 +55,4 @@ targets:
         UIBackgroundModes:
           - audio
           - remote-notification
+          - voip

@@ -442,6 +442,10 @@ final class APIClient {
         try await get("api/v1/call/info", query: ["call_id": String(callId)])
     }
 
+    func saveVoipToken(_ token: String) async {
+        await postIgnore("api/v1/device/voip", body: ["token": token])
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

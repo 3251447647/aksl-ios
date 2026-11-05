@@ -9,7 +9,10 @@ struct AKChatApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(app)
-                .task { await app.bootstrap() }
+                .task {
+                    CallKitManager.shared.setup()
+                    await app.bootstrap()
+                }
         }
     }
 }
