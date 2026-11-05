@@ -389,6 +389,14 @@ final class APIClient {
         try await get("api/v1/app-config")
     }
 
+    func liveRoom(gid: Int64) async throws -> LiveRoomData {
+        try await get("api/v1/group/live/room", query: ["id": String(gid)])
+    }
+
+    func startLive(gid: Int64, title: String) async throws -> LiveRoomData {
+        try await post("api/v1/group/live/start", body: ["id": gid, "title": title])
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

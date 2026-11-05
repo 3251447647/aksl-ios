@@ -545,3 +545,50 @@ struct AppConfigData: Decodable {
         case botQuickButtons = "bot_quick_buttons"
     }
 }
+
+struct SfuInfo: Decodable {
+    let enabled: Int?
+    let url: String?
+    let token: String?
+    let room: String?
+}
+
+struct LiveInfo: Decodable {
+    let id: Int64
+    let title: String
+    let hostId: Int64
+    let hostName: String
+    let hostAvatar: String?
+    let viewers: Int
+    let allowMic: Int
+    let micMode: Int
+    let startedAt: Int64
+    let myRole: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, viewers
+        case hostId = "host_id"
+        case hostName = "host_name"
+        case hostAvatar = "host_avatar"
+        case allowMic = "allow_mic"
+        case micMode = "mic_mode"
+        case startedAt = "started_at"
+        case myRole = "my_role"
+    }
+}
+
+struct LiveRoomData: Decodable {
+    let myRole: Int?
+    let canStart: Int?
+    let liveAllowed: Int?
+    let live: LiveInfo?
+    let sfu: SfuInfo?
+    let msg: String?
+
+    enum CodingKeys: String, CodingKey {
+        case live, sfu, msg
+        case myRole = "my_role"
+        case canStart = "can_start"
+        case liveAllowed = "live_allowed"
+    }
+}

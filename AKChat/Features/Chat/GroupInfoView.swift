@@ -67,6 +67,9 @@ struct GroupInfoView: View {
                             Label("邀请好友进群", systemImage: "person.badge.plus")
                         }
                     }
+                    NavigationLink { LiveRoomView(gid: groupId) } label: {
+                        Label("直播间", systemImage: "video")
+                    }
                 }
 
                 Section("群成员（\(info.memberCount)）") {

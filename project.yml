@@ -9,12 +9,18 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
+packages:
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    from: "2.0.0"
 targets:
   AKChat:
     type: application
     platform: iOS
     sources:
       - path: AKChat
+    dependencies:
+      - package: LiveKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yixin.chat.ios
