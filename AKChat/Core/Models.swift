@@ -634,3 +634,34 @@ struct GroupCallJoinData: Decodable {
         case callType = "call_type"
     }
 }
+
+struct CallCreateData: Decodable {
+    let callId: Int64
+    let callType: Int
+    let peerName: String?
+    let peerAvatar: String?
+
+    enum CodingKeys: String, CodingKey {
+        case callId = "call_id"
+        case callType = "call_type"
+        case peerName = "peer_name"
+        case peerAvatar = "peer_avatar"
+    }
+}
+
+struct CallInfoData: Decodable {
+    let id: Int64?
+    let status: Int?
+    let offer: String?
+    let answer: String?
+    let callerId: Int64?
+    let calleeId: Int64?
+    let callType: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, offer, answer
+        case callerId = "caller_id"
+        case calleeId = "callee_id"
+        case callType = "call_type"
+    }
+}

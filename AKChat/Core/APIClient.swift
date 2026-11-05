@@ -421,6 +421,27 @@ final class APIClient {
         await postIgnore("api/v1/group/call/leave", body: ["id": gid])
     }
 
+    // MARK: - 一对一通话信令（非 trickle ICE，SDP 带完整 candidate）
+    func callCreate(toUid: Int64, callType: Int) async throws -> CallCreateData {
+        try await post("api/v1/call/create", body: ["to_uid": toUid, "call_type": callType])
+    }
+
+    func callOffer(callId: Int64, sdp: String) async {
+        await postIgnore("api/v1/call/offer", body: ["call_id": callId, "sdp": sdp])
+    }
+
+    func callAnswer(callId: Int64, sdp: String) async {
+        await postIgnore("api/v1/call/answer", body: ["call_id": callId, "sdp": sdp])
+    }
+
+    func callHangup(callId: Int64) async {
+        await postIgnore("api/v1/call/hangup", body: ["call_id": callId])
+    }
+
+    func callInfo(callId: Int64) async throws -> CallInfoData {
+        try await get("api/v1/call/info", query: ["call_id": String(callId)])
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

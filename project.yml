@@ -13,6 +13,9 @@ packages:
   LiveKit:
     url: https://github.com/livekit/client-sdk-swift
     from: "2.0.0"
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    from: "125.0.0"
 targets:
   AKChat:
     type: application
@@ -21,6 +24,7 @@ targets:
       - path: AKChat
     dependencies:
       - package: LiveKit
+      - package: WebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yixin.chat.ios
