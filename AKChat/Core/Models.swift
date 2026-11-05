@@ -622,3 +622,15 @@ struct LivePollData: Decodable {
         case maxCommentId = "max_comment_id"
     }
 }
+
+struct GroupCallJoinData: Decodable {
+    let callId: Int64?
+    let callType: Int?
+    let sfu: SfuInfo?
+
+    enum CodingKeys: String, CodingKey {
+        case sfu
+        case callId = "call_id"
+        case callType = "call_type"
+    }
+}

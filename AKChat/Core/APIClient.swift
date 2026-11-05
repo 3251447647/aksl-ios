@@ -413,6 +413,14 @@ final class APIClient {
         ])
     }
 
+    func groupCallJoin(gid: Int64, callType: Int) async throws -> GroupCallJoinData {
+        try await post("api/v1/group/call/join", body: ["id": gid, "call_type": callType])
+    }
+
+    func groupCallLeave(gid: Int64) async {
+        await postIgnore("api/v1/group/call/leave", body: ["id": gid])
+    }
+
     func chatBg(convType: String, convId: Int64) async throws -> ChatBgResp {
         try await get("api/v1/chat/bg", query: ["conv_type": convType, "conv_id": String(convId)])
     }

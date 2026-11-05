@@ -70,6 +70,12 @@ struct GroupInfoView: View {
                     NavigationLink { LiveRoomView(gid: groupId) } label: {
                         Label("直播间", systemImage: "video")
                     }
+                    NavigationLink { GroupCallView(gid: groupId, callType: 1) } label: {
+                        Label("群语音通话", systemImage: "phone")
+                    }
+                    NavigationLink { GroupCallView(gid: groupId, callType: 2) } label: {
+                        Label("群视频通话", systemImage: "video.fill")
+                    }
                 }
 
                 Section("群成员（\(info.memberCount)）") {

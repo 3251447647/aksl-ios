@@ -7,6 +7,7 @@ struct LiveKitRoomView: View {
     let url: String
     let token: String
     let isHost: Bool
+    var videoEnabled: Bool = true
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var room = Room()
@@ -137,8 +138,10 @@ struct LiveKitRoomView: View {
             }
             if isHost {
                 try? await room.localParticipant.setMicrophone(enabled: true)
-                try? await room.localParticipant.setCamera(enabled: true)
-                await MainActor.run { camOn = true }
+                if videoEnabled {
+                    try? await room.localParticipant.setCamera(enabled: true)
+                    await MainActor.run { camOn = true }
+                }
             }
         } catch {
             await MainActor.run {
