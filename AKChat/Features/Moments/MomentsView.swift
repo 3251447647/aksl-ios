@@ -5,6 +5,7 @@ import UIKit
 struct MomentsView: View {
     @EnvironmentObject private var app: AppState
     @State private var showPublish = false
+    @State private var detailMoment: Moment?
     @State private var commentTarget: Moment?
     @State private var commentText = ""
 
@@ -27,6 +28,7 @@ struct MomentsView: View {
                                 commentText = ""
                             }
                         )
+                        .onTapGesture { detailMoment = moment }
                         .contextMenu {
                             if moment.userId == (app.user?.id ?? 0) {
                                 Button(role: .destructive) {
@@ -61,6 +63,9 @@ struct MomentsView: View {
             }
             .refreshable { await app.loadMoments() }
             .task { await app.loadMoments() }
+            .sheet(item: $detailMoment) { m in
+                MomentDetailView(moment: m)
+            }
             .sheet(isPresented: $showPublish) {
                 PublishMomentView { content, images in
                     await app.publishMoment(content: content, images: images)
