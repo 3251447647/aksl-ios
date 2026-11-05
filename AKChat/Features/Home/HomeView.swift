@@ -1,12 +1,33 @@
 import SwiftUI
 
+struct ScanTarget: Identifiable {
+    let id: Int64
+}
+
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @State private var showCreateGroup = false
     @State private var showAddFriend = false
     @State private var showSearch = false
+    @State private var showScanner = false
+    @State private var scanTarget: ScanTarget?
 
     private var filtered: [Conversation] { app.conversations }
+
+    private func handleScan(_ code: String) {
+        let text = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = text.range(of: "id=") {
+            let tail = text[range.upperBound...]
+            let num = tail.prefix { $0.isNumber }
+            if let uid = Int64(num), uid > 0 {
+                scanTarget = ScanTarget(id: uid)
+                return
+            }
+        }
+        if let uid = Int64(text), uid > 0 {
+            scanTarget = ScanTarget(id: uid)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -95,6 +116,11 @@ struct HomeView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button {
+                            showScanner = true
+                        } label: {
+                            Label("扫一扫", systemImage: "qrcode.viewfinder")
+                        }
+                        Button {
                             showCreateGroup = true
                         } label: {
                             Label("发起群聊", systemImage: "person.3")
@@ -116,6 +142,16 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showAddFriend) {
                 NavigationStack { AddFriendView() }
+            }
+            .sheet(isPresented: $showScanner) {
+                ScannerView { code in
+                    handleScan(code)
+                }
+            }
+            .sheet(item: $scanTarget) { target in
+                NavigationStack {
+                    UserProfileView(uid: target.id)
+                }
             }
             .sheet(isPresented: $showSearch) {
                 NavigationStack { SearchView() }

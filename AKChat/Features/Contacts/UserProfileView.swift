@@ -10,6 +10,7 @@ struct UserProfileView: View {
     @State private var error: String?
     @State private var info: String?
     @State private var showRemark = false
+    @State private var showQR = false
     @State private var remarkText = ""
     @State private var showDelete = false
     @State private var showChat = false
@@ -44,6 +45,11 @@ struct UserProfileView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .sheet(isPresented: $showQR) {
+            if let p = profile {
+                QRCodeView(uid: p.id, name: p.remark.isEmpty ? p.nickname : p.remark, avatar: p.avatar)
+            }
+        }
         .sheet(isPresented: $showChat) {
             if let p = profile {
                 NavigationStack {
@@ -124,6 +130,11 @@ struct UserProfileView: View {
                     showRemark = true
                 } label: {
                     actionLabel("备注", "square.and.pencil", AKColor.link)
+                }
+                Button {
+                    showQR = true
+                } label: {
+                    actionLabel("二维码", "qrcode", AKColor.gold)
                 }
             }
             if p.isBlocked == 1 {
