@@ -522,9 +522,11 @@ struct MomentsData: Decodable {
     let page: Int
     let hasMore: Int
     let nextBeforeId: Int64
+    /// 自己的朋友圈封面
+    let cover: String
 
     enum CodingKeys: String, CodingKey {
-        case list, page
+        case list, page, cover
         case hasMore = "has_more"
         case nextBeforeId = "next_before_id"
     }
@@ -535,6 +537,7 @@ struct MomentsData: Decodable {
         page = (try? c.decode(Int.self, forKey: .page)) ?? 1
         hasMore = (try? c.decode(Int.self, forKey: .hasMore)) ?? 0
         nextBeforeId = (try? c.decode(Int64.self, forKey: .nextBeforeId)) ?? 0
+        cover = (try? c.decode(String.self, forKey: .cover)) ?? ""
     }
 }
 

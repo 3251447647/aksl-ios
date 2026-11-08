@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     @Published var contacts: ContactsData?
     @Published var friendRequests: [FriendRequest] = []
     @Published var moments: [Moment] = []
+    @Published var momentCover: String = ""
     @Published var emojis: [EmojiItem] = []
     @Published var incoming: Message?
     @Published var chatEvent: ChatEvent?
@@ -222,6 +223,7 @@ final class AppState: ObservableObject {
     func loadMoments() async {
         if let data = try? await APIClient.shared.moments() {
             moments = data.list
+            momentCover = data.cover
         } else {
             moments = []
         }

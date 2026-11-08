@@ -10,6 +10,52 @@ struct MomentsView: View {
     @State private var commentText = ""
     /** 0=全部动态 1=我的动态 */
     @State private var tab = 0
+    @State private var coverItem: PhotosPickerItem?
+
+    /// 顶部封面：自己的朋友圈封面 + 右下角相机（对齐安卓）
+    private var coverHeader: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let u = APIClient.fullURL(app.momentCover), !app.momentCover.isEmpty {
+                    AsyncImage(url: u) { phase in
+                        if let img = phase.image {
+                            img.resizable().scaledToFill()
+                        } else {
+                            AKColor.fill
+                        }
+                    }
+                } else {
+                    LinearGradient(colors: [Color(hex: 0x2F6FD0), Color(hex: 0x9CC6F5)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+            .frame(height: 160)
+            .frame(maxWidth: .infinity)
+            .clipped()
+
+            PhotosPicker(selection: $coverItem, matching: .images) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.black.opacity(0.35))
+                    .clipShape(Circle())
+            }
+            .padding(.top, 10)
+            .padding(.trailing, 12)
+        }
+    }
+
+    private func uploadCover(_ item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+        if let up = try? await APIClient.shared.upload(
+            data: data,
+            filename: "cover_\(Int(Date().timeIntervalSince1970)).jpg",
+            kind: "cover"
+        ) {
+            app.momentCover = up.url
+        }
+    }
 
     private var shownMoments: [Moment] {
         guard tab == 1 else { return app.moments }
@@ -44,6 +90,7 @@ struct MomentsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                coverHeader
                 tabBar
                 LazyVStack(spacing: 10) {
                     if tab == 1 && shownMoments.isEmpty {
@@ -95,6 +142,10 @@ struct MomentsView: View {
                 }
             }
             .refreshable { await app.loadMoments() }
+            .onChange(of: coverItem) { item in
+                guard let item else { return }
+                Task { await uploadCover(item) }
+            }
             .task { await app.loadMoments() }
             .sheet(item: $detailMoment) { m in
                 MomentDetailView(moment: m)
@@ -125,6 +176,7 @@ private struct MomentCard: View {
     let moment: Moment
     let onLike: () -> Void
     let onComment: () -> Void
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -153,7 +205,17 @@ private struct MomentCard: View {
                 Text(content)
                     .font(.system(size: 14))
                     .foregroundColor(AKColor.text)
-                    .textSelection(.enabled)
+                    .lineLimit(expanded ? nil : 4)
+                if !expanded && content.count > 60 {
+                    Button {
+                        expanded = true
+                    } label: {
+                        Text("全文")
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.link)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             if !moment.images.isEmpty {

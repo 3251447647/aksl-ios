@@ -452,19 +452,16 @@ struct ChatView: View {
     /* ---------------- 输入 ---------------- */
 
     private var inputBar: some View {
-        HStack(spacing: 10) {
-            PhotosPicker(selection: $photoItem, matching: .images) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 22))
-                    .foregroundColor(AKColor.sub)
-            }
+        HStack(spacing: 8) {
             Button {
-                showEmoji.toggle()
+                Task { await toggleRecord() }
             } label: {
-                Image(systemName: showEmoji ? "keyboard" : "face.smiling")
-                    .font(.system(size: 22))
-                    .foregroundColor(showEmoji ? AKColor.brand : AKColor.sub)
+                Image(systemName: voice.recording ? "stop.circle.fill" : "mic.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(voice.recording ? AKColor.red : AKColor.sub)
+                    .frame(width: 30, height: 30)
             }
+
             TextField(isGroup ? "发消息，@ 可提醒成员" : "发消息…", text: $text, axis: .vertical)
                 .lineLimit(1...4)
                 .padding(.horizontal, 12)
@@ -477,39 +474,35 @@ struct ChatView: View {
                     }
                 }
 
-            if isGroup {
-                Button {
-                    showAtPicker = true
-                } label: {
-                    Text("@")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(AKColor.sub)
-                }
+            Button {
+                showEmoji.toggle()
+            } label: {
+                Image(systemName: showEmoji ? "keyboard" : "face.smiling")
+                    .font(.system(size: 22))
+                    .foregroundColor(showEmoji ? AKColor.brand : AKColor.sub)
+                    .frame(width: 30, height: 30)
             }
 
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 22))
+                    .foregroundColor(AKColor.sub)
+                    .frame(width: 30, height: 30)
+            }
+
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button {
-                    Task { await toggleRecord() }
+                    Task { await send() }
                 } label: {
-                    Image(systemName: voice.recording ? "stop.circle.fill" : "mic.fill")
-                        .font(.system(size: 17, weight: .semibold))
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
-                        .frame(width: 38, height: 38)
-                        .background(voice.recording ? AKColor.red : AKColor.brand)
+                        .frame(width: 34, height: 34)
+                        .background(AKColor.brand)
                         .clipShape(Circle())
                 }
+                .disabled(sending)
             }
-            Button {
-                Task { await send() }
-            } label: {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 38, height: 38)
-                    .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AKColor.placeholder : AKColor.brand)
-                    .clipShape(Circle())
-            }
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
