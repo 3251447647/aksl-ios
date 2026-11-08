@@ -169,12 +169,19 @@ struct ChatView: View {
                 appendAt(uid: uid, name: name)
             }
         }
-        .sheet(isPresented: $showNotice) {
-            GroupNoticePopup(notice: pendingNotice) {
-                showNotice = false
-                if let n = pendingNotice {
-                    Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
+        .overlay {
+            if showNotice {
+                ZStack {
+                    Color.black.opacity(0.45).ignoresSafeArea()
+                        .onTapGesture { }
+                    GroupNoticePopup(notice: pendingNotice) {
+                        showNotice = false
+                        if let n = pendingNotice {
+                            Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
+                        }
+                    }
                 }
+                .transition(.opacity)
             }
         }
         .fullScreenCover(item: $previewImage) { item in
@@ -936,28 +943,49 @@ private struct GroupNoticePopup: View {
         VStack(spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "megaphone.fill").foregroundColor(AKColor.gold)
-                Text("群公告").font(.system(size: 16, weight: .semibold))
+                Text("群公告").font(.system(size: 16, weight: .semibold)).foregroundColor(AKColor.text)
                 Spacer()
             }
             ScrollView {
-                Text(notice?.content ?? "")
-                    .font(.system(size: 14))
-                    .foregroundColor(AKColor.text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(notice?.content ?? "")
+                        .font(.system(size: 14))
+                        .foregroundColor(AKColor.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let imgs = notice?.imageList, !imgs.isEmpty {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                            ForEach(imgs, id: \.self) { path in
+                                AsyncImage(url: APIClient.fullURL(path)) { phase in
+                                    if let image = phase.image {
+                                        image.resizable().scaledToFill()
+                                    } else {
+                                        AKColor.fill
+                                    }
+                                }
+                                .aspectRatio(1, contentMode: .fill)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                }
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 300)
             Button(action: onClose) {
-                Text("我知道了")
+                Text("我已知晓")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
                     .background(AKColor.brand)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
         }
-        .padding(20)
-        .presentationDetents([.medium])
+        .padding(18)
+        .frame(maxWidth: 340)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 24)
     }
 }
 

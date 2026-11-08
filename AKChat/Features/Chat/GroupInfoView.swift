@@ -61,6 +61,9 @@ struct GroupInfoView: View {
                     NavigationLink { GroupNoticesView(groupId: groupId) } label: {
                         Label("群公告记录", systemImage: "megaphone")
                     }
+                    NavigationLink { GroupQRCodeView(groupId: groupId) } label: {
+                        Label("群二维码", systemImage: "qrcode")
+                    }
                     NavigationLink {
                         GroupMembersView(groupId: groupId, myRole: info.myRole, myUid: app.user?.id ?? 0)
                     } label: {

@@ -6,6 +6,7 @@ struct ContactsView: View {
 
     var body: some View {
         NavigationStack {
+          ScrollViewReader { proxy in
             List {
                 Section {
                     NavigationLink {
@@ -55,8 +56,9 @@ struct ContactsView: View {
                 }
 
                 if let friends = app.contacts?.friends, !friends.isEmpty {
-                    Section("好友") {
-                        ForEach(friends) { f in
+                    ForEach(friendSections, id: \.letter) { sec in
+                        Section(header: Text(sec.letter).id("sec-" + sec.letter)) {
+                        ForEach(sec.items) { f in
                             NavigationLink {
                                 ChatView(convType: "private", convId: f.id, title: f.displayName)
                             } label: {
@@ -80,6 +82,7 @@ struct ContactsView: View {
                                 }
                                 .tint(AKColor.link)
                             }
+                        }
                         }
                     }
                 }
@@ -109,11 +112,66 @@ struct ContactsView: View {
             .navigationTitle("通讯录")
             .refreshable { await app.loadContacts() }
             .task { await app.loadContacts() }
+            .overlay(alignment: .trailing) {
+                if friendSections.count > 1 {
+                    VStack(spacing: 0) {
+                        ForEach(friendSections, id: \.letter) { sec in
+                            Text(sec.letter)
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundColor(AKColor.sub)
+                                .frame(width: 15, height: 13)
+                                .contentShape(Rectangle())
+                                .onTapGesture { proxy.scrollTo("sec-" + sec.letter, anchor: .top) }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 1)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.trailing, 2)
+                }
+            }
             .sheet(item: $profileTarget) { target in
                 NavigationStack {
                     UserProfileView(uid: target.id)
                 }
             }
+          }
         }
+    }
+
+    /// 好友按首字母分组（中文取拼音首字母），右侧索引跳转
+    private struct FriendSection: Identifiable {
+        let letter: String
+        let items: [ContactFriend]
+        var id: String { letter }
+    }
+
+    private var friendSections: [FriendSection] {
+        let friends = app.contacts?.friends ?? []
+        var buckets: [String: [ContactFriend]] = [:]
+        for f in friends {
+            buckets[Self.initial(of: f.displayName), default: []].append(f)
+        }
+        let letters = buckets.keys.sorted { a, b in
+            if a == "#" { return false }
+            if b == "#" { return true }
+            return a < b
+        }
+        return letters.map { FriendSection(letter: $0, items: (buckets[$0] ?? []).sorted { $0.displayName < $1.displayName }) }
+    }
+
+    private static func initial(of name: String) -> String {
+        let first = String(name.prefix(1))
+        guard !first.isEmpty else { return "#" }
+        if let ascii = first.uppercased().unicodeScalars.first,
+           ascii.value >= 65, ascii.value <= 90 {
+            return String(Character(ascii))
+        }
+        let mutable = NSMutableString(string: first) as CFMutableString
+        CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false)
+        CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
+        let latin = (mutable as String).uppercased()
+        if let c = latin.first, c >= "A", c <= "Z" { return String(c) }
+        return "#"
     }
 }

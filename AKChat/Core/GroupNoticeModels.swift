@@ -5,6 +5,9 @@ struct GroupNotice: Decodable, Identifiable, Equatable {
     let content: String?
     let images: String?
     let isTop: Int
+    let needAck: Int
+    let ackCount: Int
+    let myAck: Int
     let publisherName: String?
     let publisherId: Int64
     let createdAt: Int64
@@ -16,6 +19,9 @@ struct GroupNotice: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, content, images, popup
         case isTop = "is_top"
+        case needAck = "need_ack"
+        case ackCount = "ack_count"
+        case myAck = "my_ack"
         case publisherName = "publisher_name"
         case publisherId = "publisher_id"
         case createdAt = "created_at"
@@ -31,6 +37,9 @@ struct GroupNotice: Decodable, Identifiable, Equatable {
         content = try? c.decode(String.self, forKey: .content)
         images = try? c.decode(String.self, forKey: .images)
         isTop = (try? c.decode(Int.self, forKey: .isTop)) ?? 0
+        needAck = (try? c.decode(Int.self, forKey: .needAck)) ?? 0
+        ackCount = (try? c.decode(Int.self, forKey: .ackCount)) ?? 0
+        myAck = (try? c.decode(Int.self, forKey: .myAck)) ?? 0
         publisherName = try? c.decode(String.self, forKey: .publisherName)
         publisherId = (try? c.decode(Int64.self, forKey: .publisherId)) ?? 0
         createdAt = (try? c.decode(Int64.self, forKey: .createdAt)) ?? 0

@@ -243,6 +243,15 @@ final class APIClient {
         ])
     }
 
+    /// 我已知晓（服务端会同时写老哈希确认，避免再弹）
+    func ackGroupNotice(id: Int64) async {
+        await postIgnore("api/v1/group/notice/ack", body: ["id": id])
+    }
+
+    func deleteGroupNotice(gid: Int64, id: Int64) async {
+        await postIgnore("api/v1/group/notice/delete", body: ["gid": gid, "id": id])
+    }
+
     func createGroup(name: String, intro: String, members: [Int64]) async throws -> CreateGroupResult {
         try await post("api/v1/group/create", body: [
             "name": name,
