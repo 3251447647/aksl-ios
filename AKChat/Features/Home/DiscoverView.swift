@@ -5,6 +5,8 @@ struct DiscoverView: View {
     @EnvironmentObject private var app: AppState
     @State private var showScanner = false
     @State private var showInvite = false
+    @State private var scanUid: Int64 = 0
+    @State private var showScanProfile = false
 
     var body: some View {
         NavigationStack {
@@ -73,11 +75,34 @@ struct DiscoverView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("广场")
             .fullScreenCover(isPresented: $showScanner) {
-                ScannerView()
+                ScannerView { code in
+                    showScanner = false
+                    openCode(code)
+                }
             }
             .sheet(isPresented: $showInvite) {
                 NavigationStack { InviteView() }
             }
+            .sheet(isPresented: $showScanProfile) {
+                NavigationStack { UserProfileView(uid: scanUid) }
+            }
+        }
+    }
+
+    /// 扫码结果：链接里带 id= 或纯数字时直接打开个人主页
+    private func openCode(_ code: String) {
+        let text = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = text.range(of: "id=") {
+            let num = text[range.upperBound...].prefix { $0.isNumber }
+            if let uid = Int64(num), uid > 0 {
+                scanUid = uid
+                showScanProfile = true
+                return
+            }
+        }
+        if let uid = Int64(text), uid > 0 {
+            scanUid = uid
+            showScanProfile = true
         }
     }
 
