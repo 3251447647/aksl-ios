@@ -8,18 +8,51 @@ struct MomentsView: View {
     @State private var detailMoment: Moment?
     @State private var commentTarget: Moment?
     @State private var commentText = ""
+    /** 0=全部动态 1=我的动态 */
+    @State private var tab = 0
+
+    private var shownMoments: [Moment] {
+        guard tab == 1 else { return app.moments }
+        let me = app.user?.id ?? 0
+        return app.moments.filter { $0.userId == me }
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(["全部动态", "我的动态"].enumerated()), id: \.offset) { i, title in
+                Button {
+                    tab = i
+                } label: {
+                    Text(title)
+                        .font(.system(size: 14, weight: tab == i ? .semibold : .regular))
+                        .foregroundColor(tab == i ? AKColor.brand : AKColor.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .background(tab == i ? AKColor.card : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
+                tabBar
                 LazyVStack(spacing: 10) {
-                    if app.moments.isEmpty {
-                        Text("还没有动态，点右上角发布一条")
+                    if tab == 1 && shownMoments.isEmpty {
+                        Text("你还没有发过动态")
                             .font(.system(size: 13))
                             .foregroundColor(AKColor.muted)
                             .padding(.top, 60)
                     }
-                    ForEach(app.moments) { moment in
+                    ForEach(shownMoments) { moment in
                         MomentCard(
                             moment: moment,
                             onLike: { Task { await app.likeMoment(moment) } },
