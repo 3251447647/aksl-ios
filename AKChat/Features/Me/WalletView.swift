@@ -19,6 +19,9 @@ struct WalletView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
             }
+            Section {
+                NavigationLink("USDT 充值") { UsdtView() }
+            }
             Section("账单") {
                 ForEach(logs) { log in
                     HStack {
