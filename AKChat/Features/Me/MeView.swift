@@ -38,6 +38,14 @@ struct MeView: View {
                     NavigationLink { VipView() } label: { row("会员中心", (app.user?.vipLevel ?? 0) > 0 ? "VIP\(app.user?.vipLevel ?? 0)" : "未开通", "crown") }
                     NavigationLink { FavoritesView() } label: { row("我的收藏", "", "star") }
                     NavigationLink { PrettyNumbersView() } label: { row("我的靓号", (app.user?.prettyYxid?.isEmpty == false) ? (app.user?.prettyYxid ?? "") : "未拥有", "number") }
+                    NavigationLink {
+                        PosterView(
+                            name: app.user?.displayName ?? "我",
+                            avatar: app.user?.avatar,
+                            number: app.user?.displayNo ?? "",
+                            uid: app.user?.id ?? 0
+                        )
+                    } label: { row("我的海报", "", "square.and.arrow.up") }
                 }
 
                 Section {
