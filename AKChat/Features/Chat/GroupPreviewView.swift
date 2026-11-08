@@ -73,12 +73,6 @@ extension APIClient {
     func groupPreview(id: Int64) async throws -> GroupPreviewInfo {
         try await get("api/v1/group/preview", query: ["id": "\(id)"])
     }
-
-    func joinGroup(id: Int64, reason: String = "") async throws {
-        var body: [String: Any] = ["id": id]
-        if !reason.isEmpty { body["reason"] = reason }
-        try await postRaw("api/v1/group/join", body: body)
-    }
 }
 
 struct GroupPreviewView: View {
@@ -211,7 +205,7 @@ struct GroupPreviewView: View {
         busy = true
         defer { busy = false }
         do {
-            try await APIClient.shared.joinGroup(id: groupId, reason: needAudit ? reason : "")
+            _ = try await APIClient.shared.joinGroup(id: groupId, reason: needAudit ? reason : "")
             if needAudit {
                 applied = true
                 showReason = false
