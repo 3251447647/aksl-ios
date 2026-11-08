@@ -36,6 +36,7 @@ struct SettingsView: View {
                     Text(version).foregroundColor(AKColor.muted)
                 }
                 Link("关于我们", destination: URL(string: "https://www.aksliao.cn/about.php")!)
+                NavigationLink("关于与更新") { AboutUpdateView() }
                 Link("联系客服", destination: URL(string: "https://www.aksliao.cn/service.php")!)
                 Link("用户协议与隐私政策", destination: URL(string: "https://www.aksliao.cn/register.php")!)
             }

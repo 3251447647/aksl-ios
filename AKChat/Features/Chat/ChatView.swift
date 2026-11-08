@@ -131,6 +131,13 @@ struct ChatView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                NavigationLink {
+                    MessageSearchView(scopeType: convType, scopeId: convId, scopeTitle: title)
+                } label: {
+                    Image(systemName: "magnifyingglass").foregroundColor(AKColor.text)
+                }
+            }
             if !isGroup {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
