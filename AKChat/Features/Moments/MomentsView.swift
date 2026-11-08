@@ -142,7 +142,7 @@ private struct MomentCard: View {
                             BadgeView(text: no, color: AKColor.link, background: AKColor.blueSoft)
                         }
                     }
-                    Text(TimeText.short(moment.createdAt))
+                    Text(Self.relative(moment.createdAt))
                         .font(.system(size: 11))
                         .foregroundColor(AKColor.muted)
                 }
@@ -157,7 +157,8 @@ private struct MomentCard: View {
             }
 
             if !moment.images.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 6)], spacing: 6) {
+                let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+                LazyVGrid(columns: cols, spacing: 6) {
                     ForEach(moment.images.prefix(9), id: \.self) { path in
                         AsyncImage(url: APIClient.fullURL(path)) { phase in
                             if let image = phase.image {
@@ -166,30 +167,72 @@ private struct MomentCard: View {
                                 AKColor.fill
                             }
                         }
-                        .frame(height: 100)
+                        .aspectRatio(1, contentMode: .fill)
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                 }
             }
 
-            HStack(spacing: 18) {
-                Button(action: onLike) {
-                    Label("\(moment.likeCount)", systemImage: moment.liked == 1 ? "heart.fill" : "heart")
-                        .font(.system(size: 12))
-                        .foregroundColor(moment.liked == 1 ? AKColor.red : AKColor.muted)
-                }
+            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.top, 2)
+
+            HStack(spacing: 20) {
+                Spacer()
+                Text("转发")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.link)
                 Button(action: onComment) {
-                    Label("\(moment.commentCount)", systemImage: "text.bubble")
-                        .font(.system(size: 12))
-                        .foregroundColor(AKColor.muted)
+                    HStack(spacing: 4) {
+                        Text("\(moment.commentCount)")
+                        Image(systemName: "text.bubble")
+                    }
+                    .font(.system(size: 13))
+                    .foregroundColor(moment.commentCount > 0 ? AKColor.link : AKColor.muted)
+                }
+                Button(action: onLike) {
+                    HStack(spacing: 4) {
+                        Image(systemName: moment.liked == 1 ? "heart.fill" : "heart")
+                        Text("\(moment.likeCount)")
+                    }
+                    .font(.system(size: 13))
+                    .foregroundColor(moment.liked == 1 ? AKColor.red : AKColor.muted)
                 }
             }
 
-            if !moment.likes.isEmpty {
-                Text("赞：" + moment.likes.compactMap { $0.name }.joined(separator: "、"))
-                    .font(.system(size: 12))
-                    .foregroundColor(AKColor.sub)
+            if !moment.likes.isEmpty || !moment.comments.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    if !moment.likes.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 11))
+                                .foregroundColor(AKColor.red)
+                            Text(moment.likes.compactMap { $0.name }.joined(separator: "、"))
+                                .font(.system(size: 12.5))
+                                .foregroundColor(AKColor.text)
+                                .lineLimit(2)
+                        }
+                    }
+                    if !moment.comments.isEmpty {
+                        if !moment.likes.isEmpty {
+                            Rectangle().fill(AKColor.line).frame(height: 0.5)
+                        }
+                        ForEach(moment.comments.prefix(6)) { c in
+                            HStack(alignment: .top, spacing: 4) {
+                                Text(c.name ?? "成员")
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(AKColor.link)
+                                Text(c.content ?? "")
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(AKColor.text)
+                                    .lineLimit(3)
+                            }
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AKColor.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             if !moment.comments.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
@@ -208,6 +251,17 @@ private struct MomentCard: View {
         .padding(12)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期
+    static func relative(_ ts: Int64) -> String {
+        guard ts > 0 else { return "" }
+        let diff = Date().timeIntervalSince1970 - TimeInterval(ts)
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
+        if diff < 86400 * 30 { return "\(Int(diff / 86400))天前" }
+        return TimeText.short(ts)
     }
 }
 
