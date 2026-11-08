@@ -45,12 +45,32 @@ struct ContactsView: View {
                         GroupInvitesView()
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: "envelope.fill")
-                                .font(.system(size: 17)).foregroundColor(.white)
+                            Image(systemName: "person.3.fill")
+                                .font(.system(size: 16)).foregroundColor(.white)
                                 .frame(width: 40, height: 40)
                                 .background(AKColor.link)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            Text("群邀请").foregroundColor(AKColor.text)
+                            Text("群通知").foregroundColor(AKColor.text)
+                            Spacer()
+                            if (app.contacts?.groupInviteUnread ?? 0) > 0 {
+                                Text("\(app.contacts?.groupInviteUnread ?? 0)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(AKColor.red).clipShape(Capsule())
+                            }
+                        }
+                    }
+                    NavigationLink {
+                        NoticesView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "megaphone.fill")
+                                .font(.system(size: 16)).foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color(hex: 0x5AA9F5))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            Text("系统公告").foregroundColor(AKColor.text)
                         }
                     }
                 }

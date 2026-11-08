@@ -18,7 +18,7 @@ struct MainTabView: View {
             ZStack {
                 HomeView().opacity(tab == 0 ? 1 : 0).allowsHitTesting(tab == 0)
                 ContactsView().opacity(tab == 1 ? 1 : 0).allowsHitTesting(tab == 1)
-                MomentsView().opacity(tab == 2 ? 1 : 0).allowsHitTesting(tab == 2)
+                DiscoverView().opacity(tab == 2 ? 1 : 0).allowsHitTesting(tab == 2)
                 MeView().opacity(tab == 3 ? 1 : 0).allowsHitTesting(tab == 3)
             }
             .padding(.bottom, 54)
