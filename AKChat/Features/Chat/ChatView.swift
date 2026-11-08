@@ -889,6 +889,11 @@ private struct ChatMessageRow: View {
                         onOpenLive: onOpenLive,
                         onOpenGroup: onOpenGroup
                     )
+                    if mine && message.isRead == 1 && message.type != 11 {
+                        Text("已读")
+                            .font(.system(size: 10))
+                            .foregroundColor(AKColor.hint)
+                    }
                     if mine && message.status == 2 {
                         Button(action: onRetry) {
                             HStack(spacing: 3) {
