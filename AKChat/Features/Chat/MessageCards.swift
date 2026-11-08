@@ -10,6 +10,8 @@ struct MessageBody: View {
     var onVoiceTap: () -> Void = {}
     /// 直播分享卡片点击：带入群 gid，由 ChatView 打开直播间
     var onOpenLive: (Int64) -> Void = { _ in }
+    /// 群名片点击：带入群 gid，由 ChatView 打开群资料
+    var onOpenGroup: (Int64) -> Void = { _ in }
 
     private var ex: [String: JSONValue] { message.extraMap }
     private var rawText: String { message.text ?? message.content ?? "" }
@@ -306,6 +308,11 @@ struct MessageBody: View {
         .frame(width: 236, alignment: .leading)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            let gid = Int64(ex.int("gid"))
+            if gid > 0 { onOpenGroup(gid) }
+        }
     }
 
     /// 直播分享卡片（type=19）：gid/name/avatar/title/live_id，点击进直播间

@@ -45,6 +45,8 @@ struct ChatView: View {
     @State private var chatBg: String?
     @State private var showLive = false
     @State private var liveGid: Int64 = 0
+    @State private var previewGroupId: Int64 = 0
+    @State private var showGroupPreview = false
     @State private var showCall = false
 
     private var myId: Int64 { app.user?.id ?? 0 }
@@ -221,6 +223,9 @@ struct ChatView: View {
         .fullScreenCover(isPresented: $showLive) {
             NavigationStack { LiveRoomView(gid: liveGid) }
         }
+        .sheet(isPresented: $showGroupPreview) {
+            NavigationStack { GroupPreviewView(groupId: previewGroupId) }
+        }
         .fullScreenCover(isPresented: $showCall) {
             CallScreen()
         }
@@ -364,6 +369,10 @@ struct ChatView: View {
             onOpenLive: { gid in
                 liveGid = gid
                 showLive = true
+            },
+            onOpenGroup: { gid in
+                previewGroupId = gid
+                showGroupPreview = true
             }
         )
         .contentShape(Rectangle())
@@ -818,6 +827,7 @@ private struct ChatMessageRow: View {
     let onRetry: () -> Void
     let onAvatarTap: () -> Void
     var onOpenLive: (Int64) -> Void = { _ in }
+    var onOpenGroup: (Int64) -> Void = { _ in }
 
     private var displayName: String {
         let name = member?.name ?? message.fromName ?? ""
@@ -876,7 +886,8 @@ private struct ChatMessageRow: View {
                         mine: mine,
                         playingVoice: playingVoice,
                         onVoiceTap: onVoiceTap,
-                        onOpenLive: onOpenLive
+                        onOpenLive: onOpenLive,
+                        onOpenGroup: onOpenGroup
                     )
                     if mine && message.status == 2 {
                         Button(action: onRetry) {
