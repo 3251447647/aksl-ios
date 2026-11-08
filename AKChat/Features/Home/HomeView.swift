@@ -376,7 +376,7 @@ private struct ConversationRow: View {
                 } else if conv.isMute == 1 {
                     Image(systemName: "speaker.slash.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(AKColor.label)
+                        .foregroundColor(AKColor.hint)
                 }
             }
             .frame(minWidth: 44, alignment: .trailing)

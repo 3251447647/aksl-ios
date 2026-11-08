@@ -60,8 +60,8 @@ struct UserProfileView: View {
                     let up = try await APIClient.shared.upload(data: data, filename: "bg.jpg", kind: "bg")
                     let r = try await APIClient.shared.setChatBg(convType: "private", convId: uid, url: up.url)
                     await MainActor.run { chatBg = r.bg ?? "" }
-                } catch {
-                    await MainActor.run { error = error.localizedDescription }
+                } catch let err {
+                    await MainActor.run { error = err.localizedDescription }
                 }
             }
         }
