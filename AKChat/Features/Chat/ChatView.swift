@@ -3,11 +3,6 @@ import PhotosUI
 import Combine
 import UIKit
 
-struct PreviewImage: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
 struct ProfileTarget: Identifiable {
     let id: Int64
 }
@@ -192,7 +187,7 @@ struct ChatView: View {
             }
         }
         .fullScreenCover(item: $previewImage) { item in
-            ImagePreviewScreen(url: item.url)
+            MediaPagerView(urls: item.urls, index: item.index)
         }
         .sheet(item: $profileTarget) { target in
             NavigationStack {
@@ -376,7 +371,16 @@ struct ChatView: View {
             if msg.type == 5, let url = msg.text, !url.isEmpty {
                 Button {
                     if let u = APIClient.fullURL(VoiceService.cleanPath(url)) {
-                        previewImage = PreviewImage(url: u)
+                        var list: [URL] = []
+                        var at = 0
+                        for m in messages where m.type == 5 {
+                            if let t = m.text, let mu = APIClient.fullURL(VoiceService.cleanPath(t)) {
+                                if t == url { at = list.count }
+                                list.append(mu)
+                            }
+                        }
+                        if list.isEmpty { list = [u] }
+                        previewImage = PreviewImage(urls: list, index: at)
                     }
                 } label: {
                     Label("查看大图", systemImage: "photo")
@@ -996,46 +1000,3 @@ private struct GroupNoticePopup: View {
     }
 }
 
-private struct ImagePreviewScreen: View {
-    let url: URL
-    @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFit()
-                        .scaleEffect(scale)
-                        .gesture(
-                            MagnificationGesture()
-                                .onChanged { value in
-                                    scale = min(max(value, 1), 4)
-                                }
-                        )
-                } else {
-                    ProgressView().tint(.white)
-                }
-            }
-            VStack {
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(width: 36, height: 36)
-                            .background(Color.white.opacity(0.18))
-                            .clipShape(Circle())
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                Spacer()
-            }
-        }
-    }
-}
