@@ -9,6 +9,7 @@ struct ProfileTarget: Identifiable {
 
 struct ChatView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
 
     let convType: String
     let convId: Int64
