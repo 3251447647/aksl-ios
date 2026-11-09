@@ -5,7 +5,7 @@ import SwiftUI
 struct MainTabView: View {
     @EnvironmentObject private var app: AppState
     @State private var tab = 0
-    @AppStorage("floatingBubble") private var bubbleOn = true
+    @AppStorage("floatingBubble") private var bubbleOn = false
     @State private var bubbleChat: BubbleChat?
 
     private let tabs: [(icon: String, title: String)] = [

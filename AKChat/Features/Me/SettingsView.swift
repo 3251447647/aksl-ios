@@ -8,7 +8,7 @@ struct SettingsView: View {
     @State private var showLogout = false
     @State private var showDelete = false
     @AppStorage("colorSchemeMode") private var schemeMode = 0
-    @AppStorage("floatingBubble") private var bubbleOn = true
+    @AppStorage("floatingBubble") private var bubbleOn = false
 
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
 

@@ -46,6 +46,7 @@ struct ChatView: View {
     @State private var showLive = false
     @State private var liveGid: Int64 = 0
     @State private var active: GroupActiveData?
+    @State private var groupInfo: GroupInfo?
     @State private var showGroupCall = false
     @State private var showMore = false
     @State private var showPhotoPicker = false
@@ -118,6 +119,7 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            chatHeader
             if let pinText {
                 pinBar(pinText)
             }
@@ -194,6 +196,7 @@ struct ChatView: View {
         )
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 NavigationLink {
@@ -323,6 +326,7 @@ struct ChatView: View {
                 await loadMembers()
                 await loadPendingNotice()
                 active = try? await APIClient.shared.groupActive(gid: convId)
+                groupInfo = try? await APIClient.shared.groupInfo(id: convId)
             }
         }
         .onReceive(app.$incoming.compactMap { $0 }) { msg in
@@ -532,6 +536,65 @@ struct ChatView: View {
 
     /* ---------------- 输入 ---------------- */
 
+    /// 安卓式头部：返回箭头 + 标题（群靓徽章）+ 搜索/通话
+    private var chatHeader: some View {
+        HStack(spacing: 10) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                    .frame(width: 32, height: 32)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+                    .lineLimit(1)
+                if isGroup, let g = groupInfo, g.isPretty == 1, !g.displayNo.isEmpty {
+                    PrettyBadge(number: g.displayNo, isGroup: true)
+                }
+            }
+            Spacer(minLength: 0)
+            NavigationLink {
+                MessageSearchView(scopeType: convType, scopeId: convId, scopeTitle: title)
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 17))
+                    .foregroundColor(AKColor.text)
+                    .frame(width: 32, height: 32)
+            }
+            if isGroup {
+                Button {
+                    showGroupInfo = true
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .frame(width: 32, height: 32)
+                }
+            } else {
+                Menu {
+                    Button("语音通话") { startCall(1) }
+                    Button("视频通话") { startCall(2) }
+                } label: {
+                    Image(systemName: "phone")
+                        .font(.system(size: 17))
+                        .foregroundColor(AKColor.text)
+                        .frame(width: 32, height: 32)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 46)
+        .background(AKColor.card)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AKColor.line).frame(height: 0.5)
+        }
+    }
+
     private var inputBar: some View {
         HStack(spacing: 8) {
             Button {
@@ -572,12 +635,14 @@ struct ChatView: View {
                     .foregroundColor(AKColor.sub)
                     .frame(width: 30, height: 30)
             }
-            .confirmationDialog("更多", isPresented: $showMore, titleVisibility: .hidden) {
-                Button("相册") { showPhotoPicker = true }
-                Button("红包") { showRedPacket = true }
-                Button("转账") { showTransfer = true }
-                Button("礼物") { showGift = true }
-                Button("取消", role: .cancel) {}
+            .sheet(isPresented: $showMore) {
+                MorePanel(
+                    onPhoto: { showMore = false; showPhotoPicker = true },
+                    onRedPacket: { showMore = false; showRedPacket = true },
+                    onTransfer: { showMore = false; showTransfer = true },
+                    onGift: { showMore = false; showGift = true }
+                )
+                .presentationDetents([.height(250)])
             }
 
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
