@@ -68,7 +68,7 @@ struct MeView: View {
                         }
                         .buttonStyle(.plain)
                         menuDivider
-                        Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
+                        NavigationLink { CustomerServiceView() } label: {
                             menuCell("headphones", Color(hex: 0x2FA84F), "联系客服")
                         }
                         menuDivider

@@ -4,6 +4,7 @@ import SwiftUI
 struct WalletView: View {
     @State private var info: WalletInfo?
     @State private var logs: [WalletLog] = []
+    @State private var usdt: UsdtConfig?
     @State private var errorText: String?
     @State private var filter = 0
 
@@ -25,6 +26,11 @@ struct WalletView: View {
                 .listRowBackground(Color.clear)
 
             quickRow
+                .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 10, trailing: 14))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+
+            usdtEntry
                 .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -137,9 +143,12 @@ struct WalletView: View {
             }
             .buttonStyle(.plain)
 
-            Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
+            NavigationLink {
+                CustomerServiceView()
+            } label: {
                 quickAction("🎧", "客服", Color(hex: 0x2FA84F))
             }
+            .buttonStyle(.plain)
         }
     }
 
@@ -159,6 +168,46 @@ struct WalletView: View {
         .padding(.vertical, 14)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - USDT 充值入口
+
+    private var usdtEntry: some View {
+        NavigationLink {
+            UsdtView()
+        } label: {
+            HStack(spacing: 10) {
+                Text("₮")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color(hex: 0x43C463))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("USDT 充值（TRC20）")
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                    Text(usdtSubtitle)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AKColor.hint)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AKColor.placeholder)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .background(AKColor.brandSoft)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var usdtSubtitle: String {
+        guard let usdt, usdt.enabled == 1, usdt.rate > 0 else { return "自动识别到账，实时加K币" }
+        return "自动识别到账 · 1 USDT ≈ \(Int(usdt.rate)) K币"
     }
 
     // MARK: - 明细头
@@ -224,7 +273,7 @@ struct WalletView: View {
                     .foregroundColor(income ? Color(hex: 0x2FA84F) : AKColor.red)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .frame(height: 56)
 
             if !last {
                 Rectangle()
@@ -239,6 +288,7 @@ struct WalletView: View {
         do {
             info = try await APIClient.shared.walletInfo()
             logs = try await APIClient.shared.walletLogs().list
+            usdt = try? await APIClient.shared.usdtConfig()
             errorText = nil
         } catch {
             errorText = error.localizedDescription

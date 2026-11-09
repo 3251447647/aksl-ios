@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             UIOffset(horizontal: -200, vertical: 0), for: .default
         )
         UITableView.appearance().sectionHeaderTopPadding = 0
+        // 图片/接口缓存：减少重复下载，明显加快列表与朋友圈图片加载
+        URLCache.shared = URLCache(memoryCapacity: 64 * 1024 * 1024,
+                                   diskCapacity: 512 * 1024 * 1024)
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
             guard granted else { return }

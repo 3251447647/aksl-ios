@@ -30,7 +30,7 @@ struct PrettyNumbersView: View {
             }
 
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 8) {
                     if loading {
                         ProgressView().padding(.top, 40)
                     }
@@ -50,7 +50,7 @@ struct PrettyNumbersView: View {
                         Text(error).font(.system(size: 12)).foregroundColor(AKColor.red)
                     }
                 }
-                .padding(14)
+                .padding(12)
             }
         }
         .background(AKColor.bg)
@@ -84,7 +84,7 @@ struct PrettyNumbersView: View {
             Text(title)
                 .font(.system(size: 13, weight: selected == id ? .semibold : .regular))
                 .foregroundColor(selected == id ? .white : AKColor.sub)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 15)
                 .frame(height: 30)
                 .background(selected == id ? AKColor.brand : AKColor.fill)
                 .clipShape(Capsule())
@@ -94,15 +94,20 @@ struct PrettyNumbersView: View {
     private func row(_ item: PrettyNumberItem) -> some View {
         HStack(spacing: 12) {
             Text(item.number)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .font(.system(size: 21, weight: .bold, design: .rounded))
                 .foregroundColor(AKColor.gold)
-                .frame(minWidth: 96, alignment: .leading)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(item.price) K币").font(.system(size: 13)).foregroundColor(AKColor.text)
+                Text("\(item.price) K币")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(AKColor.text)
                 Text("当前余额 \(Int(app.user?.coin ?? 0)) K币")
-                    .font(.system(size: 11)).foregroundColor(AKColor.muted)
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.muted)
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button {
                 payPassword = ""
                 buyTarget = item
@@ -110,13 +115,15 @@ struct PrettyNumbersView: View {
                 Text("购买")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .frame(height: 32)
+                    .padding(.horizontal, 16)
+                    .frame(height: 30)
                     .background(AKColor.brand)
                     .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .frame(height: 66)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }

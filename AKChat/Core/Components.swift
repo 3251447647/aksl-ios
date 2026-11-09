@@ -187,6 +187,20 @@ enum TimeText {
         return formatter("yyyy-MM-dd").string(from: d)
     }
 
+    /// 会话列表时间：今天 HH:mm / 昨天 HH:mm / 今年 MM-dd / 更早 yyyy-MM-dd
+    static func listTime(_ ts: Int64) -> String {
+        guard ts > 0 else { return "" }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        let d = date(ts)
+        if cal.isDateInToday(d) { return formatter("HH:mm").string(from: d) }
+        if cal.isDateInYesterday(d) { return "昨天 " + formatter("HH:mm").string(from: d) }
+        if cal.component(.year, from: d) == cal.component(.year, from: Date()) {
+            return formatter("MM-dd").string(from: d)
+        }
+        return formatter("yyyy-MM-dd").string(from: d)
+    }
+
     /// 聊天内时间分隔：与上一条相差 5 分钟以上或跨天时显示
     static func divider(previous: Int64, current: Int64) -> String? {
         guard current > 0 else { return nil }

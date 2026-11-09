@@ -284,12 +284,24 @@ struct ChatView: View {
                 ZStack {
                     Color.black.opacity(0.45).ignoresSafeArea()
                         .onTapGesture { }
-                    GroupNoticePopup(notice: pendingNotice) {
-                        showNotice = false
-                        if let n = pendingNotice {
-                            Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
+                    GroupNoticePopup(
+                        notice: pendingNotice,
+                        onClose: {
+                            showNotice = false
+                            if let n = pendingNotice {
+                                Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
+                            }
+                        },
+                        groupName: groupInfo?.name ?? title,
+                        groupAvatar: groupInfo?.avatar,
+                        onOpenProfile: {
+                            showNotice = false
+                            if let n = pendingNotice {
+                                Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
+                            }
+                            showGroupInfo = true
                         }
-                    }
+                    )
                 }
                 .transition(.opacity)
             }
@@ -409,18 +421,35 @@ struct ChatView: View {
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
             chatBg = cachedBg()
-            if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
-                chatBg = r.bg
-                storeBg(r.bg)
-            }
+            /* 先把消息拉下来渲染，其余数据并行补齐，避免打开会话卡顿 */
             await load()
-            await app.loadEmojis()
-            await loadPin()
+
+            Task {
+                if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
+                    chatBg = r.bg
+                    storeBg(r.bg)
+                }
+            }
+            Task {
+                async let emojis: Void = app.loadEmojis()
+                async let pin: Void = loadPin()
+                _ = await (emojis, pin)
+            }
             if isGroup {
-                await loadMembers()
-                await loadPendingNotice()
-                active = try? await APIClient.shared.groupActive(gid: convId)
-                groupInfo = try? await APIClient.shared.groupInfo(id: convId)
+                Task {
+                    async let members: Void = loadMembers()
+                    async let notice: Void = loadPendingNotice()
+                    _ = await (members, notice)
+                }
+                Task {
+                    async let activeReq = APIClient.shared.groupActive(gid: convId)
+                    async let infoReq = APIClient.shared.groupInfo(id: convId)
+                    let (a, i) = await (try? activeReq, try? infoReq)
+                    await MainActor.run {
+                        active = a
+                        groupInfo = i
+                    }
+                }
             }
         }
         .onReceive(app.$incoming.compactMap { $0 }) { msg in
@@ -437,6 +466,8 @@ struct ChatView: View {
         .onReceive(app.$chatEvent.compactMap { $0 }) { ev in
             handle(ev)
         }
+        .reportsDetailPage()
+        .restoresSwipeBack()
     }
 
     /* ---------------- 列表 ---------------- */
@@ -1745,60 +1776,6 @@ private struct AtMemberPicker: View {
             }
         }
         .presentationDetents([.height(430)])
-    }
-}
-
-private struct GroupNoticePopup: View {
-    let notice: GroupNotice?
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                Image(systemName: "megaphone.fill").foregroundColor(AKColor.gold)
-                Text("群公告").font(.system(size: 16, weight: .semibold)).foregroundColor(AKColor.text)
-                Spacer()
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(notice?.content ?? "")
-                        .font(.system(size: 14))
-                        .foregroundColor(AKColor.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let imgs = notice?.imageList, !imgs.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                            ForEach(imgs, id: \.self) { path in
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.fill
-                                    }
-                                }
-                                .aspectRatio(1, contentMode: .fill)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 300)
-            Button(action: onClose) {
-                Text("我已知晓")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(AKColor.brand)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: 340)
-        .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .padding(.horizontal, 24)
     }
 }
 

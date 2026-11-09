@@ -14,68 +14,69 @@ struct DiscoverView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 10) {
-                    VStack(spacing: 0) {
-                        NavigationLink {
-                            MomentsView()
-                        } label: {
-                            row("朋友圈", icon: "photo.on.rectangle.angled", tint: AKColor.brand,
-                                trailing: AnyView(HStack(spacing: 8) {
-                                    if momentUnread > 0 {
-                                        Text("\(min(momentUnread, 99))")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 4)
-                                            .frame(minWidth: 18, minHeight: 18)
-                                            .background(AKColor.red)
-                                            .clipShape(Capsule())
-                                    }
-                                    AvatarView(url: app.user?.avatar,
-                                               name: app.user?.displayName ?? "我",
-                                               size: 26)
-                                }))
+            VStack(spacing: 0) {
+                titleBar
+                ScrollView {
+                    VStack(spacing: 10) {
+                        card {
+                            NavigationLink {
+                                MomentsView()
+                            } label: {
+                                row("朋友圈", icon: "photo.on.rectangle.angled", tint: AKColor.brand,
+                                    trailing: AnyView(HStack(spacing: 8) {
+                                        if momentUnread > 0 {
+                                            Text("\(min(momentUnread, 99))")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 4)
+                                                .frame(minWidth: 18, minHeight: 18)
+                                                .background(AKColor.red)
+                                                .clipShape(Capsule())
+                                        }
+                                        AvatarView(url: app.user?.avatar,
+                                                   name: app.user?.displayName ?? "我",
+                                                   size: 30)
+                                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    }))
+                            }
+                            .buttonStyle(.plain)
+                            divider
+                            Button {
+                                showScanner = true
+                            } label: {
+                                row("扫一扫", icon: "qrcode.viewfinder", tint: Color(hex: 0x57C7FF))
+                            }
+                            .buttonStyle(.plain)
+                            divider
+                            Button {
+                                showInvite = true
+                            } label: {
+                                row("邀请有礼", icon: "gift.fill", tint: Color(hex: 0xFF8A65))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                        divider
-                        Button {
-                            showScanner = true
-                        } label: {
-                            row("扫一扫", icon: "qrcode.viewfinder", tint: Color(hex: 0x57C7FF))
-                        }
-                        .buttonStyle(.plain)
-                        divider
-                        Button {
-                            showInvite = true
-                        } label: {
-                            row("邀请有礼", icon: "gift.fill", tint: Color(hex: 0xFF8A65))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .background(AKColor.card)
 
-                    VStack(spacing: 0) {
-                        NavigationLink {
-                            FavoritesView()
-                        } label: {
-                            row("我的收藏", icon: "star.circle.fill", tint: AKColor.gold)
+                        card {
+                            NavigationLink {
+                                FavoritesView()
+                            } label: {
+                                row("我的收藏", icon: "star.circle.fill", tint: AKColor.gold)
+                            }
+                            .buttonStyle(.plain)
+                            divider
+                            NavigationLink {
+                                NoticesView()
+                            } label: {
+                                row("系统公告", icon: "megaphone.fill", tint: Color(hex: 0x8B7CF6))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                        divider
-                        NavigationLink {
-                            NoticesView()
-                        } label: {
-                            row("系统公告", icon: "megaphone.fill", tint: Color(hex: 0x8B7CF6))
-                        }
-                        .buttonStyle(.plain)
                     }
-                    .background(AKColor.card)
+                    .padding(.top, 10)
                 }
-                .padding(.top, 10)
             }
             .background(AKColor.bg)
-            .navigationTitle("广场")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(isPresented: $showScanner) {
                 ScannerView { code in
                     showScanner = false
@@ -108,6 +109,27 @@ struct DiscoverView: View {
         }
     }
 
+    /// 标题：左对齐 20 bold（与安卓 DiscoverScreen 一致）
+    private var titleBar: some View {
+        Text("广场")
+            .font(.system(size: 20, weight: .bold))
+            .foregroundColor(AKColor.text)
+            .padding(.leading, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AKColor.card)
+    }
+
+    /// 分组卡片：圆角 12，行间分隔线从图标右侧起
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     /// 广场行：图标 38 圆角 10、行高 54、右侧箭头
     private func row(_ title: String, icon: String, tint: Color, trailing: AnyView? = nil) -> some View {
         HStack(spacing: 12) {
@@ -118,7 +140,7 @@ struct DiscoverView: View {
                 .background(tint)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             Text(title)
-                .font(.system(size: 15.5))
+                .font(.system(size: 15))
                 .foregroundColor(AKColor.text)
             Spacer(minLength: 0)
             if let trailing {

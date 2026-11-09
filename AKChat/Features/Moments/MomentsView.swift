@@ -264,17 +264,21 @@ struct MomentCard: View {
                 if !images.isEmpty {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
                         ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
-                            AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                if let image = phase.image {
-                                    image.resizable().scaledToFill()
-                                } else {
-                                    AKColor.fill
-                                }
-                            }
-                            .aspectRatio(1, contentMode: .fill)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .simultaneousGesture(TapGesture().onEnded { onPreview?(idx) })
+                            Color.clear
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay(
+                                    AsyncImage(url: APIClient.fullURL(path)) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            AKColor.fill
+                                        }
+                                    }
+                                )
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .contentShape(Rectangle())
+                                .onTapGesture { onPreview?(idx) }
                         }
                     }
                     .padding(.top, 8)
@@ -493,14 +497,21 @@ private struct PublishMomentView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
                         ForEach(Array(previews.enumerated()), id: \.offset) { idx, data in
                             ZStack(alignment: .topTrailing) {
-                                if let image = UIImage(data: data) {
-                                    Image(uiImage: image)
-                                        .resizable().scaledToFill()
-                                        .frame(maxWidth: .infinity)
-                                        .aspectRatio(1, contentMode: .fill)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                }
+                                Color.clear
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .overlay(
+                                        Group {
+                                            if let image = UIImage(data: data) {
+                                                Image(uiImage: image)
+                                                    .resizable()
+                                                    .scaledToFill()
+                                            } else {
+                                                AKColor.fill
+                                            }
+                                        }
+                                    )
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                                 Button {
                                     previews.remove(at: idx)
                                     if idx < items.count { items.remove(at: idx) }

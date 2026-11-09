@@ -161,7 +161,7 @@ struct EditProfileView: View {
                         .foregroundColor(AKColor.gold)
                 }
                 Spacer(minLength: 8)
-                Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
+                NavigationLink { CustomerServiceView() } label: {
                     Text("联系客服")
                         .font(.system(size: 12.5))
                         .foregroundColor(AKColor.gold)

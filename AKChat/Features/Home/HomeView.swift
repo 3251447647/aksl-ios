@@ -59,32 +59,54 @@ struct HomeView: View {
                 conversationList
             }
             .background(AKColor.bg)
+            .overlay(alignment: .topTrailing) {
+                if plusOpen {
+                    plusMenu
+                        .padding(.trailing, 8)
+                        .padding(.top, 52)
+                        .transition(.opacity)
+                        .zIndex(10)
+                }
+            }
+            .overlay {
+                if plusOpen {
+                    Color.black.opacity(0.001)
+                        .ignoresSafeArea()
+                        .onTapGesture { plusOpen = false }
+                        .zIndex(9)
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await app.refreshConversations() }
             .task {
                 await app.refreshConversations()
                 await app.loadContacts()
             }
-            .sheet(isPresented: $showCreateGroup) {
-                NavigationStack { CreateGroupView() }
-            }
-            .sheet(isPresented: $showAddFriend) {
-                NavigationStack { AddFriendView() }
-            }
             .sheet(isPresented: $showScanner) {
                 ScannerView { code in handleScan(code) }
             }
-            .sheet(item: $scanTarget) { target in
-                NavigationStack { UserProfileView(uid: target.id) }
+            .navigationDestination(isPresented: $showCreateGroup) {
+                CreateGroupView().reportsDetailPage().restoresSwipeBack()
             }
-            .sheet(isPresented: $showSearch) {
-                NavigationStack { SearchView() }
+            .navigationDestination(isPresented: $showAddFriend) {
+                AddFriendView().reportsDetailPage().restoresSwipeBack()
             }
-            .sheet(isPresented: $showRequests) {
-                NavigationStack { FriendRequestsView() }
+            .navigationDestination(isPresented: $showSearch) {
+                SearchView().reportsDetailPage().restoresSwipeBack()
             }
-            .sheet(isPresented: $showGroupInvites) {
-                NavigationStack { GroupInvitesView() }
+            .navigationDestination(isPresented: $showRequests) {
+                FriendRequestsView().reportsDetailPage().restoresSwipeBack()
+            }
+            .navigationDestination(isPresented: $showGroupInvites) {
+                GroupInvitesView().reportsDetailPage().restoresSwipeBack()
+            }
+            .navigationDestination(isPresented: Binding(
+                get: { scanTarget != nil },
+                set: { if !$0 { scanTarget = nil } }
+            )) {
+                if let target = scanTarget {
+                    UserProfileView(uid: target.id).reportsDetailPage().restoresSwipeBack()
+                }
             }
         }
     }
@@ -120,19 +142,6 @@ struct HomeView: View {
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .background(AKColor.card)
-        .overlay(alignment: .topTrailing) {
-            if plusOpen {
-                plusMenu
-            }
-        }
-        .overlay {
-            if plusOpen {
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture { plusOpen = false }
-                    .zIndex(-1)
-            }
-        }
     }
 
     /// 与安卓一致：深色圆角浮层，168 宽，四项（发起群聊 / 添加好友·群 / 扫一扫 / 一键已读）
@@ -354,13 +363,13 @@ private struct ConversationRow: View {
                     Spacer(minLength: 0)
                 }
                 summary
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 13))
                     .lineLimit(1)
             }
 
             /* 右侧固定窄列：时间在上，未读在下 */
             VStack(alignment: .trailing, spacing: 3) {
-                Text(TimeText.short(conv.lastTime))
+                Text(TimeText.listTime(conv.lastTime))
                     .font(.system(size: 10.5))
                     .foregroundColor(AKColor.hint)
                     .lineLimit(1)

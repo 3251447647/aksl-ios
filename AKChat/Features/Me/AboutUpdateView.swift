@@ -13,7 +13,7 @@ struct AboutUpdateView: View {
         ("💬", 0x2FBE6E, "即时通讯", "文字、图片、语音、表情、引用、转发，一个都不少。"),
         ("⭐", 0xFF4D6D, "靓号系统", "众多珍稀靓号任你挑选，让你的AK号一眼出众。"),
         ("👑", 0xFFB020, "VIP 会员", "VIP / SVIP 双等级尊贵体验，专属徽章、更高群成员上限。"),
-        ("🎁", 0xFF6B4A, "红包 · 转账 · 礼物", "单聊群聊都支持，用K币让互动更有心意。"),
+        ("🎁", 0xFF6B4A, "红包 · 转账 · 礼物", "单聊群聊都支持，发红包、转账、送礼物，用K币让互动更有心意。"),
         ("👥", 0x6C8AE4, "群聊体验", "多人群聊、@全体、置顶消息、群公告、全员禁言、群靓号。"),
         ("🛡", 0x2FBE6E, "隐私安全", "密码加密存储，支付密码独立验证，聊天记录本地可控。")
     ]
@@ -307,7 +307,7 @@ struct AboutUpdateView: View {
                 linkRow("🌐", 0x2FBE6E, "官方网站", officialSite)
             }
             divider64
-            Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
+            NavigationLink { CustomerServiceView() } label: {
                 linkRow("🎧", 0x6C8AE4, "在线客服", "有任何问题，欢迎随时咨询")
             }
         }
@@ -368,7 +368,7 @@ struct AboutUpdateView: View {
                         .background(AKColor.card)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
+                NavigationLink { CustomerServiceView() } label: {
                     Text("在线客服")
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundColor(.white)
