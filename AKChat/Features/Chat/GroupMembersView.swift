@@ -14,11 +14,49 @@ struct GroupMembersView: View {
     @State private var showTransfer = false
     @State private var confirmDissolve = false
     @State private var dissolveName = ""
+    @State private var settings: GroupSettings?
 
     private var canManage: Bool { myRole == 1 || myRole == 2 }
 
     var body: some View {
         List {
+            if let s = settings {
+                Section("群等级") {
+                    HStack {
+                        Text("群主").font(.system(size: 13)).foregroundColor(AKColor.sub)
+                        Spacer()
+                        Text(s.ownerVipLabel.isEmpty ? "普通用户" : s.ownerVipLabel)
+                            .font(.system(size: 13))
+                            .foregroundColor(s.ownerVipLevel > 0 ? AKColor.gold : AKColor.hint)
+                    }
+                    HStack {
+                        Text("当前人数").font(.system(size: 13)).foregroundColor(AKColor.sub)
+                        Spacer()
+                        Text("\(s.memberCount) / \(s.maxMember) 人")
+                            .font(.system(size: 13))
+                            .foregroundColor(s.memberCount >= s.maxMember ? AKColor.red : AKColor.text)
+                    }
+                    if s.ownerVipLevel > 0 {
+                        Text(s.ownerUpgradeLeft > 0 ? "还可升级 \(s.ownerUpgradeLeft) 个群聊" : "暂无可升级群聊")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(s.ownerUpgradeLeft > 0 ? AKColor.gold : AKColor.hint)
+                    } else {
+                        Text("开通 VIP / SVIP 后可提升群人数上限")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(AKColor.hint)
+                    }
+                    if s.canUpgrade == 1 {
+                        Button {
+                            Task { await upgrade() }
+                        } label: {
+                            Text("升级群人数上限到 \(s.upgradeMaxMember) 人")
+                                .font(.system(size: 14))
+                                .foregroundColor(AKColor.brand)
+                        }
+                    }
+                }
+            }
+
             if canManage && !requests.isEmpty {
                 Section("入群申请（\(requests.count)）") {
                     ForEach(requests) { r in
@@ -133,6 +171,17 @@ struct GroupMembersView: View {
         }
         if canManage {
             requests = (try? await APIClient.shared.groupJoinRequests(gid: groupId))?.list ?? []
+        }
+        settings = try? await APIClient.shared.groupSettings(gid: groupId)
+    }
+
+    private func upgrade() async {
+        do {
+            try await APIClient.shared.upgradeGroup(gid: groupId)
+            tipText = "已升级群人数上限"
+            await load()
+        } catch {
+            tipText = error.localizedDescription
         }
     }
 
