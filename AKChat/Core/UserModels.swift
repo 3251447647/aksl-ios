@@ -19,9 +19,10 @@ struct UserProfile: Decodable, Identifiable, Equatable {
     let isSelf: Int
     let isBlocked: Int
     let isBot: Int
+    let moments: [ProfileMoment]
 
     enum CodingKeys: String, CodingKey {
-        case id, nickname, avatar, online, bio, remark
+        case id, nickname, avatar, online, bio, remark, moments
         case yxId = "yx_id"
         case prettyYxid = "pretty_yxid"
         case showYxid = "show_yxid"
@@ -56,6 +57,7 @@ struct UserProfile: Decodable, Identifiable, Equatable {
         isSelf = (try? c.decode(Int.self, forKey: .isSelf)) ?? 0
         isBlocked = (try? c.decode(Int.self, forKey: .isBlocked)) ?? 0
         isBot = (try? c.decode(Int.self, forKey: .isBot)) ?? 0
+        moments = (try? c.decode([ProfileMoment].self, forKey: .moments)) ?? []
     }
 
     var displayName: String { remark.isEmpty ? nickname : remark }
@@ -73,4 +75,20 @@ extension APIClient {
     func deleteFriend(userId: Int64) async {
         await postIgnore("api/v1/friend/delete", body: ["user_id": userId])
     }
+}
+
+/// 资料页里的 TA 的动态（服务端 /user/profile 的 moments 字段）
+struct ProfileMoment: Decodable, Identifiable {
+    let id: Int64
+    let img: String
+    let text: String
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int64.self, forKey: .id)) ?? 0
+        img = (try? c.decode(String.self, forKey: .img)) ?? ""
+        text = (try? c.decode(String.self, forKey: .text)) ?? ""
+    }
+
+    enum CodingKeys: String, CodingKey { case id, img, text }
 }

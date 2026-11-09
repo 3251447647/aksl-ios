@@ -28,6 +28,7 @@ struct UserProfileView: View {
                     header(p)
                     actionRow(p)
                     detailCard(p)
+                    momentCard(p)
                     bgCard()
                 } else {
                     Text(error ?? "加载失败")
@@ -133,6 +134,54 @@ struct UserProfileView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func momentCard(_ p: UserProfile) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("朋友圈").font(.system(size: 14.5, weight: .medium)).foregroundColor(AKColor.text)
+            if p.moments.isEmpty {
+                Text("TA 还没有发布过动态")
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.placeholder)
+            } else {
+                ForEach(p.moments.prefix(4)) { m in
+                    HStack(spacing: 10) {
+                        if !m.img.isEmpty, let u = APIClient.fullURL(m.img) {
+                            AsyncImage(url: u) { phase in
+                                if let img = phase.image {
+                                    img.resizable().scaledToFill()
+                                } else {
+                                    AKColor.fill
+                                }
+                            }
+                            .frame(width: 54, height: 54)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        Text(m.text.isEmpty ? "[图片]" : m.text)
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.text)
+                            .lineLimit(2)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            NavigationLink {
+                MessageSearchView(scopeType: "private", scopeId: p.id, scopeTitle: p.displayName)
+            } label: {
+                HStack {
+                    Text("查找聊天记录").font(.system(size: 13)).foregroundColor(AKColor.sub)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(AKColor.hint)
+                }
+                .padding(.top, 4)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
