@@ -229,8 +229,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func publishMoment(content: String, images: [String]) async {
-        await APIClient.shared.publishMoment(content: content, images: images)
+    func publishMoment(content: String, images: [String],
+                       videoUrl: String = "", duration: Int = 0, cover: String = "") async {
+        await APIClient.shared.publishMoment(content: content, images: images,
+                                             videoUrl: videoUrl, duration: duration, cover: cover)
         await loadMoments()
     }
 

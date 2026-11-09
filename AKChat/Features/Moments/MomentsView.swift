@@ -1,6 +1,8 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import AVFoundation
+import AVKit
 
 struct MomentsView: View {
     @EnvironmentObject private var app: AppState
@@ -151,8 +153,9 @@ struct MomentsView: View {
                 MomentDetailView(moment: m)
             }
             .sheet(isPresented: $showPublish) {
-                PublishMomentView { content, images in
-                    await app.publishMoment(content: content, images: images)
+                PublishMomentView { content, images, videoUrl, duration, cover in
+                    await app.publishMoment(content: content, images: images,
+                                            videoUrl: videoUrl, duration: duration, cover: cover)
                 }
             }
             .alert("评论", isPresented: Binding(
@@ -177,6 +180,7 @@ private struct MomentCard: View {
     let onLike: () -> Void
     let onComment: () -> Void
     @State private var expanded = false
+    @State private var playVideo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -233,6 +237,34 @@ private struct MomentCard: View {
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
+                }
+            }
+
+            if !moment.videoUrl.isEmpty {
+                ZStack {
+                    if let u = APIClient.fullURL(moment.videoCover) {
+                        AsyncImage(url: u) { phase in
+                            if let img = phase.image {
+                                img.resizable().scaledToFill()
+                            } else {
+                                Color.black.opacity(0.85)
+                            }
+                        }
+                    } else {
+                        Color.black.opacity(0.85)
+                    }
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.white.opacity(0.92))
+                }
+                .frame(height: 200)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+                .onTapGesture { playVideo = true }
+                .fullScreenCover(isPresented: $playVideo) {
+                    MomentVideoPlayer(url: APIClient.fullURL(moment.videoUrl))
                 }
             }
 
@@ -343,7 +375,12 @@ private struct PublishMomentView: View {
     @State private var publishing = false
     @State private var errorText: String?
 
-    let onPublish: (String, [String]) async -> Void
+    let onPublish: (String, [String], String, Int, String) async -> Void
+    @State private var videoItem: PhotosPickerItem?
+    @State private var videoURL: String = ""
+    @State private var videoCover: String = ""
+    @State private var videoDuration: Int = 0
+    @State private var uploadingVideo = false
 
     var body: some View {
         NavigationStack {
@@ -361,6 +398,30 @@ private struct PublishMomentView: View {
                 PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
                     Label("添加图片", systemImage: "photo")
                         .font(.system(size: 14))
+                }
+
+                PhotosPicker(selection: $videoItem, matching: .videos) {
+                    Label(uploadingVideo ? "视频上传中…" : (videoURL.isEmpty ? "添加视频" : "更换视频"),
+                          systemImage: "video")
+                        .font(.system(size: 14))
+                }
+                if !videoCover.isEmpty, let u = APIClient.fullURL(videoCover) {
+                    ZStack {
+                        AsyncImage(url: u) { phase in
+                            if let img = phase.image {
+                                img.resizable().scaledToFill()
+                            } else {
+                                AKColor.fill
+                            }
+                        }
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 34))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(height: 180)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
                 if !previews.isEmpty {
@@ -411,6 +472,10 @@ private struct PublishMomentView: View {
                     .disabled(publishing || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && items.isEmpty))
                 }
             }
+            .onChange(of: videoItem) { item in
+                guard let item else { return }
+                Task { await uploadVideo(item) }
+            }
             .onChange(of: items) { list in
                 Task {
                     var dataList: [Data] = []
@@ -423,6 +488,53 @@ private struct PublishMomentView: View {
                 }
             }
         }
+    }
+
+    /// 视频：读数据 → 上传（kind=video）→ 抽首帧当封面（kind=moment）
+    private func uploadVideo(_ item: PhotosPickerItem) async {
+        uploadingVideo = true
+        errorText = nil
+        defer { uploadingVideo = false }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            if data.count > 60 * 1024 * 1024 {
+                errorText = "视频不能超过 60MB"
+                return
+            }
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("moment_\(Int(Date().timeIntervalSince1970)).mov")
+            try data.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+
+            let asset = AVURLAsset(url: tmp)
+            let seconds = Int(CMTimeGetSeconds(asset.duration))
+            videoDuration = seconds > 0 ? seconds : 0
+
+            if let coverData = Self.coverData(from: asset) {
+                let up = try await app.uploadImage(coverData)
+                videoCover = up.url
+            }
+
+            let upVideo = try await APIClient.shared.upload(
+                data: data,
+                filename: "moment_\(Int(Date().timeIntervalSince1970)).mp4",
+                kind: "video"
+            )
+            videoURL = upVideo.url
+        } catch {
+            errorText = "视频上传失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// 取视频首帧压缩成 jpg
+    private static func coverData(from asset: AVURLAsset) -> Data? {
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 720, height: 720)
+        guard let cg = try? gen.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil) else {
+            return nil
+        }
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.8)
     }
 
     private func publish() async {
@@ -440,7 +552,43 @@ private struct PublishMomentView: View {
                 return
             }
         }
-        await onPublish(text.trimmingCharacters(in: .whitespacesAndNewlines), urls)
+        await onPublish(text.trimmingCharacters(in: .whitespacesAndNewlines), urls,
+                        videoURL, videoDuration, videoCover)
         dismiss()
+    }
+}
+
+/// 朋友圈视频播放：全屏播放，点击关闭
+struct MomentVideoPlayer: View {
+    let url: URL?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let url {
+                VideoPlayer(player: AVPlayer(url: url))
+                    .ignoresSafeArea()
+            } else {
+                Text("视频地址无效").foregroundColor(.white)
+            }
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .background(Color.white.opacity(0.18))
+                            .clipShape(Circle())
+                    }
+                    .padding(14)
+                }
+                Spacer()
+            }
+        }
     }
 }

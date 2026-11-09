@@ -376,13 +376,14 @@ final class APIClient {
         ])
     }
 
-    func publishMoment(content: String, images: [String]) async {
+    func publishMoment(content: String, images: [String],
+                       videoUrl: String = "", duration: Int = 0, cover: String = "") async {
         await postIgnore("api/v1/moments/publish", body: [
             "content": content,
             "images": images,
-            "video_url": "",
-            "duration": 0,
-            "cover": ""
+            "video_url": videoUrl,
+            "duration": duration,
+            "cover": cover
         ])
     }
 

@@ -487,10 +487,15 @@ struct Moment: Decodable, Identifiable, Equatable {
     let createdAt: Int64
     let likes: [MomentLike]
     let comments: [MomentComment]
+    let videoUrl: String
+    let videoCover: String
+    let duration: Int
 
     enum CodingKeys: String, CodingKey {
-        case id, nickname, avatar, content, images, liked, likes, comments
+        case id, nickname, avatar, content, images, liked, likes, comments, duration
         case userId = "user_id"
+        case videoUrl = "video_url"
+        case videoCover = "cover"
         case likeCount = "like_count"
         case commentCount = "comment_count"
         case vipLevel = "vip_level"
@@ -512,6 +517,9 @@ struct Moment: Decodable, Identifiable, Equatable {
         vipLevel = (try? c.decode(Int.self, forKey: .vipLevel)) ?? 0
         prettyYxid = try? c.decode(String.self, forKey: .prettyYxid)
         createdAt = (try? c.decode(Int64.self, forKey: .createdAt)) ?? 0
+        videoUrl = (try? c.decode(String.self, forKey: .videoUrl)) ?? ""
+        videoCover = (try? c.decode(String.self, forKey: .videoCover)) ?? ""
+        duration = (try? c.decode(Int.self, forKey: .duration)) ?? 0
         likes = (try? c.decode([MomentLike].self, forKey: .likes)) ?? []
         comments = (try? c.decode([MomentComment].self, forKey: .comments)) ?? []
     }
