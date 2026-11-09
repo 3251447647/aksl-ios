@@ -2353,7 +2353,9 @@ private struct RecordingOverlay: View {
                     let t = ctx.date.timeIntervalSince1970
                     HStack(spacing: 3) {
                         ForEach(0..<5, id: \.self) { i in
-                            let h = CGFloat(8 + 16 * (0.5 + 0.5 * sin(t * 4 + Double(i) * 0.6)))
+                            let phase: Double = t * 4 + Double(i) * 0.6
+                            let ratio: Double = 0.5 + 0.5 * sin(phase)
+                            let h: CGFloat = CGFloat(8.0 + 16.0 * ratio)
                             Capsule()
                                 .fill(Color(hex: 0x4ADE80))
                                 .frame(width: 4, height: h)
