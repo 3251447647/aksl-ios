@@ -47,6 +47,7 @@ struct GroupInfo: Decodable {
     let myRole: Int
     let myMuteUntil: Int64
     let allowInvite: Int
+    let myNickname: String
     let members: [GroupMember]
 
     enum CodingKeys: String, CodingKey {
@@ -62,6 +63,7 @@ struct GroupInfo: Decodable {
         case myRole = "my_role"
         case myMuteUntil = "my_mute_until"
         case allowInvite = "allow_invite"
+        case myNickname = "my_nickname"
     }
 
     init(from decoder: Decoder) throws {
@@ -82,6 +84,7 @@ struct GroupInfo: Decodable {
         myRole = (try? c.decode(Int.self, forKey: .myRole)) ?? 0
         myMuteUntil = (try? c.decode(Int64.self, forKey: .myMuteUntil)) ?? 0
         allowInvite = (try? c.decode(Int.self, forKey: .allowInvite)) ?? 1
+        myNickname = (try? c.decode(String.self, forKey: .myNickname)) ?? ""
         members = (try? c.decode([GroupMember].self, forKey: .members)) ?? []
     }
 

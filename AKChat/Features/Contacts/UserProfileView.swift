@@ -15,6 +15,7 @@ struct UserProfileView: View {
     @State private var remarkText = ""
     @State private var showDelete = false
     @State private var showChat = false
+    @State private var showCall = false
     @State private var chatBg: String = ""
     @State private var showBgPicker = false
     @State private var bgItem: PhotosPickerItem?
@@ -51,6 +52,9 @@ struct UserProfileView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .fullScreenCover(isPresented: $showCall) {
+            CallScreen()
+        }
         .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
         .onChange(of: bgItem) { item in
             guard let item else { return }
@@ -189,6 +193,22 @@ struct UserProfileView: View {
     private func actionRow(_ p: UserProfile) -> some View {
         HStack(spacing: 10) {
             if p.isSelf == 0 {
+                Button {
+                    Task {
+                        await CallManager.shared.start(peerUid: p.id, name: p.displayName, avatar: p.avatar, type: 1)
+                        showCall = true
+                    }
+                } label: {
+                    actionLabel("语音通话", "phone.fill", AKColor.brand)
+                }
+                Button {
+                    Task {
+                        await CallManager.shared.start(peerUid: p.id, name: p.displayName, avatar: p.avatar, type: 2)
+                        showCall = true
+                    }
+                } label: {
+                    actionLabel("视频通话", "video.fill", AKColor.brand)
+                }
                 Button {
                     showChat = true
                 } label: {

@@ -56,3 +56,12 @@ extension APIClient {
         _ = try await postRaw("api/v1/group/dissolve", body: ["gid": gid, "name": name])
     }
 }
+
+extension APIClient {
+    /// 修改我在本群的昵称（user_id 传自己）
+    func setGroupMyNickname(gid: Int64, userId: Int64, nickname: String) async throws {
+        _ = try await postRaw("api/v1/group/member/nick", body: [
+            "gid": gid, "user_id": userId, "nickname": nickname
+        ])
+    }
+}

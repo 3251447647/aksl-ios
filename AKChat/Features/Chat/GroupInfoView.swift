@@ -15,6 +15,8 @@ struct GroupInfoView: View {
     @State private var chatBg: String = ""
     @State private var showBgPicker = false
     @State private var bgItem: PhotosPickerItem?
+    @State private var showNick = false
+    @State private var nickDraft = ""
 
     private var isOwner: Bool { (info?.myRole ?? 0) == 1 }
     private var isManager: Bool { isOwner || (info?.myRole ?? 0) == 2 }
@@ -57,6 +59,11 @@ struct GroupInfoView: View {
                     await MainActor.run { errorText = error.localizedDescription }
                 }
             }
+        }
+        .alert("修改我在本群的昵称", isPresented: $showNick) {
+            TextField("留空则使用昵称", text: $nickDraft)
+            Button("取消", role: .cancel) {}
+            Button("保存") { Task { await saveNick() } }
         }
         .alert("退出群聊？", isPresented: $confirmLeave) {
             Button("取消", role: .cancel) {}
@@ -216,6 +223,24 @@ struct GroupInfoView: View {
             }
             .buttonStyle(.plain)
 
+            divider
+                Button {
+                    nickDraft = g.myNickname
+                    showNick = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("我在本群的昵称").font(.system(size: 14.5)).foregroundColor(AKColor.text)
+                        Spacer()
+                        Text(g.myNickname.isEmpty ? "未设置" : g.myNickname)
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.hint)
+                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(AKColor.hint)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 50)
+                }
+                .buttonStyle(.plain)
+
             if isOwner {
                 divider
                 Button {
@@ -293,6 +318,17 @@ struct GroupInfoView: View {
                 chatBg = bg.bg ?? ""
             }
             errorText = nil
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func saveNick() async {
+        do {
+            try await APIClient.shared.setGroupMyNickname(
+                gid: groupId, userId: app.user?.id ?? 0, nickname: nickDraft.trimmingCharacters(in: .whitespaces)
+            )
+            await load()
         } catch {
             errorText = error.localizedDescription
         }
