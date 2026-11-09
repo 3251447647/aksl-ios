@@ -323,12 +323,14 @@ struct ContactGroup: Decodable, Identifiable, Equatable {
     var memberCount: Int
     var isPretty: Int
     var prettyNo: String?
+    var myRole: Int
 
     enum CodingKeys: String, CodingKey {
         case id, name, avatar
         case memberCount = "member_count"
         case isPretty = "is_pretty"
         case prettyNo = "pretty_no"
+        case myRole = "my_role"
     }
 
     init(from decoder: Decoder) throws {
@@ -339,6 +341,7 @@ struct ContactGroup: Decodable, Identifiable, Equatable {
         memberCount = (try? c.decode(Int.self, forKey: .memberCount)) ?? 0
         isPretty = (try? c.decode(Int.self, forKey: .isPretty)) ?? 0
         prettyNo = try? c.decode(String.self, forKey: .prettyNo)
+        myRole = (try? c.decode(Int.self, forKey: .myRole)) ?? 0
     }
 }
 

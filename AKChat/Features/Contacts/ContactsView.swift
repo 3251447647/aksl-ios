@@ -266,6 +266,11 @@ struct ContactsView: View {
                                 if g.isPretty == 1, let no = g.prettyNo, !no.isEmpty {
                                     PrettyBadge(number: no, isGroup: true)
                                 }
+                                if g.myRole == 1 {
+                                    BadgeView(text: "群主", color: AKColor.gold, background: AKColor.goldSoft)
+                                } else if g.myRole == 2 {
+                                    BadgeView(text: "管理员", color: AKColor.link, background: AKColor.blueSoft)
+                                }
                             }
                             Text("\(g.memberCount) 人")
                                 .font(.system(size: 12))
