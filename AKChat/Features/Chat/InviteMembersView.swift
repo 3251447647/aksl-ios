@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 邀请好友入群：搜索 + 多选 + 底部「邀请 N 人」，已在本群的成员置灰不可选
-/// 布局与文案对齐安卓 InviteFriendsScreen.kt
+/// 邀请好友入群：搜索 + 多选 + 底部「邀请 N 人」
+/// 行高、头像与搜索框尺寸对齐安卓 InviteFriendsScreen.kt
 struct InviteMembersView: View {
     let groupId: Int64
 
@@ -13,7 +13,6 @@ struct InviteMembersView: View {
     @State private var loading = true
     @State private var sending = false
     @State private var groupName = ""
-    @State private var memberIds: Set<Int64> = []
 
     private var shown: [InvitableFriend] {
         let k = keyword.trimmingCharacters(in: .whitespaces)
@@ -23,8 +22,6 @@ struct InviteMembersView: View {
                 || ($0.nickname ?? "").range(of: k, options: .caseInsensitive) != nil
         }
     }
-
-    private func joined(_ f: InvitableFriend) -> Bool { memberIds.contains(f.id) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -81,7 +78,7 @@ struct InviteMembersView: View {
     private var searchBar: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(.system(size: 15))
                 .foregroundColor(AKColor.hint)
             TextField("搜索好友昵称 / AK号", text: $keyword)
                 .font(.system(size: 13.5))
@@ -99,7 +96,7 @@ struct InviteMembersView: View {
             }
         }
         .padding(.horizontal, 11)
-        .frame(height: 36)
+        .frame(height: 38)
         .background(AKColor.fill)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .padding(.horizontal, 14)
@@ -122,10 +119,8 @@ struct InviteMembersView: View {
     }
 
     private func friendRow(_ f: InvitableFriend) -> some View {
-        let joinedAlready = joined(f)
         let checked = selected.contains(f.id)
         return Button {
-            guard !joinedAlready else { return }
             if checked { selected.remove(f.id) } else { selected.insert(f.id) }
         } label: {
             HStack(spacing: 11) {
@@ -144,34 +139,25 @@ struct InviteMembersView: View {
                     }
                 }
                 AvatarView(url: f.avatar, name: f.displayName, size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(f.displayName)
-                        .font(.system(size: 15))
-                        .foregroundColor(joinedAlready ? AKColor.muted : AKColor.text)
-                        .lineLimit(1)
-                    if joinedAlready {
-                        Text("已在本群")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(AKColor.hint)
-                    }
-                }
+                Text(f.displayName)
+                    .font(.system(size: 15))
+                    .foregroundColor(AKColor.text)
+                    .lineLimit(1)
                 Spacer(minLength: 6)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 9)
             .frame(height: 58)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(joinedAlready)
     }
 
     private var bottomBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Text("已选 \(selected.count) 人")
                 .font(.system(size: 13))
                 .foregroundColor(AKColor.sub)
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
             Button {
                 Task { await invite() }
             } label: {
@@ -179,9 +165,9 @@ struct InviteMembersView: View {
                     .font(.system(size: 13.5, weight: .medium))
                     .foregroundColor(.white)
                     .padding(.horizontal, 22)
-                    .padding(.vertical, 9)
+                    .frame(height: 38)
                     .background(selected.isEmpty ? AKColor.line : AKColor.brand)
-                    .clipShape(Capsule())
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(selected.isEmpty || sending)
@@ -189,9 +175,6 @@ struct InviteMembersView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(AKColor.card)
-        .overlay(alignment: .top) {
-            Rectangle().fill(AKColor.line).frame(height: 0.5)
-        }
     }
 
     private func load() async {
@@ -203,9 +186,7 @@ struct InviteMembersView: View {
         }
         if let info = try? await APIClient.shared.groupInfo(id: groupId) {
             groupName = info.name ?? ""
-            memberIds = Set(info.members.map { $0.uid })
         }
-        selected = selected.subtracting(memberIds)
     }
 
     private func invite() async {

@@ -1,10 +1,177 @@
 import SwiftUI
 import LiveKit
 import ReplayKit
-import UIKit
 
-/// 群直播间：顶部返回 + 标题（在线人数）/ 画面区 / 评论区 / 弹幕输入条 / 主播控制条
-/// 结构与交互对齐安卓 GroupLiveScreen.kt + GroupLiveUi.kt
+/// 直播评论（含会员/靓号角标字段，Core 的 LiveComment 没有）
+struct LiveCommentFull: Decodable, Identifiable {
+    let id: Int64
+    let uid: Int64
+    let nickname: String?
+    let avatar: String?
+    let pretty: Int
+    let prettyNo: String?
+    let vipLevel: Int
+    let content: String
+    let createdAt: Int64
+    let system: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, uid, nickname, avatar, pretty, content, system
+        case prettyNo = "pretty_no"
+        case vipLevel = "vip_level"
+        case createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int64.self, forKey: .id)) ?? 0
+        uid = (try? c.decode(Int64.self, forKey: .uid)) ?? 0
+        nickname = try? c.decode(String.self, forKey: .nickname)
+        avatar = try? c.decode(String.self, forKey: .avatar)
+        pretty = (try? c.decode(Int.self, forKey: .pretty)) ?? 0
+        prettyNo = try? c.decode(String.self, forKey: .prettyNo)
+        vipLevel = (try? c.decode(Int.self, forKey: .vipLevel)) ?? 0
+        content = (try? c.decode(String.self, forKey: .content)) ?? ""
+        createdAt = (try? c.decode(Int64.self, forKey: .createdAt)) ?? 0
+        system = (try? c.decode(Int.self, forKey: .system)) ?? 0
+    }
+}
+
+struct LiveMicRequestItem: Decodable, Identifiable {
+    let uid: Int64
+    let nickname: String?
+    let avatar: String?
+
+    var id: Int64 { uid }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        uid = (try? c.decode(Int64.self, forKey: .uid)) ?? 0
+        nickname = try? c.decode(String.self, forKey: .nickname)
+        avatar = try? c.decode(String.self, forKey: .avatar)
+    }
+
+    enum CodingKeys: String, CodingKey { case uid, nickname, avatar }
+}
+
+struct LiveMemberItem: Decodable, Identifiable {
+    let uid: Int64
+    let nickname: String?
+    let avatar: String?
+    let role: Int
+    let mic: Int
+    let requesting: Int
+    let muted: Int
+    let muteUntil: Int64
+
+    var id: Int64 { uid }
+
+    enum CodingKeys: String, CodingKey {
+        case uid, nickname, avatar, role, mic, requesting, muted
+        case muteUntil = "mute_until"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        uid = (try? c.decode(Int64.self, forKey: .uid)) ?? 0
+        nickname = try? c.decode(String.self, forKey: .nickname)
+        avatar = try? c.decode(String.self, forKey: .avatar)
+        role = (try? c.decode(Int.self, forKey: .role)) ?? 2
+        mic = (try? c.decode(Int.self, forKey: .mic)) ?? 0
+        requesting = (try? c.decode(Int.self, forKey: .requesting)) ?? 0
+        muted = (try? c.decode(Int.self, forKey: .muted)) ?? 0
+        muteUntil = (try? c.decode(Int64.self, forKey: .muteUntil)) ?? 0
+    }
+}
+
+struct LiveMembersData: Decodable {
+    let members: [LiveMemberItem]
+    let hostId: Int64
+    let canManage: Int
+
+    enum CodingKeys: String, CodingKey {
+        case members
+        case hostId = "host_id"
+        case canManage = "can_manage"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        members = (try? c.decode([LiveMemberItem].self, forKey: .members)) ?? []
+        hostId = (try? c.decode(Int64.self, forKey: .hostId)) ?? 0
+        canManage = (try? c.decode(Int.self, forKey: .canManage)) ?? 0
+    }
+}
+
+struct LivePollFull: Decodable {
+    let active: Int
+    let status: Int
+    let viewers: Int
+    let screen: Int
+    let comments: [LiveCommentFull]
+    let maxCommentId: Int64
+    let myMic: Int
+    let myMuteUntil: Int64
+    let myRequest: Int
+    let allowMic: Int
+    let micMode: Int
+    let micRequests: [LiveMicRequestItem]
+    let canManage: Int
+    let hostId: Int64
+    let kicked: Int
+
+    enum CodingKeys: String, CodingKey {
+        case active, status, viewers, screen, comments, kicked
+        case maxCommentId = "max_comment_id"
+        case myMic = "my_mic"
+        case myMuteUntil = "my_mute_until"
+        case myRequest = "my_request"
+        case allowMic = "allow_mic"
+        case micMode = "mic_mode"
+        case micRequests = "mic_requests"
+        case canManage = "can_manage"
+        case hostId = "host_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        active = (try? c.decode(Int.self, forKey: .active)) ?? 0
+        status = (try? c.decode(Int.self, forKey: .status)) ?? 1
+        viewers = (try? c.decode(Int.self, forKey: .viewers)) ?? 0
+        screen = (try? c.decode(Int.self, forKey: .screen)) ?? 0
+        comments = (try? c.decode([LiveCommentFull].self, forKey: .comments)) ?? []
+        maxCommentId = (try? c.decode(Int64.self, forKey: .maxCommentId)) ?? 0
+        myMic = (try? c.decode(Int.self, forKey: .myMic)) ?? 0
+        myMuteUntil = (try? c.decode(Int64.self, forKey: .myMuteUntil)) ?? 0
+        myRequest = (try? c.decode(Int.self, forKey: .myRequest)) ?? 0
+        allowMic = (try? c.decode(Int.self, forKey: .allowMic)) ?? 1
+        micMode = (try? c.decode(Int.self, forKey: .micMode)) ?? 1
+        micRequests = (try? c.decode([LiveMicRequestItem].self, forKey: .micRequests)) ?? []
+        canManage = (try? c.decode(Int.self, forKey: .canManage)) ?? 0
+        hostId = (try? c.decode(Int64.self, forKey: .hostId)) ?? 0
+        kicked = (try? c.decode(Int.self, forKey: .kicked)) ?? 0
+    }
+}
+
+/// 直播间弹层
+private enum LiveSheet: Identifiable {
+    case leave
+    case members
+    case member(LiveMemberItem)
+    case mute(LiveMemberItem)
+
+    var id: String {
+        switch self {
+        case .leave: return "leave"
+        case .members: return "members"
+        case .member(let m): return "member-\(m.uid)"
+        case .mute(let m): return "mute-\(m.uid)"
+        }
+    }
+}
+
+/// 群直播间：顶部标题/离开 → 40% 画面区（主播头像 + 在线人数）→ 评论区 → 弹幕输入 → 工具栏
+/// 结构对齐安卓 GroupLiveScreen.kt + GroupLiveUi.kt（主播 5 项 / 观众 4 项）
 struct LiveRoomView: View {
     let gid: Int64
 
@@ -20,11 +187,12 @@ struct LiveRoomView: View {
     @State private var isHost = false
     @State private var liveTitle = ""
     @State private var viewers = 0
-    @State private var comments: [LiveComment] = []
+    @State private var comments: [LiveCommentFull] = []
     @State private var lastCommentId: Int64 = 0
     @State private var commentText = ""
     @State private var tip: String?
     @State private var pollTask: Task<Void, Never>?
+    @State private var tipTask: Task<Void, Never>?
 
     @State private var groupName = ""
     @State private var startTitle = ""
@@ -37,8 +205,17 @@ struct LiveRoomView: View {
     @State private var screenPublication: LocalTrackPublication?
     @State private var connectError: String?
 
-    @State private var confirmLeave = false
-    @State private var confirmEnd = false
+    @State private var allowMic = 1
+    @State private var micMode = 1
+    @State private var myMic = 0
+    @State private var myRequest = 0
+    @State private var myMuteUntil: Int64 = 0
+    @State private var canManage = 0
+    @State private var members: [LiveMemberItem] = []
+    @State private var micReqTarget: LiveMicRequestItem?
+    @State private var sheet: LiveSheet?
+    @State private var likeTick = 0
+    @State private var screenFlag = 0
     @State private var closing = false
 
     private let bg = Color(hex: 0x0D0F14)
@@ -46,6 +223,9 @@ struct LiveRoomView: View {
     private let white90 = Color.white.opacity(0.9)
     private let white60 = Color.white.opacity(0.6)
     private let white45 = Color.white.opacity(0.45)
+    private let dangerColor = Color(hex: 0xFF5B6B)
+
+    private var muted: Bool { myMuteUntil > Int64(Date().timeIntervalSince1970) }
 
     var body: some View {
         ZStack {
@@ -56,19 +236,32 @@ struct LiveRoomView: View {
         .task { await load() }
         .onDisappear {
             pollTask?.cancel()
+            tipTask?.cancel()
             if !closing { Task { await teardown() } }
         }
-        .confirmationDialog("离开直播间", isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button("离开直播间", role: .destructive) { Task { await leaveRoom() } }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(isHost ? "主播离开不会结束直播，可在群资料里重新进入" : "离开后可在群资料里重新进入直播间")
+        .sheet(item: $sheet) { s in
+            switch s {
+            case .leave:
+                leaveSheet
+            case .members:
+                memberPanelSheet
+            case .member(let m):
+                memberActionSheet(m)
+            case .mute(let m):
+                muteSheet(m)
+            }
         }
-        .confirmationDialog("结束直播", isPresented: $confirmEnd, titleVisibility: .visible) {
-            Button("结束直播", role: .destructive) { Task { await endLive() } }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("结束后所有观众都会退出直播间，且不可恢复")
+        .alert(item: $micReqTarget) { req in
+            Alert(
+                title: Text("上麦申请"),
+                message: Text("\(req.nickname ?? "成员") 申请上麦"),
+                primaryButton: .default(Text("同意")) {
+                    Task { await memberAction(uid: req.uid, action: "handle_mic", approve: 1) }
+                },
+                secondaryButton: .cancel(Text("拒绝")) {
+                    Task { await memberAction(uid: req.uid, action: "handle_mic", approve: 0) }
+                }
+            )
         }
     }
 
@@ -97,7 +290,7 @@ struct LiveRoomView: View {
         GeometryReader { geo in
             VStack(spacing: 0) {
                 topBar
-                stage(height: geo.size.height * 0.40)
+                stage(height: max(geo.size.height * 0.40, 180))
                 commentsPanel
                 if let tip {
                     Text(tip)
@@ -109,27 +302,21 @@ struct LiveRoomView: View {
                         .padding(.vertical, 2)
                 }
                 inputRow
-                if isHost { hostBar }
+                toolBar
             }
         }
     }
 
     private var topBar: some View {
         ZStack {
-            VStack(spacing: 1) {
-                Text(liveTitle.isEmpty ? (groupName.isEmpty ? "群直播" : groupName) : liveTitle)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(AKColor.text)
-                    .lineLimit(1)
-                Text("\(viewers) 人在线")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(AKColor.hint)
-            }
-            .padding(.horizontal, 68)
-
+            Text(liveTitle.isEmpty ? (groupName.isEmpty ? "群直播" : groupName) : liveTitle)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(AKColor.text)
+                .lineLimit(1)
+                .padding(.horizontal, 68)
             HStack {
                 Button {
-                    confirmLeave = true
+                    sheet = .leave
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 17, weight: .semibold))
@@ -138,11 +325,9 @@ struct LiveRoomView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
                 Spacer()
-
                 Button {
-                    confirmLeave = true
+                    sheet = .leave
                 } label: {
                     Text("离开")
                         .font(.system(size: 13, weight: .medium))
@@ -161,21 +346,48 @@ struct LiveRoomView: View {
     private func stage(height: CGFloat) -> some View {
         ZStack {
             Color.black
-
             if let track = displayTrack {
-                LiveStageTrackView(track: track)
+                LiveKitVideoTile(track: track)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+            } else if connectError != nil {
+                stageTip(title: "连接媒体服务器失败", detail: connectError, retry: true)
+            } else if isHost {
+                VStack(spacing: 6) {
+                    Text(sharing ? "正在共享你的屏幕" : "观众暂未看到画面")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundColor(.white)
+                    Text(sharing ? "点下方「停止共享」可暂停画面" : "共享屏幕或开启摄像头，群成员即可实时观看")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                    Button {
+                        Task {
+                            if sharing { await stopShare() } else { await startShare() }
+                        }
+                    } label: {
+                        Text(sharing ? "停止共享" : "开始共享")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(sharing ? Color.white.opacity(0.2) : AKColor.brand)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: "video.slash")
                         .font(.system(size: 24))
                         .foregroundColor(white45)
-                    Text(stageHint)
+                    Text(room.connectionState == .connected
+                         ? (screenFlag == 1 ? "正在接收主播的画面…" : "主播暂未共享画面")
+                         : "正在进入直播间…")
                         .font(.system(size: 12))
                         .foregroundColor(white60)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 20)
                 }
             }
 
@@ -204,7 +416,7 @@ struct LiveRoomView: View {
                 HStack {
                     Spacer()
                     HStack(spacing: 5) {
-                        Circle().fill(Color(hex: 0xFF5B6B)).frame(width: 6, height: 6)
+                        Circle().fill(dangerColor).frame(width: 6, height: 6)
                         Text("\(viewers) 人在看")
                             .font(.system(size: 10.5))
                             .foregroundColor(white90)
@@ -217,6 +429,8 @@ struct LiveRoomView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 12)
+
+            heartLayer
         }
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -224,22 +438,64 @@ struct LiveRoomView: View {
         .padding(.top, 10)
     }
 
-    private var stageHint: String {
-        if let connectError { return "连接媒体服务器失败：\(connectError)" }
-        if isHost { return "点下方「共享」开始分享屏幕，观众即可看到画面" }
-        return "主播暂未共享画面"
+    private func stageTip(title: String, detail: String?, retry: Bool) -> some View {
+        VStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundColor(white90)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Color(hex: 0xFFB4B4))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+            if retry {
+                Button {
+                    Task { await connectSfu() }
+                } label: {
+                    Text("重试")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.2))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// 点赞飘心：likeTick +1 冒一颗心
+    private var heartLayer: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                ZStack {
+                    if likeTick > 0 {
+                        Text("❤")
+                            .font(.system(size: 18))
+                            .foregroundColor(Color(hex: 0xFF5A79))
+                            .modifier(HeartRise(delay: 0))
+                            .id(likeTick)
+                    }
+                }
+                .padding(.trailing, 14)
+                .padding(.bottom, 34)
+            }
+        }
     }
 
     private var displayTrack: VideoTrack? {
         if isHost {
-            if camOn, let local = room.localParticipant.videoTracks.compactMap({ $0.track as? VideoTrack }).first {
-                return local
-            }
             if let s = screenTrack { return s }
-            return room.localParticipant.videoTracks.compactMap({ $0.track as? VideoTrack }).first
+            return room.localParticipant.videoTracks.compactMap { $0.track as? VideoTrack }.first
         }
-        for participant in room.remoteParticipants.values {
-            for pub in participant.videoTracks {
+        for p in room.remoteParticipants.values {
+            for pub in p.videoTracks {
                 if let track = pub.track as? VideoTrack { return track }
             }
         }
@@ -298,7 +554,7 @@ struct LiveRoomView: View {
     }
 
     @ViewBuilder
-    private func commentRow(_ c: LiveComment) -> some View {
+    private func commentRow(_ c: LiveCommentFull) -> some View {
         if c.system == 1 {
             Text(c.content)
                 .font(.system(size: 12.5))
@@ -308,12 +564,24 @@ struct LiveRoomView: View {
                 .padding(.vertical, 5)
         } else {
             HStack(alignment: .top, spacing: 8) {
-                AvatarView(url: c.avatar, name: c.nickname ?? "成员", size: 22)
+                AvatarView(url: c.avatar, name: (c.nickname ?? "").isEmpty ? "成员" : (c.nickname ?? ""), size: 22)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text((c.nickname ?? "").isEmpty ? "成员" : (c.nickname ?? "成员"))
-                        .font(.system(size: 11))
-                        .foregroundColor(white60)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text((c.nickname ?? "").isEmpty ? "成员" : (c.nickname ?? ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(white60)
+                            .lineLimit(1)
+                        if c.pretty == 1, let no = c.prettyNo, !no.isEmpty {
+                            BadgeView(text: no, color: AKColor.gold, background: AKColor.goldSoft)
+                                .scaleEffect(0.78)
+                        }
+                        if c.vipLevel > 0 {
+                            BadgeView(text: c.vipLevel == 2 ? "SVIP" : "VIP",
+                                      color: c.vipLevel == 2 ? Color(hex: 0xD79A19) : AKColor.link,
+                                      background: AKColor.blueSoft)
+                                .scaleEffect(0.78)
+                        }
+                    }
                     Text(c.content)
                         .font(.system(size: 13))
                         .foregroundColor(white90)
@@ -330,26 +598,43 @@ struct LiveRoomView: View {
         HStack(spacing: 8) {
             TextField("", text: $commentText)
                 .font(.system(size: 14.5))
-                .foregroundColor(.white)
+                .foregroundColor(muted ? Color(hex: 0x7E848D) : .white)
                 .tint(AKColor.brand)
+                .disabled(muted)
                 .placeholder(when: commentText.isEmpty) {
-                    Text("说点什么…")
+                    Text(muted ? "你已被禁言" : "说点什么…")
                         .font(.system(size: 14))
                         .foregroundColor(Color(hex: 0x8B9099))
                 }
                 .padding(.horizontal, 14)
                 .frame(minHeight: 40)
-                .background(Color.white.opacity(0.2))
+                .background(muted ? Color.white.opacity(0.1) : Color.white.opacity(0.2))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .onChange(of: commentText) { value in
+                    if value.count > 200 { commentText = String(value.prefix(200)) }
+                }
 
             Button {
                 Task { await sendComment() }
             } label: {
-                Image(systemName: "send.fill")
-                    .font(.system(size: 15))
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 14))
                     .foregroundColor(.white)
                     .frame(width: 36, height: 36)
-                    .background(AKColor.brand)
+                    .background(muted ? Color.white.opacity(0.1) : AKColor.brand)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(muted)
+
+            Button {
+                likeTick += 1
+            } label: {
+                Text("❤")
+                    .font(.system(size: 15))
+                    .foregroundColor(Color(hex: 0xFF6B81))
+                    .frame(width: 36, height: 36)
+                    .background(Color(hex: 0xFF4757).opacity(0.2))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -358,33 +643,71 @@ struct LiveRoomView: View {
         .padding(.vertical, 4)
     }
 
-    private var hostBar: some View {
+    private var toolBar: some View {
         HStack(spacing: 0) {
-            toolItem(icon: micOn ? "mic.fill" : "mic.slash.fill",
-                     label: micOn ? "麦克风" : "已静音",
-                     active: micOn) {
-                Task { await toggleMic() }
-            }
-            toolItem(icon: camOn ? "video.fill" : "video.slash.fill",
-                     label: "摄像头",
-                     active: camOn) {
-                Task { await toggleCamera() }
-            }
-            toolItem(icon: sharing ? "stop.circle.fill" : "rectangle.on.rectangle",
-                     label: sharing ? "停止共享" : "共享",
-                     active: sharing) {
-                Task { await toggleShare() }
-            }
-            toolItem(icon: "stop.circle", label: "结束直播", danger: true) {
-                confirmEnd = true
+            if isHost {
+                toolItem(icon: micOn ? "mic.fill" : "mic.slash.fill",
+                         label: micOn ? "麦克风" : "已静音",
+                         active: micOn) {
+                    Task { await toggleHostMic() }
+                }
+                toolItem(icon: camOn ? "video.fill" : "video.slash.fill",
+                         label: "摄像头",
+                         active: camOn) {
+                    Task { await toggleCamera() }
+                }
+                toolItem(icon: sharing ? "stop.circle.fill" : "rectangle.on.rectangle",
+                         label: sharing ? "停止共享" : "共享",
+                         active: sharing) {
+                    Task {
+                        if sharing { await stopShare() } else { await startShare() }
+                    }
+                }
+                toolItem(icon: "person.2.fill", label: "成员 \(viewers)") {
+                    sheet = .members
+                    Task { await loadMembers() }
+                }
+                toolItem(icon: "stop.circle", label: "结束直播", danger: true) {
+                    Task { await endLive() }
+                }
+            } else {
+                toolItem(
+                    icon: myMic == 1 || myRequest == 1 ? "mic.fill" : "mic.slash.fill",
+                    label: micLabel,
+                    active: myMic == 1 || myRequest == 1,
+                    enabled: micEnabled
+                ) {
+                    Task { await toggleTalk() }
+                }
+                toolItem(icon: "video.slash.fill", label: "摄像头", enabled: false) {}
+                toolItem(icon: "person.2.fill", label: "成员 \(viewers)") {
+                    sheet = .members
+                    Task { await loadMembers() }
+                }
+                toolItem(icon: "square.and.arrow.up", label: "分享") {
+                    Task { await shareToChat() }
+                }
             }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
     }
 
-    private func toolItem(icon: String, label: String, active: Bool = false, danger: Bool = false, action: @escaping () -> Void) -> some View {
-        let tint: Color = danger ? Color(hex: 0xFF5B6B) : (active ? AKColor.brand : white90)
+    private var micLabel: String {
+        if myMic == 1 { return "闭麦" }
+        if myRequest == 1 { return "申请中" }
+        if !micEnabled { return "已禁麦" }
+        return micMode == 0 ? "开麦" : "申请上麦"
+    }
+
+    private var micEnabled: Bool {
+        myMic == 1 || myRequest == 1
+            || (allowMic == 1 && myMuteUntil <= Int64(Date().timeIntervalSince1970))
+    }
+
+    private func toolItem(icon: String, label: String, active: Bool = false, danger: Bool = false,
+                          enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        let tint: Color = !enabled ? white45 : (danger ? dangerColor : (active ? AKColor.brand : white90))
         return Button(action: action) {
             VStack(spacing: 3) {
                 ZStack {
@@ -392,7 +715,7 @@ struct LiveRoomView: View {
                         .fill(active ? Color.white.opacity(0.2) : Color.white.opacity(0.1))
                         .frame(width: 38, height: 38)
                     Image(systemName: icon)
-                        .font(.system(size: 17))
+                        .font(.system(size: 16))
                         .foregroundColor(tint)
                 }
                 Text(label)
@@ -405,9 +728,241 @@ struct LiveRoomView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
-    // MARK: - 开播前
+    // MARK: - 弹层
+
+    private var leaveSheet: some View {
+        VStack(spacing: 10) {
+            Text("要离开直播间吗？")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(AKColor.text)
+                .padding(.top, 18)
+                .padding(.bottom, 6)
+            sheetRow(icon: "xmark.circle", label: "离开直播间", detail: nil, danger: true) {
+                sheet = nil
+                Task { await leaveRoom() }
+            }
+            sheetRow(icon: nil, label: "取消", detail: nil) {
+                sheet = nil
+            }
+            Color.clear.frame(height: 16)
+        }
+        .presentationDetents([.height(220)])
+    }
+
+    private var memberPanelSheet: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text("发言成员")
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                Text("(\(members.filter { $0.mic == 1 }.count))")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.sub)
+                Spacer(minLength: 6)
+                Text("\(members.filter { $0.mic == 1 }.count) 人上麦")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.sub)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+
+            if canManage == 1 || isHost {
+                Button {
+                    Task { await toggleAllowMic() }
+                } label: {
+                    HStack {
+                        Text("允许观众说话")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(AKColor.text)
+                        Spacer()
+                        Text(allowMic == 1 ? "已开启" : "已关闭")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(allowMic == 1 ? AKColor.brand : AKColor.sub)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if members.isEmpty {
+                Text("暂无成员")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.placeholder)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 8) {
+                        ForEach(members) { m in
+                            Button {
+                                sheet = .member(m)
+                            } label: {
+                                memberCell(m)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .background(AKColor.card.ignoresSafeArea())
+        .presentationDetents([.medium, .large])
+    }
+
+    private func memberCell(_ m: LiveMemberItem) -> some View {
+        let onMic = m.uid == hostId || m.mic == 1
+        return VStack(spacing: 3) {
+            ZStack(alignment: .bottomTrailing) {
+                AvatarView(url: m.avatar, name: (m.nickname ?? "").isEmpty ? "成员" : (m.nickname ?? ""), size: 44)
+                ZStack {
+                    Circle()
+                        .fill(onMic ? AKColor.brand : Color(hex: 0x3A3F47))
+                        .frame(width: 16, height: 16)
+                    Image(systemName: onMic ? "mic.fill" : "mic.slash.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(.white)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if m.muted == 1 {
+                    Circle().fill(dangerColor).frame(width: 8, height: 8)
+                }
+            }
+            Text(m.uid == hostId ? "主播" : ((m.nickname ?? "").isEmpty ? "成员" : (m.nickname ?? "")))
+                .font(.system(size: 10))
+                .foregroundColor(AKColor.text)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func memberActionSheet(_ m: LiveMemberItem) -> some View {
+        let isHostRow = m.uid == hostId
+        let tags = [
+            isHostRow ? "主播" : "观众",
+            isHostRow || m.mic == 1 ? "上麦中" : "未上麦",
+            m.requesting == 1 ? "申请上麦" : nil,
+            m.muted == 1 ? "已禁言" : nil
+        ].compactMap { $0 }.joined(separator: " · ")
+        return VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                AvatarView(url: m.avatar, name: (m.nickname ?? "").isEmpty ? "成员" : (m.nickname ?? ""), size: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text((m.nickname ?? "").isEmpty ? "成员" : (m.nickname ?? ""))
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .lineLimit(1)
+                    Text(tags)
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.sub)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 6)
+
+            if (canManage == 1 || isHost) && !isHostRow {
+                sheetRow(icon: "mic.slash", label: m.mic == 1 ? "关闭连麦" : "开启连麦", detail: nil) {
+                    let action = m.mic == 1 ? "mute_mic" : "unmute_mic"
+                    sheet = nil
+                    Task { await memberAction(uid: m.uid, action: action) }
+                }
+                if m.muted == 1 {
+                    sheetRow(icon: "speaker.wave.2", label: "解除禁言", detail: nil) {
+                        sheet = nil
+                        Task { await memberAction(uid: m.uid, action: "unmute_comment") }
+                    }
+                } else {
+                    sheetRow(icon: "speaker.slash", label: "禁言", detail: "可选 10 分钟 / 1 小时 / 今天 / 永久") {
+                        sheet = .mute(m)
+                    }
+                }
+                sheetRow(icon: "xmark.circle", label: "踢出直播间", detail: nil, danger: true) {
+                    sheet = nil
+                    Task { await memberAction(uid: m.uid, action: "kick") }
+                }
+            } else {
+                Text(isHostRow ? "主播不可管理" : "只有主播或群主/管理员可以管理成员")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.placeholder)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                sheetRow(icon: nil, label: "关闭", detail: nil) { sheet = nil }
+            }
+            Color.clear.frame(height: 14)
+        }
+        .presentationDetents([.height(360)])
+    }
+
+    private func muteSheet(_ m: LiveMemberItem) -> some View {
+        VStack(spacing: 4) {
+            Text("禁言 \((m.nickname ?? "").isEmpty ? "该成员" : (m.nickname ?? ""))")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(AKColor.text)
+                .padding(.top, 18)
+            Text("禁言期间无法在直播间发送弹幕")
+                .font(.system(size: 11.5))
+                .foregroundColor(AKColor.sub)
+                .padding(.bottom, 8)
+            sheetRow(icon: nil, label: "10 分钟", detail: nil) {
+                sheet = nil
+                Task { await memberAction(uid: m.uid, action: "mute_comment", duration: 600) }
+            }
+            sheetRow(icon: nil, label: "1 小时", detail: nil) {
+                sheet = nil
+                Task { await memberAction(uid: m.uid, action: "mute_comment", duration: 3600) }
+            }
+            sheetRow(icon: nil, label: "今天", detail: "到今天 24:00") {
+                sheet = nil
+                Task { await memberAction(uid: m.uid, action: "mute_comment", duration: todayRemainSeconds()) }
+            }
+            sheetRow(icon: nil, label: "永久", detail: nil, danger: true) {
+                sheet = nil
+                Task { await memberAction(uid: m.uid, action: "mute_comment", duration: 0) }
+            }
+            sheetRow(icon: nil, label: "取消", detail: nil) { sheet = nil }
+            Color.clear.frame(height: 12)
+        }
+        .presentationDetents([.height(420)])
+    }
+
+    private func sheetRow(icon: String?, label: String, detail: String?, danger: Bool = false,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 17))
+                        .foregroundColor(danger ? dangerColor : AKColor.text)
+                        .frame(width: 20)
+                }
+                Text(label)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(danger ? dangerColor : AKColor.text)
+                Spacer(minLength: 6)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(AKColor.sub)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     private var prestartPage: some View {
         VStack(spacing: 0) {
@@ -424,9 +979,7 @@ struct LiveRoomView: View {
                 .buttonStyle(.plain)
                 Spacer()
             }
-
             Spacer(minLength: 0)
-
             VStack(spacing: 0) {
                 AvatarView(url: hostAvatar, name: groupName.isEmpty ? "群聊" : groupName, size: 72)
                 Text("开始直播")
@@ -505,9 +1058,7 @@ struct LiveRoomView: View {
                     .padding(.top, 6)
             }
             .padding(.horizontal, 28)
-
             Spacer(minLength: 0)
-
             if let tip {
                 Text(tip)
                     .font(.system(size: 11.5))
@@ -516,8 +1067,6 @@ struct LiveRoomView: View {
             }
         }
     }
-
-    // MARK: - 已结束 / 不可进入
 
     private var blockedPage: some View {
         VStack(spacing: 14) {
@@ -567,7 +1116,7 @@ struct LiveRoomView: View {
                 hostAvatar = info.avatar
             }
             if let live = data.live {
-                await attach(live: live, sfu: data.sfu)
+                await attach(live: live)
             } else if data.liveAllowed == 0 {
                 blockedMsg = (data.msg ?? "").isEmpty ? "该群未开通直播间（仅靓号群可开播）" : (data.msg ?? "")
                 phase = "blocked"
@@ -584,34 +1133,48 @@ struct LiveRoomView: View {
         }
     }
 
-    private func attach(live: LiveInfo, sfu: SfuInfo?) async {
+    private func attach(live: LiveInfo) async {
         liveId = live.id
         hostId = live.hostId
         hostName = live.hostName
         if let av = live.hostAvatar, !av.isEmpty { hostAvatar = av }
         isHost = live.myRole == 1
         viewers = live.viewers
+        allowMic = live.allowMic
+        micMode = live.micMode
         let t = live.title.trimmingCharacters(in: .whitespaces)
-        if !t.isEmpty && t != "群直播" { liveTitle = t } else { liveTitle = groupName }
+        liveTitle = (!t.isEmpty && t != "群直播") ? t : groupName
         comments = []
         lastCommentId = 0
         phase = "room"
+        if isHost {
+            // 主播重新进入：不自动开麦，避免静默开播
+            micOn = false
+        }
         startPolling()
-        await connectSfu(sfu)
+        await connectSfu()
+        await loadMembers()
     }
 
-    private func connectSfu(_ sfu: SfuInfo?) async {
-        guard let sfu, sfu.enabled == 1, let url = sfu.url, let token = sfu.token,
-              !url.isEmpty, !token.isEmpty, let u = URL(string: url) else {
+    private func connectSfu(_ create: Bool = false, title: String = "") async {
+        connectError = nil
+        var query = ["id": "\(gid)"]
+        if create {
+            query["create"] = "1"
+            query["title"] = title
+        }
+        guard let data: LiveRoomData = try? await APIClient.shared.get("api/v1/group/live/room", query: query),
+              let sfu = data.sfu, sfu.enabled == 1,
+              let url = sfu.url, let token = sfu.token, !url.isEmpty, !token.isEmpty,
+              let u = URL(string: url) else {
             connectError = "媒体服务未启用"
             return
         }
         do {
             try await room.connect(url: u.absoluteString, token: token)
             connectError = nil
-            if isHost {
+            if isHost && micOn {
                 try? await room.localParticipant.setMicrophone(enabled: true)
-                micOn = true
             }
         } catch {
             connectError = error.localizedDescription
@@ -621,7 +1184,7 @@ struct LiveRoomView: View {
     private func startPolling() {
         pollTask?.cancel()
         pollTask = Task {
-            while !Task.isCancelled {
+            while !Task.isCancelled && phase == "room" {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 if Task.isCancelled { break }
                 await poll()
@@ -631,17 +1194,53 @@ struct LiveRoomView: View {
 
     private func poll() async {
         guard liveId > 0, phase == "room" else { return }
-        guard let data = try? await APIClient.shared.livePoll(gid: gid, liveId: liveId, lastCommentId: lastCommentId) else { return }
-        if let v = data.viewers { viewers = v }
-        if let list = data.comments, !list.isEmpty {
-            comments.append(contentsOf: list)
-            if comments.count > 120 { comments.removeFirst(comments.count - 120) }
+        guard let st: LivePollFull = try? await APIClient.shared.get(
+            "api/v1/group/live/poll",
+            query: ["id": "\(gid)", "live_id": "\(liveId)", "last_comment_id": "\(lastCommentId)"]
+        ) else { return }
+        if st.kicked == 1 {
+            blockedMsg = "你已被主播移出该直播间"
+            phase = "blocked"
+            pollTask?.cancel()
+            await room.disconnect()
+            return
         }
-        if let maxId = data.maxCommentId, maxId > lastCommentId { lastCommentId = maxId }
-        if data.active == 0 {
+        if st.status == 0 || st.active == 0 {
             blockedMsg = "直播已结束"
             phase = "blocked"
-            await teardown()
+            pollTask?.cancel()
+            await room.disconnect()
+            return
+        }
+        viewers = st.viewers
+        screenFlag = st.screen
+        canManage = st.canManage
+        allowMic = st.allowMic
+        micMode = st.micMode
+        myMuteUntil = st.myMuteUntil
+        myRequest = st.myRequest
+        if !isHost && st.myMic != myMic {
+            myMic = st.myMic
+            try? await room.localParticipant.setMicrophone(enabled: myMic == 1)
+        }
+        if !st.comments.isEmpty {
+            comments.append(contentsOf: st.comments)
+            if comments.count > 120 { comments.removeFirst(comments.count - 120) }
+        }
+        if st.maxCommentId > lastCommentId { lastCommentId = st.maxCommentId }
+        if (canManage == 1 || isHost) && !st.micRequests.isEmpty && micReqTarget == nil {
+            micReqTarget = st.micRequests.first
+        }
+    }
+
+    private func loadMembers() async {
+        guard liveId > 0 else { return }
+        if let data: LiveMembersData = try? await APIClient.shared.get(
+            "api/v1/group/live/members", query: ["id": "\(gid)", "live_id": "\(liveId)"]
+        ) {
+            members = data.members
+            if data.hostId > 0 { hostId = data.hostId }
+            canManage = data.canManage
         }
     }
 
@@ -653,38 +1252,62 @@ struct LiveRoomView: View {
             _ = try await APIClient.shared.liveComment(gid: gid, liveId: liveId, content: content)
             await poll()
         } catch {
-            tip = error.localizedDescription
+            showTip(error.localizedDescription)
         }
     }
 
     private func startLive() async {
         let t = startTitle.trimmingCharacters(in: .whitespaces)
-        guard t.count >= 2 else { tip = "直播标题需 2~30 个字"; return }
+        guard t.count >= 2 else { showTip("直播标题需 2~30 个字"); return }
         starting = true
         defer { starting = false }
         do {
-            let data = try await APIClient.shared.startLive(gid: gid, title: t)
+            let data: LiveRoomData = try await APIClient.shared.get("api/v1/group/live/room", query: [
+                "id": "\(gid)", "create": "1", "title": t,
+            ])
             if let live = data.live {
-                await attach(live: live, sfu: data.sfu)
+                await attach(live: live)
             } else {
                 blockedMsg = (data.msg ?? "").isEmpty ? "开播失败，请稍后重试" : (data.msg ?? "")
                 phase = "blocked"
             }
         } catch {
-            tip = error.localizedDescription
+            showTip(error.localizedDescription)
         }
+    }
+
+    private func shareToChat() async {
+        let payload: [String: Any] = [
+            "gid": gid,
+            "name": groupName,
+            "avatar": hostAvatar ?? "",
+            "title": liveTitle.isEmpty ? groupName : liveTitle,
+            "live_id": liveId,
+        ]
+        guard let json = try? JSONSerialization.data(withJSONObject: payload),
+              let content = String(data: json, encoding: .utf8) else { return }
+        await APIClient.shared.postIgnore("api/v1/messages", body: [
+            "conv_type": "group",
+            "conv_id": gid,
+            "type": 19,
+            "content": content,
+            "client_msg_id": "ios_live_\(UUID().uuidString)",
+        ])
+        showTip("已分享到群聊")
     }
 
     // MARK: - 主播控制
 
-    private func toggleMic() async {
+    private func toggleHostMic() async {
         let next = !micOn
         do {
             try await room.localParticipant.setMicrophone(enabled: next)
             micOn = next
-            tip = next ? nil : "麦克风已静音"
+            await APIClient.shared.postIgnore("api/v1/group/live/mic", body: [
+                "id": gid, "live_id": liveId, "value": next ? 1 : 0,
+            ])
         } catch {
-            tip = "切换麦克风失败：\(error.localizedDescription)"
+            showTip("切换麦克风失败：\(error.localizedDescription)")
         }
     }
 
@@ -694,15 +1317,74 @@ struct LiveRoomView: View {
             try await room.localParticipant.setCamera(enabled: next)
             camOn = next
         } catch {
-            tip = "切换摄像头失败：\(error.localizedDescription)"
+            showTip("切换摄像头失败：\(error.localizedDescription)")
         }
     }
 
-    private func toggleShare() async {
-        if sharing {
-            await stopShare()
-        } else {
-            await startShare()
+    private func toggleTalk() async {
+        guard liveId > 0, !isHost else { return }
+        if myMic == 1 {
+            myMic = 0
+            await APIClient.shared.postIgnore("api/v1/group/live/mic", body: [
+                "id": gid, "live_id": liveId, "value": 0,
+            ])
+            try? await room.localParticipant.setMicrophone(enabled: false)
+            showTip("麦克风已关闭")
+            return
+        }
+        if myRequest == 1 {
+            myRequest = 0
+            await APIClient.shared.postIgnore("api/v1/group/live/request_mic", body: [
+                "id": gid, "live_id": liveId, "off": 1,
+            ])
+            showTip("已取消申请")
+            return
+        }
+        do {
+            _ = try await APIClient.shared.postRaw("api/v1/group/live/request_mic", body: [
+                "id": gid, "live_id": liveId, "off": 0,
+            ])
+            myRequest = 1
+            showTip("已申请上麦，等待主播同意")
+        } catch {
+            showTip(error.localizedDescription)
+        }
+    }
+
+    private func toggleAllowMic() async {
+        let next = allowMic == 1 ? 0 : 1
+        allowMic = next
+        await APIClient.shared.postIgnore("api/v1/group/live/allow_mic", body: [
+            "id": gid, "live_id": liveId, "value": next,
+        ])
+        showTip(next == 1 ? "已允许观众说话" : "已禁止观众说话")
+    }
+
+    private func memberAction(uid: Int64, action: String, duration: Int = 0, approve: Int = 0) async {
+        do {
+            _ = try await APIClient.shared.postRaw("api/v1/group/live/member", body: [
+                "id": gid,
+                "live_id": liveId,
+                "user_id": uid,
+                "action": action,
+                "duration": duration,
+                "approve": approve,
+            ])
+            let text: String = {
+                switch action {
+                case "kick": return "已移出直播间"
+                case "mute_mic": return "已关闭对方连麦"
+                case "unmute_mic": return "已开启对方连麦"
+                case "mute_comment": return "已禁言"
+                case "unmute_comment": return "已解除禁言"
+                case "handle_mic": return approve == 1 ? "已同意上麦" : "已拒绝上麦"
+                default: return "操作成功"
+                }
+            }()
+            showTip(text)
+            await loadMembers()
+        } catch {
+            showTip(error.localizedDescription)
         }
     }
 
@@ -710,7 +1392,7 @@ struct LiveRoomView: View {
         guard !sharing else { return }
         let track = await LocalVideoTrack.createBufferTrack(name: "screen")
         guard let capturer = track.capturer as? BufferCapturer else {
-            tip = "当前设备不支持屏幕共享"
+            showTip("当前设备不支持屏幕共享")
             return
         }
         screenTrack = track
@@ -719,7 +1401,7 @@ struct LiveRoomView: View {
         } completionHandler: { err in
             if let err {
                 Task { @MainActor in
-                    self.tip = "屏幕采集失败：\(err.localizedDescription)"
+                    showTip("屏幕采集失败：\(err.localizedDescription)")
                 }
             }
         }
@@ -731,7 +1413,7 @@ struct LiveRoomView: View {
         } catch {
             RPScreenRecorder.shared().stopCapture { _ in }
             screenTrack = nil
-            tip = "共享失败：\(error.localizedDescription)"
+            showTip("共享失败：\(error.localizedDescription)")
         }
     }
 
@@ -744,12 +1426,13 @@ struct LiveRoomView: View {
         screenTrack = nil
         sharing = false
         await notifyScreen(0)
+        showTip("已停止共享")
     }
 
     private func notifyScreen(_ value: Int) async {
         guard liveId > 0 else { return }
         await APIClient.shared.postIgnore("api/v1/group/live/screen", body: [
-            "id": gid, "live_id": liveId, "value": value
+            "id": gid, "live_id": liveId, "value": value,
         ])
     }
 
@@ -786,20 +1469,35 @@ struct LiveRoomView: View {
         screenTrack = nil
         await room.disconnect()
     }
-}
 
-/// LiveKit 视频渲染（画面区）
-private struct LiveStageTrackView: UIViewRepresentable {
-    let track: VideoTrack
-
-    func makeUIView(context: Context) -> LiveKit.VideoView {
-        let v = LiveKit.VideoView()
-        v.track = track
-        return v
+    private func showTip(_ message: String) {
+        tip = message
+        tipTask?.cancel()
+        tipTask = Task {
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            if !Task.isCancelled, tip == message { tip = nil }
+        }
     }
 
-    func updateUIView(_ uiView: LiveKit.VideoView, context: Context) {
-        uiView.track = track
+    private func todayRemainSeconds() -> Int {
+        let now = Int64(Date().timeIntervalSince1970)
+        let dayStart = (now + 28800) / 86400 * 86400 - 28800
+        return Int(max(min(dayStart + 86400 - now, 86400), 60))
+    }
+}
+
+/// 飘心动画：从底部往上飘并淡出
+private struct HeartRise: ViewModifier {
+    let delay: Double
+    @State private var up = false
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: up ? -160 : 0)
+            .opacity(up ? 0 : 1)
+            .onAppear {
+                withAnimation(.linear(duration: 1.4).delay(delay)) { up = true }
+            }
     }
 }
 

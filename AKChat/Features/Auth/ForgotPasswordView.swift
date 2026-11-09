@@ -108,6 +108,7 @@ struct ForgotPasswordView: View {
                 .padding(16)
             }
             .background(AKColor.bg)
+            .reportsDetailPage()
             .navigationTitle("找回密码")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

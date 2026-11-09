@@ -68,9 +68,19 @@ struct PrivacySettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .akCardRow(top: true, bottom: true, radius: 16)
-                .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 16, trailing: 14))
+                .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
+
+                Text("被拉黑的人无法给你发私聊、看不到你的动态，也无法添加你为好友。")
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.muted)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
 
                 sectionTitle("危险操作")
                     .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
@@ -118,6 +128,7 @@ struct PrivacySettingsView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("隐私设置")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

@@ -12,6 +12,7 @@ struct GroupPreviewInfo: Decodable {
     let memberCount: Int
     let maxMember: Int
     let needAudit: Int
+    let hideMembers: Int
     let isBanned: Int
     let full: Int
     let isMember: Int
@@ -26,6 +27,7 @@ struct GroupPreviewInfo: Decodable {
         case memberCount = "member_count"
         case maxMember = "max_member"
         case needAudit = "need_audit"
+        case hideMembers = "hide_members"
         case isBanned = "is_banned"
         case isMember = "is_member"
     }
@@ -42,6 +44,7 @@ struct GroupPreviewInfo: Decodable {
         memberCount = (try? c.decode(Int.self, forKey: .memberCount)) ?? 0
         maxMember = (try? c.decode(Int.self, forKey: .maxMember)) ?? 0
         needAudit = (try? c.decode(Int.self, forKey: .needAudit)) ?? 0
+        hideMembers = (try? c.decode(Int.self, forKey: .hideMembers)) ?? 0
         isBanned = (try? c.decode(Int.self, forKey: .isBanned)) ?? 0
         full = (try? c.decode(Int.self, forKey: .full)) ?? 0
         isMember = (try? c.decode(Int.self, forKey: .isMember)) ?? 0
@@ -122,6 +125,7 @@ struct GroupPreviewView: View {
             }
         }
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("群资料")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -221,7 +225,11 @@ struct GroupPreviewView: View {
     private func memberCard(_ g: GroupPreviewInfo) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("群成员").font(.system(size: 12.5)).foregroundColor(AKColor.hint)
-            if g.members.isEmpty {
+            if g.hideMembers == 1 {
+                Text("群主已关闭成员信息查看")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.hint)
+            } else if g.members.isEmpty {
                 Text("暂无成员")
                     .font(.system(size: 13))
                     .foregroundColor(AKColor.hint)
@@ -339,10 +347,15 @@ struct GroupPreviewView: View {
     }
 
     private func join(needAudit: Bool) async {
+        let text = reason.trimmingCharacters(in: .whitespaces)
+        if needAudit && (text.isEmpty || text.count > 100) {
+            errorText = "请填写 1-100 字的进群理由"
+            return
+        }
         busy = true
         defer { busy = false }
         do {
-            _ = try await APIClient.shared.joinGroup(id: groupId, reason: needAudit ? reason : "")
+            _ = try await APIClient.shared.joinGroup(id: groupId, reason: needAudit ? text : "")
             if needAudit {
                 applied = true
                 showReason = false

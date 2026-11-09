@@ -12,8 +12,8 @@ struct ContactsView: View {
     private var friends: [ContactFriend] { app.contacts?.friends ?? [] }
     private var groups: [ContactGroup] { app.contacts?.groups ?? [] }
 
-    /// 索引条固定 A-Z + #（# 排最后）
-    private static let indexLetters: [String] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map { String($0) } + ["#"]
+    /// 索引条只列出实际存在的字母（安卓 LetterBar 同口径），# 排最后
+    private var indexLetters: [String] { friendSections.map { $0.letter } }
 
     private static let indexCellHeight: CGFloat = 17
 
@@ -35,11 +35,16 @@ struct ContactsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await app.loadContacts() }
             .task { await app.loadContacts() }
-            .sheet(item: $profileTarget) { target in
-                NavigationStack { UserProfileView(uid: target.id) }
+            .navigationDestination(isPresented: Binding(
+                get: { profileTarget != nil },
+                set: { if !$0 { profileTarget = nil } }
+            )) {
+                if let target = profileTarget {
+                    UserProfileView(uid: target.id).reportsDetailPage().restoresSwipeBack()
+                }
             }
-            .sheet(isPresented: $showAddFriend) {
-                NavigationStack { AddFriendView() }
+            .navigationDestination(isPresented: $showAddFriend) {
+                AddFriendView().reportsDetailPage().restoresSwipeBack()
             }
         }
     }
@@ -133,7 +138,7 @@ struct ContactsView: View {
     }
 
     private var divider: some View {
-        Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 66)
+        Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 58)
     }
 
     // MARK: - 好友 / 群聊分段
@@ -172,19 +177,20 @@ struct ContactsView: View {
 
     // MARK: - 好友列表
 
+    @ViewBuilder
     private var friendPane: some View {
-        ScrollViewReader { proxy in
-            ZStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("共 \(friends.count) 位好友")
-                            .font(.system(size: 12))
-                            .foregroundColor(AKColor.muted)
-                            .padding(.leading, 14)
-                            .padding(.vertical, 8)
-                        if friendSections.isEmpty {
-                            emptyState("还没有好友，点上面「新朋友」添加")
-                        } else {
+        if friendSections.isEmpty {
+            emptyState("还没有好友，点上面「新朋友」添加")
+        } else {
+            ScrollViewReader { proxy in
+                ZStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("共 \(friends.count) 位好友")
+                                .font(.system(size: 12))
+                                .foregroundColor(AKColor.muted)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
                             ForEach(friendSections) { sec in
                                 letterHead(sec.letter)
                                     .id("sec-" + sec.letter)
@@ -204,23 +210,21 @@ struct ContactsView: View {
                                 .background(AKColor.card)
                             }
                         }
+                        .padding(.bottom, 14)
                     }
-                    .padding(.bottom, 14)
-                }
-                .background(AKColor.card)
+                    .background(AKColor.card)
 
-                if !friendSections.isEmpty {
                     indexBar(proxy)
-                }
 
-                if let letter = activeLetter {
-                    Text(letter)
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 56, height: 56)
-                        .background(Color(hex: 0x1A1D26, alpha: 0.8))
-                        .clipShape(Circle())
-                        .allowsHitTesting(false)
+                    if let letter = activeLetter {
+                        Text(letter)
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 56, height: 56)
+                            .background(Color(hex: 0x1A1D26, alpha: 0.8))
+                            .clipShape(Circle())
+                            .allowsHitTesting(false)
+                    }
                 }
             }
         }
@@ -230,7 +234,7 @@ struct ContactsView: View {
         Text(letter)
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(AKColor.sub)
-            .padding(.leading, 14)
+            .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 26)
             .background(AKColor.bg)
@@ -287,12 +291,13 @@ struct ContactsView: View {
 
     // MARK: - 群列表
 
+    @ViewBuilder
     private var groupPane: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                if groups.isEmpty {
-                    emptyState("还没有加入任何群聊")
-                } else {
+        if groups.isEmpty {
+            emptyState("还没有加入任何群聊")
+        } else {
+            ScrollView {
+                VStack(spacing: 0) {
                     ForEach(groups) { g in
                         NavigationLink {
                             ChatView(convType: "group", convId: g.id, title: g.name ?? "群聊")
@@ -303,10 +308,10 @@ struct ContactsView: View {
                         Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 72)
                     }
                 }
+                .padding(.bottom, 14)
             }
-            .padding(.bottom, 14)
+            .background(AKColor.card)
         }
-        .background(AKColor.card)
     }
 
     private func groupRow(_ g: ContactGroup) -> some View {
@@ -342,8 +347,8 @@ struct ContactsView: View {
         Text(text)
             .font(.system(size: 12.5))
             .foregroundColor(AKColor.placeholder)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 60)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AKColor.card)
     }
 
     // MARK: - 索引条
@@ -352,7 +357,7 @@ struct ContactsView: View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             VStack(spacing: 0) {
-                ForEach(Self.indexLetters, id: \.self) { letter in
+                ForEach(indexLetters, id: \.self) { letter in
                     Text(letter)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(AKColor.sub)
@@ -363,9 +368,11 @@ struct ContactsView: View {
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { value in
+                        let letters = indexLetters
+                        guard !letters.isEmpty else { return }
                         let idx = Int(value.location.y / Self.indexCellHeight)
-                        let clamped = min(max(idx, 0), Self.indexLetters.count - 1)
-                        pick(Self.indexLetters[clamped], proxy)
+                        let clamped = min(max(idx, 0), letters.count - 1)
+                        pick(letters[clamped], proxy)
                     }
                     .onEnded { _ in
                         let gen = bubbleGen

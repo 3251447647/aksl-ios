@@ -2,15 +2,22 @@ import SwiftUI
 
 /// 添加好友：按 AK号 / 邮箱 / 群号 / 群名 精确搜索，结果分「联系人」「群聊」两组（对齐安卓 AddFriendScreen）
 struct AddFriendView: View {
-    @State private var keyword = ""
+    /// 预填搜索词（数字串「添加好友」入口），不自动搜索
+    var initialKeyword: String = ""
+
+    @State private var keyword: String
     @State private var users: [SearchUser] = []
     @State private var groups: [SearchGroup] = []
     @State private var searching = false
-    @State private var tipText: String?
     @State private var sent: Set<Int64> = []
     @State private var target: SearchUser?
     @State private var verifyMsg = "你好，我想加你为好友"
     @State private var toastText: String?
+
+    init(initialKeyword: String = "") {
+        self.initialKeyword = initialKeyword
+        _keyword = State(initialValue: initialKeyword)
+    }
 
     private var hasResult: Bool { !users.isEmpty || !groups.isEmpty }
 
@@ -20,7 +27,7 @@ struct AddFriendView: View {
             if hasResult {
                 resultList
             } else {
-                Text(tipText ?? "输入 AK号 / 邮箱 / 群号 / 群名，精确搜索")
+                Text("输入 AK号 / 邮箱 / 群号 / 群名，精确搜索")
                     .font(.system(size: 12.5))
                     .foregroundColor(AKColor.muted)
                     .multilineTextAlignment(.center)
@@ -32,6 +39,7 @@ struct AddFriendView: View {
         }
         .background(AKColor.bg)
         .overlay(alignment: .bottom) { toastView }
+        .reportsDetailPage()
         .navigationTitle("添加好友")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -178,12 +186,21 @@ struct AddFriendView: View {
 
     @ViewBuilder
     private func groupRow(_ group: SearchGroup) -> some View {
-        NavigationLink {
-            GroupPreviewView(groupId: group.id)
-        } label: {
-            groupRowContent(group)
+        if group.isMember == 1 {
+            NavigationLink {
+                GroupInfoView(groupId: group.id).restoresSwipeBack()
+            } label: {
+                groupRowContent(group)
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink {
+                GroupPreviewView(groupId: group.id).restoresSwipeBack()
+            } label: {
+                groupRowContent(group)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     private func groupRowContent(_ group: SearchGroup) -> some View {
@@ -259,19 +276,15 @@ struct AddFriendView: View {
         let kw = keyword.trimmingCharacters(in: .whitespaces)
         guard !kw.isEmpty else { return }
         searching = true
-        tipText = nil
         defer { searching = false }
         do {
             let data = try await APIClient.shared.search(keyword: kw)
             users = data.users
             groups = data.groups
-            if users.isEmpty && groups.isEmpty {
-                tipText = "没有找到「\(kw)」相关内容"
-            }
         } catch {
             users = []
             groups = []
-            tipText = error.localizedDescription
+            showToast(error.localizedDescription)
         }
     }
 

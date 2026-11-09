@@ -98,6 +98,7 @@ struct RegisterView: View {
                 .padding(16)
             }
             .background(AKColor.bg)
+            .reportsDetailPage()
             .navigationTitle("注册账号")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -203,6 +203,7 @@ struct EditProfileView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("个人资料")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {

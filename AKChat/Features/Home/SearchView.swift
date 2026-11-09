@@ -2,6 +2,7 @@ import SwiftUI
 
 /// 全局搜索：用户 / 群聊 / 聊天记录（对齐安卓 SearchScreen 的搜索框、分组与结果行）
 struct SearchView: View {
+    @EnvironmentObject private var app: AppState
     @State private var keyword = ""
     /// 0 全部 1 用户 2 群聊
     @State private var tab = 0
@@ -260,7 +261,7 @@ struct SearchView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 NavigationLink {
-                    ChatView(convType: "private", convId: user.id, title: user.nickname ?? "聊天")
+                    UserProfileView(uid: user.id, presetName: user.nickname ?? "").restoresSwipeBack()
                 } label: {
                     userInfo(user)
                 }
@@ -303,7 +304,11 @@ struct SearchView: View {
 
     @ViewBuilder
     private func userAction(_ user: SearchUser) -> some View {
-        if user.isFriend == 0 && !sent.contains(user.id) {
+        if isSelf(user) {
+            Text("我的备忘")
+                .font(.system(size: 11.5))
+                .foregroundColor(AKColor.hint)
+        } else if user.isFriend == 0 && !sent.contains(user.id) {
             Button {
                 Task { await addFriend(user) }
             } label: {
@@ -325,6 +330,11 @@ struct SearchView: View {
                 .font(.system(size: 11.5))
                 .foregroundColor(AKColor.hint)
         }
+    }
+
+    private func isSelf(_ user: SearchUser) -> Bool {
+        guard let myId = app.user?.id else { return false }
+        return myId == user.id
     }
 
     private func groupRow(_ group: SearchGroup) -> some View {

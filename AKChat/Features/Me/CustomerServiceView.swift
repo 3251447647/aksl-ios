@@ -35,6 +35,7 @@ struct CustomerServiceView: View {
             .padding(14)
         }
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("联系客服")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)

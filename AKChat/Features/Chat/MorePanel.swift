@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 聊天「+」面板：安卓式图标网格（相册/拍摄/通话/直播间/红包/礼物/转账）
+/// 聊天「+」面板：安卓式 4 列图标网格（相册/拍摄/通话/直播间/红包/礼物/转账/背景）
 struct MorePanel: View {
     var isGroup: Bool
     var onPhoto: () -> Void
@@ -12,32 +12,32 @@ struct MorePanel: View {
     var onVideoCall: () -> Void = {}
     var onGroupCall: (Int) -> Void = { _ in }
     var onGroupLive: () -> Void = {}
+    var onChatBg: () -> Void = {}
 
-    @Environment(\.dismiss) private var dismiss
-
-    private struct Item {
+    private struct Item: Identifiable {
+        let id = UUID()
         let title: String
         let icon: String
-        let color: Color
         let action: () -> Void
     }
 
     private var items: [Item] {
         var list: [Item] = [
-            Item(title: "相册", icon: "photo.on.rectangle", color: Color(hex: 0x4C8DFF), action: onPhoto),
-            Item(title: "拍摄", icon: "camera.fill", color: Color(hex: 0x34C759), action: onCamera)
+            Item(title: "相册", icon: "photo", action: onPhoto),
+            Item(title: "拍摄", icon: "camera", action: onCamera)
         ]
         if isGroup {
-            list.append(Item(title: "群通话", icon: "phone.fill", color: AKColor.brand, action: { onGroupCall(2) }))
-            list.append(Item(title: "直播间", icon: "video.fill", color: Color(hex: 0xFF4D6D), action: onGroupLive))
-            list.append(Item(title: "语音通话", icon: "phone.fill", color: AKColor.brand, action: { onGroupCall(1) }))
+            list.append(Item(title: "群通话", icon: "phone", action: { onGroupCall(2) }))
+            list.append(Item(title: "直播间", icon: "dot.radiowaves.left.and.right", action: onGroupLive))
+            list.append(Item(title: "语音通话", icon: "phone", action: { onGroupCall(1) }))
         } else {
-            list.append(Item(title: "语音通话", icon: "phone.fill", color: AKColor.brand, action: onVoiceCall))
-            list.append(Item(title: "视频通话", icon: "video.fill", color: AKColor.brand, action: onVideoCall))
+            list.append(Item(title: "语音通话", icon: "phone", action: onVoiceCall))
+            list.append(Item(title: "视频通话", icon: "video", action: onVideoCall))
         }
-        list.append(Item(title: "红包", icon: "envelope.fill", color: Color(hex: 0xE8603C), action: onRedPacket))
-        list.append(Item(title: "礼物", icon: "gift.fill", color: Color(hex: 0x8B7BF6), action: onGift))
-        list.append(Item(title: "转账", icon: "arrow.left.arrow.right", color: Color(hex: 0xF0B429), action: onTransfer))
+        list.append(Item(title: "红包", icon: "gift", action: onRedPacket))
+        list.append(Item(title: "礼物", icon: "gift.fill", action: onGift))
+        list.append(Item(title: "转账", icon: "arrow.left.arrow.right", action: onTransfer))
+        list.append(Item(title: "背景", icon: "photo.on.rectangle", action: onChatBg))
         return list
     }
 
@@ -46,55 +46,42 @@ struct MorePanel: View {
             let rows = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
             ForEach(rows.indices, id: \.self) { i in
                 HStack(spacing: 0) {
-                    ForEach(0..<4, id: \.self) { j in
-                        if j < rows[i].count {
-                            let item = rows[i][j]
-                            grid(title: item.title, icon: item.icon, color: item.color, action: item.action)
-                        } else {
+                    ForEach(rows[i]) { item in
+                        cell(item)
+                    }
+                    if rows[i].count < 4 {
+                        ForEach(0..<(4 - rows[i].count), id: \.self) { _ in
                             Spacer().frame(maxWidth: .infinity)
                         }
                     }
                 }
-                .padding(.top, i == 0 ? 16 : 12)
+                .padding(.bottom, 16)
             }
-
-            Spacer(minLength: 0)
-
-            Button {
-                dismiss()
-            } label: {
-                Text("取消")
-                    .font(.system(size: 15))
-                    .foregroundColor(AKColor.text)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 46)
-                    .background(AKColor.fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
         }
-        .background(AKColor.bg)
-        .presentationDragIndicator(.visible)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 18)
+        .background(AKColor.fill)
     }
 
-    private func grid(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+    private func cell(_ item: Item) -> some View {
         Button {
-            action()
+            item.action()
         } label: {
             VStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 21))
-                    .foregroundColor(.white)
-                    .frame(width: 52, height: 52)
-                    .background(color)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                Text(title)
+                Image(systemName: item.icon)
+                    .font(.system(size: 22))
+                    .foregroundColor(AKColor.sub)
+                    .frame(width: 56, height: 56)
+                    .background(AKColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                Text(item.title)
                     .font(.system(size: 11.5))
                     .foregroundColor(AKColor.sub)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

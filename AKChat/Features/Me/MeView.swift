@@ -80,7 +80,7 @@ struct MeView: View {
                     .padding(.top, 14)
                     menuSection("设置") {
                         NavigationLink { SettingsView() } label: {
-                            menuCell("gearshape.fill", Color(hex: 0x6C8AE4), "设置", trailing: "通知 · 语音 · 缓存")
+                            menuCell("gearshape.fill", Color(hex: 0x6C8AE4), "设置", trailing: "通知 · 缓存")
                         }
                         .buttonStyle(.plain)
                     }

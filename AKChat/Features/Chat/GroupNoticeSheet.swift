@@ -47,22 +47,9 @@ struct GroupNoticePopup: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     if !images.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 5), count: 3), spacing: 5) {
-                            ForEach(images, id: \.self) { path in
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.card
-                                    }
-                                }
-                                .aspectRatio(1, contentMode: .fill)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .contentShape(Rectangle())
-                                .onTapGesture { onOpenProfile?() }
-                            }
-                        }
+                        NoticeImageGrid(paths: Array(images.prefix(9)), size: 72, spacing: 5, corners: 8)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onOpenProfile?() }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

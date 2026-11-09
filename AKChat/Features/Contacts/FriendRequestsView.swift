@@ -1,5 +1,21 @@
 import SwiftUI
 
+/// 好友申请 / 群通知统一用纯日期（对齐安卓 ChatTime.format("MM-dd HH:mm")，不带今天/昨天）
+enum ContactTimeFormat {
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        f.dateFormat = "MM-dd HH:mm"
+        return f
+    }()
+
+    static func short(_ ts: Int64) -> String {
+        guard ts > 0 else { return "" }
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+}
+
 /// 新朋友：收到的申请（待处理可同意/拒绝）+ 我发出的申请（对齐安卓 FriendRequestsScreen）
 struct FriendRequestsView: View {
     @EnvironmentObject private var app: AppState
@@ -9,7 +25,10 @@ struct FriendRequestsView: View {
     @State private var loadingSent = false
     @State private var toastText: String?
 
-    private var incoming: [FriendRequest] { app.friendRequests }
+    /// 待处理排前面（安卓 sortedByDescending { it.status == 0 }）
+    private var incoming: [FriendRequest] {
+        app.friendRequests.sorted { ($0.status == 0 ? 0 : 1) < ($1.status == 0 ? 0 : 1) }
+    }
     private var pending: Int { incoming.filter { $0.status == 0 }.count }
     private var shown: [FriendRequest] { tab == 0 ? incoming : sent }
 
@@ -23,8 +42,8 @@ struct FriendRequestsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { idx, req in
-                        requestRow(req, isLast: idx == shown.count - 1)
+                    ForEach(shown) { req in
+                        requestRow(req)
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(AKColor.card)
                             .listRowSeparator(.hidden)
@@ -37,6 +56,7 @@ struct FriendRequestsView: View {
         }
         .background(AKColor.bg)
         .overlay(alignment: .bottom) { toastView }
+        .reportsDetailPage()
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -97,7 +117,7 @@ struct FriendRequestsView: View {
         .buttonStyle(.plain)
     }
 
-    private func requestRow(_ req: FriendRequest, isLast: Bool) -> some View {
+    private func requestRow(_ req: FriendRequest) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 NavigationLink {
@@ -135,9 +155,7 @@ struct FriendRequestsView: View {
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 10)
-            if !isLast {
-                Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.leading, 74)
-            }
+            Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.leading, 74)
         }
     }
 
@@ -163,7 +181,7 @@ struct FriendRequestsView: View {
                     .lineLimit(2)
                 HStack(spacing: 6) {
                     statusTag(req.status)
-                    Text(TimeText.full(req.createdAt))
+                    Text(ContactTimeFormat.short(req.createdAt))
                         .font(.system(size: 10.5))
                         .foregroundColor(AKColor.hint)
                 }

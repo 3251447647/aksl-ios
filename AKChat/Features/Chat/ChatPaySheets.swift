@@ -87,6 +87,7 @@ struct RedPacketSheet: View {
                     Section { Text(errorText).foregroundColor(AKColor.red).font(.system(size: 13)) }
                 }
             }
+            .reportsDetailPage()
             .navigationTitle("发红包")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

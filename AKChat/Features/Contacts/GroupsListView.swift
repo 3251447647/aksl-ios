@@ -15,8 +15,8 @@ struct GroupsListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(Array(groups.enumerated()), id: \.element.id) { idx, g in
-                        groupRow(g, isLast: idx == groups.count - 1)
+                    ForEach(groups) { g in
+                        groupRow(g)
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(AKColor.card)
                             .listRowSeparator(.hidden)
@@ -28,13 +28,14 @@ struct GroupsListView: View {
             }
         }
         .background(AKColor.bg)
+        .reportsDetailPage()
         .navigationTitle("群聊")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await app.loadContacts() }
         .task { await app.loadContacts() }
     }
 
-    private func groupRow(_ g: ContactGroup, isLast: Bool) -> some View {
+    private func groupRow(_ g: ContactGroup) -> some View {
         NavigationLink {
             ChatView(convType: "group", convId: g.id, title: g.name ?? "群聊")
         } label: {
@@ -65,9 +66,7 @@ struct GroupsListView: View {
                 .padding(.horizontal, 13)
                 .frame(height: 66)
                 .contentShape(Rectangle())
-                if !isLast {
-                    Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 72)
-                }
+                Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 72)
             }
         }
         .buttonStyle(.plain)

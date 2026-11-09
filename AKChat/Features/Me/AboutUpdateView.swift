@@ -34,7 +34,27 @@ struct AboutUpdateView: View {
 
     private var hasUpdate: Bool {
         guard let info, let cur = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else { return false }
-        return info.latestCode > (Int(cur) ?? 0)
+        return info.iosLatestCode > (Int(cur) ?? 0)
+    }
+
+    private var updateName: String {
+        let name = info?.iosLatestName ?? ""
+        return name.isEmpty ? "\(info?.iosLatestCode ?? 0)" : name
+    }
+
+    private var updateLog: String { info?.iosChangelog ?? "" }
+    private var updateUrl: String { info?.iosUrl ?? "" }
+    private var updateForce: Bool { (info?.iosForce ?? 0) == 1 }
+
+    private func sizeText(_ bytes: Int64) -> String {
+        if bytes <= 0 { return "" }
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.1fG", Double(bytes) / 1024 / 1024 / 1024)
+        }
+        if bytes >= 1024 * 1024 {
+            return String(format: "%.1fM", Double(bytes) / 1024 / 1024)
+        }
+        return "\(bytes / 1024)K"
     }
 
     var body: some View {
@@ -118,14 +138,28 @@ struct AboutUpdateView: View {
                     .listRowBackground(Color.clear)
 
                 if let errorText {
-                    Text(errorText)
-                        .font(.system(size: 12.5))
-                        .foregroundColor(AKColor.red)
-                        .padding(.horizontal, 16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("检查失败：" + errorText)
+                            .font(.system(size: 12.5))
+                            .foregroundColor(AKColor.red)
+                        Button {
+                            Task { await check() }
+                        } label: {
+                            Text("重试")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 8)
+                                .background(AKColor.brand)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
 
                 footer
@@ -137,6 +171,7 @@ struct AboutUpdateView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("关于 \(siteName)")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -172,16 +207,15 @@ struct AboutUpdateView: View {
                     Spacer(minLength: 8)
                     if checking {
                         ProgressView()
-                    } else if let info {
-                        Text(hasUpdate
-                             ? (info.latestName.isEmpty ? "\(info.latestCode)" : info.latestName)
-                             : "已是最新")
+                    } else if info != nil {
+                        Text(hasUpdate ? updateName : "已是最新")
                             .font(.system(size: 13.5))
                             .foregroundColor(AKColor.muted)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 15))
+                            .foregroundColor(AKColor.placeholder)
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 15))
-                        .foregroundColor(AKColor.placeholder)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 15)
@@ -193,26 +227,45 @@ struct AboutUpdateView: View {
             if let info, hasUpdate {
                 divider
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("新版本 \(info.latestName.isEmpty ? "\(info.latestCode)" : info.latestName)")
+                    Text("发现新版本 v" + updateName)
                         .font(.system(size: 14.5, weight: .medium))
                         .foregroundColor(AKColor.text)
-                    if !info.changelog.isEmpty {
-                        Text(info.changelog)
+                    if updateLog.isEmpty {
+                        Text("修复问题并优化体验")
                             .font(.system(size: 12.5))
                             .foregroundColor(AKColor.sub)
-                            .lineSpacing(4)
-                    }
-                    if let u = URL(string: info.url), !info.url.isEmpty {
-                        Link(destination: u) {
-                            Text("前往下载")
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundColor(AKColor.brand)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(AKColor.brandSoft)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else {
+                        ForEach(Array(updateLog.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                            let text = line.trimmingCharacters(in: .whitespaces)
+                            if !text.isEmpty {
+                                Text("· " + text)
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(AKColor.sub)
+                                    .lineSpacing(4)
+                            }
                         }
-                        .padding(.top, 4)
+                    }
+                    if updateForce {
+                        Text("该版本为强制更新，需更新后才能继续使用")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(AKColor.red)
+                    }
+                    if info.size > 0 {
+                        Text("安装包 " + sizeText(info.size))
+                            .font(.system(size: 11.5))
+                            .foregroundColor(AKColor.hint)
+                    }
+                    if let u = URL(string: updateUrl), !updateUrl.isEmpty {
+                        Link(destination: u) {
+                            Text("立即更新")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 42)
+                                .background(AKColor.brand)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .padding(.top, 8)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -220,12 +273,17 @@ struct AboutUpdateView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else if checkedAt != nil {
                 divider
-                Text("已是最新版本")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(AKColor.hint)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("当前已是最新版本")
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                    Text("当前版本 v\(versionName)")
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.muted)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .akCardRow(top: true, bottom: true, radius: 16)

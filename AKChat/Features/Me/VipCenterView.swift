@@ -95,6 +95,7 @@ struct VipView: View {
             payBar
         }
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("会员中心")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
@@ -374,6 +375,9 @@ struct VipView: View {
         do {
             let r = try await APIClient.shared.buyVip(planId: selected, payPassword: pwd)
             tip = "开通成功：\(r.levelName)，剩余 \(r.days) 天"
+            if let me = try? await APIClient.shared.me() {
+                app.user = me
+            }
             await load()
         } catch {
             tip = error.localizedDescription

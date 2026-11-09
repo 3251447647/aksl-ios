@@ -31,7 +31,6 @@ struct ChatView: View {
 
     @State private var messages: [Message] = []
     @State private var text = ""
-    @State private var photoItem: PhotosPickerItem?
     @State private var showEmoji = false
     @StateObject private var voice = VoiceService()
     @State private var sending = false
@@ -82,9 +81,35 @@ struct ChatView: View {
     @State private var previewGroupId: Int64 = 0
     @State private var showGroupPreview = false
     @State private var showCall = false
+    @State private var menuTarget: Message?
+    @State private var selectMode = false
+    @State private var selectedKeys: Set<String> = []
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var pendingPhotos: [UIImage] = []
+    @State private var showPhotoPreview = false
+    @State private var photoCaption = ""
+    @State private var voiceMode = false
+    @State private var voiceCancel = false
+    @State private var recordBusy = false
+    @State private var recordReleased = false
+    @State private var playedVoice: Set<String> = []
+    @State private var showBgPicker = false
+    @State private var bgItem: PhotosPickerItem?
+    @State private var showEmojiPicker = false
+    @State private var emojiItems: [PhotosPickerItem] = []
+    @State private var forwardTitle = "聊天记录"
+    @State private var errorToken = 0
+    @State private var unreadAnchor: Int64 = 0
+    @State private var pinScopeTarget: Message?
+    @State private var localPinId: Int64 = 0
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
+
+    /// 私聊对方在会话列表里的信息（靓号/VIP 徽章用）
+    private var peerConv: Conversation? {
+        app.conversations.first { $0.convType == convType && $0.convId == convId }
+    }
 
     /// 群内进行中的通话/直播横条（对齐安卓 GroupActiveBar）
     @ViewBuilder
@@ -156,25 +181,6 @@ struct ChatView: View {
             }
             messageList
 
-            if let typingName {
-                HStack {
-                    Text("\(typingName) 正在输入…")
-                        .font(.system(size: 11))
-                        .foregroundColor(AKColor.muted)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 2)
-            }
-
-            if let errorText {
-                Text(errorText)
-                    .font(.system(size: 12))
-                    .foregroundColor(AKColor.red)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 2)
-            }
-
             if !isGroup, convId == app.botUid, !app.botQuick.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -198,18 +204,56 @@ struct ChatView: View {
                 }
             }
 
-            if showEmoji {
-                emojiPanel
-            }
-
-            if let replyTo {
-                replyBar(replyTo)
-            }
-
-            if let muteHint {
+            if selectMode {
+                selectBar
+            } else if let muteHint {
                 mutedBar(muteHint)
             } else {
+                if let replyTo {
+                    replyBar(replyTo)
+                }
+                if voice.recording {
+                    recordingStrip
+                }
                 inputBar
+                if showEmoji {
+                    StickerAlbumView(
+                        emojis: app.emojis,
+                        onPickEmoji: { insertText($0) },
+                        onSticker: { url in Task { await sendSticker(url) } },
+                        onAdd: { showEmojiPicker = true },
+                        onDelete: { url in
+                            Task {
+                                await APIClient.shared.deleteEmoji(url: url)
+                                await app.loadEmojis()
+                                flash("已删除表情")
+                            }
+                        }
+                    )
+                }
+                if showMore {
+                    MorePanel(
+                        isGroup: isGroup,
+                        onPhoto: { showMore = false; showPhotoPicker = true },
+                        onCamera: { showMore = false; showCamera = true },
+                        onRedPacket: { showMore = false; showRedPacket = true },
+                        onTransfer: { showMore = false; showTransfer = true },
+                        onGift: { showMore = false; showGift = true },
+                        onVoiceCall: { showMore = false; startCall(1) },
+                        onVideoCall: { showMore = false; startCall(2) },
+                        onGroupCall: { type in
+                            showMore = false
+                            callType = type
+                            showGroupCall = true
+                        },
+                        onGroupLive: {
+                            showMore = false
+                            liveGid = convId
+                            showLive = true
+                        },
+                        onChatBg: { showMore = false; showBgPicker = true }
+                    )
+                }
             }
         }
         .background(
@@ -230,43 +274,24 @@ struct ChatView: View {
             }
             .ignoresSafeArea()
         )
+        .overlay {
+            if voice.recording {
+                RecordingOverlay(cancel: voiceCancel)
+            }
+        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                NavigationLink {
-                    MessageSearchView(scopeType: convType, scopeId: convId, scopeTitle: title)
-                } label: {
-                    Image(systemName: "magnifyingglass").foregroundColor(AKColor.text)
-                }
-            }
-            if !isGroup {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button {
-                            startCall(1)
-                        } label: {
-                            Label("语音通话", systemImage: "phone")
-                        }
-                        Button {
-                            startCall(2)
-                        } label: {
-                            Label("视频通话", systemImage: "video")
-                        }
-                    } label: {
-                        Image(systemName: "phone").foregroundColor(AKColor.text)
-                    }
-                }
-            }
-            if isGroup {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showGroupInfo = true
-                    } label: {
-                        Image(systemName: "ellipsis.circle").foregroundColor(AKColor.text)
-                    }
-                }
+        .overlay(alignment: .bottom) {
+            if let errorText {
+                Text(errorText)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(Capsule())
+                    .padding(.bottom, 90)
             }
         }
         .sheet(isPresented: $showGroupInfo) {
@@ -307,7 +332,24 @@ struct ChatView: View {
             }
         }
         .fullScreenCover(item: $previewImage) { item in
-            MediaPagerView(urls: item.urls, index: item.index)
+            MediaPagerView(
+                items: item.items,
+                index: item.index,
+                onForward: { msg in
+                    forwardMessages = [msg]
+                    forwardTitle = forwardRecordTitle
+                    showForward = true
+                },
+                onFavorite: { msg in
+                    Task {
+                        await APIClient.shared.addFavorite(message: msg, convName: title)
+                        flash("已收藏")
+                    }
+                },
+                onRecall: { msg in confirm = .recall(msg) },
+                onDelete: { msg in deleteLocal(msg) },
+                canRecall: { msg in canRecall(msg) }
+            )
         }
         .sheet(item: $profileTarget) { target in
             NavigationStack {
@@ -315,7 +357,38 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showForward) {
-            ForwardPickerView(messages: forwardMessages)
+            ForwardPickerView(messages: forwardMessages, title: forwardTitle)
+        }
+        .sheet(item: $menuTarget) { msg in
+            ChatMessageMenuSheet(
+                message: msg,
+                isGroup: isGroup,
+                mine: msg.fromUid == myId,
+                myRole: myRole,
+                pinned: pinMsgId == msg.id,
+                canRecall: canRecall(msg),
+                canPin: canPin && msg.id > 0 && msg.type != 11,
+                canAddEmoji: msg.type == 5 && msg.fromUid != myId,
+                onPick: { key in handleMenu(key, msg: msg) }
+            )
+        }
+        .sheet(isPresented: $showPhotoPreview) {
+            PhotoSendPreview(
+                images: pendingPhotos,
+                caption: $photoCaption,
+                onCancel: {
+                    showPhotoPreview = false
+                    pendingPhotos = []
+                    photoCaption = ""
+                },
+                onSend: { cap in
+                    let imgs = pendingPhotos
+                    showPhotoPreview = false
+                    pendingPhotos = []
+                    photoCaption = ""
+                    Task { await sendPhotos(imgs, caption: cap) }
+                }
+            )
         }
         .alert(item: $confirm) { c in
             switch c {
@@ -334,6 +407,20 @@ struct ChatView: View {
                     secondaryButton: .cancel(Text("取消"))
                 )
             }
+        }
+        .confirmationDialog(
+            "置顶消息",
+            isPresented: Binding(
+                get: { pinScopeTarget != nil },
+                set: { if !$0 { pinScopeTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("仅自己可见") { applyPinScope(shared: false) }
+            Button("双方可见") { applyPinScope(shared: true) }
+            Button("取消", role: .cancel) { pinScopeTarget = nil }
+        } message: {
+            Text("「仅自己可见」只在你这边显示；「双方可见」写入服务端，对方也能看到。")
         }
         .sheet(item: $reportTarget) { msg in
             NavigationStack {
@@ -373,9 +460,7 @@ struct ChatView: View {
             }
         }
         .sheet(isPresented: $showRecord) {
-            NavigationStack {
-                ChatRecordSheet(payload: recordPayload ?? "")
-            }
+            ChatRecordView(payload: recordPayload ?? "")
         }
         .sheet(isPresented: $showVideo) {
             NavigationStack {
@@ -408,7 +493,11 @@ struct ChatView: View {
         .sheet(isPresented: $showGroupCall) {
             NavigationStack { GroupCallView(gid: convId, callType: callType) }
         }
-        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
+                      maxSelectionCount: 9, matching: .images)
+        .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
+        .photosPicker(isPresented: $showEmojiPicker, selection: $emojiItems,
+                      maxSelectionCount: 9, matching: .images)
         .sheet(isPresented: $showRedPacket) {
             RedPacketSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
         }
@@ -466,11 +555,177 @@ struct ChatView: View {
         .onReceive(app.$chatEvent.compactMap { $0 }) { ev in
             handle(ev)
         }
+        .onChange(of: photoItems) { items in
+            guard !items.isEmpty else { return }
+            Task {
+                var images: [UIImage] = []
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        images.append(image)
+                    }
+                }
+                await MainActor.run {
+                    photoItems = []
+                    guard !images.isEmpty else { return }
+                    pendingPhotos = images
+                    photoCaption = ""
+                    showPhotoPreview = true
+                }
+            }
+        }
+        .onChange(of: bgItem) { item in
+            guard let item else { return }
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let up = try? await app.uploadImage(data) else {
+                    await MainActor.run { bgItem = nil; flash("背景设置失败") }
+                    return
+                }
+                if let r = try? await APIClient.shared.setChatBg(convType: convType, convId: convId, url: up.url) {
+                    await MainActor.run {
+                        chatBg = r.bg
+                        storeBg(r.bg)
+                        bgItem = nil
+                        flash("背景已更新")
+                    }
+                } else {
+                    await MainActor.run { bgItem = nil; flash("背景设置失败") }
+                }
+            }
+        }
+        .onChange(of: emojiItems) { items in
+            guard !items.isEmpty else { return }
+            Task {
+                var urls: [String] = []
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let up = try? await app.uploadImage(data) {
+                        urls.append(up.url)
+                    }
+                }
+                await MainActor.run { emojiItems = [] }
+                for url in urls {
+                    await app.addEmoji(url: url)
+                }
+                flash(urls.isEmpty ? "表情添加失败" : "表情已添加")
+            }
+        }
         .reportsDetailPage()
         .restoresSwipeBack()
     }
 
     /* ---------------- 列表 ---------------- */
+
+    private var firstUnreadIndex: Int {
+        guard unreadAnchor > 0 else { return -1 }
+        return messages.firstIndex { $0.id >= unreadAnchor && $0.fromUid != myId } ?? -1
+    }
+
+    /// 「以下是新消息 · N 条」分割线（对齐安卓 UnreadDividerRow）
+    private var unreadDivider: some View {
+        let count = messages.filter { unreadAnchor > 0 && $0.id >= unreadAnchor && $0.fromUid != myId }.count
+        return HStack(spacing: 0) {
+            Rectangle().fill(AKColor.line).frame(height: 0.5)
+            Text(count > 0 ? "以下是新消息 · \(count) 条" : "以下是新消息")
+                .font(.system(size: 11))
+                .foregroundColor(AKColor.muted)
+                .fixedSize()
+                .padding(.horizontal, 10)
+            Rectangle().fill(AKColor.line).frame(height: 0.5)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+    }
+
+    private func toggleSelect(_ msg: Message) {
+        if selectedKeys.contains(msg.listKey) {
+            selectedKeys.remove(msg.listKey)
+        } else {
+            selectedKeys.insert(msg.listKey)
+        }
+    }
+
+    private func selectCircle(selected: Bool) -> some View {
+        ZStack {
+            Circle()
+                .fill(selected ? AKColor.brand : Color.clear)
+                .frame(width: 20, height: 20)
+                .overlay(
+                    Circle().stroke(selected ? AKColor.brand : AKColor.placeholder, lineWidth: 1)
+                )
+            if selected {
+                Text("✓")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white)
+            }
+        }
+        .padding(.top, 12)
+        .onTapGesture { }
+    }
+
+    /// 多选底栏（对齐安卓 ChatSelectBar）
+    private var selectBar: some View {
+        HStack(spacing: 0) {
+            Text("已选 \(selectedKeys.count) 条")
+                .font(.system(size: 13))
+                .foregroundColor(AKColor.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                selectMode = false
+                selectedKeys.removeAll()
+            } label: {
+                Text("取消")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(AKColor.muted)
+                    .padding(.horizontal, 10)
+            }
+            .buttonStyle(.plain)
+            Button {
+                let picked = messages.filter { selectedKeys.contains($0.listKey) }
+                for m in picked { deleteLocalSilently(m) }
+                selectMode = false
+                selectedKeys.removeAll()
+                flash("已删除 \(picked.count) 条")
+            } label: {
+                Text("删除")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(selectedKeys.isEmpty ? AKColor.placeholder : AKColor.red)
+                    .padding(.horizontal, 10)
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedKeys.isEmpty)
+            Button {
+                let picked = messages
+                    .filter { selectedKeys.contains($0.listKey) }
+                    .sorted { $0.createdAt < $1.createdAt }
+                selectMode = false
+                selectedKeys.removeAll()
+                forwardMessages = picked
+                forwardTitle = forwardRecordTitle
+                showForward = true
+            } label: {
+                Text("合并转发")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(selectedKeys.isEmpty ? AKColor.placeholder : AKColor.brand)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedKeys.isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AKColor.card)
+    }
+
+    private var forwardRecordTitle: String {
+        isGroup ? (title + "的聊天记录")
+                : ((app.user?.nickname ?? "我") + " 与 " + title + " 的聊天记录")
+    }
+
 
     private var messageList: some View {
         let hints = readHints
@@ -479,6 +734,20 @@ struct ChatView: View {
                 LazyVStack(spacing: 8) {
                     if loading {
                         ProgressView().padding(.top, 12)
+                    }
+                    if messages.isEmpty && !loading {
+                        VStack(spacing: 6) {
+                            Text(errorText ?? "暂无消息")
+                                .font(.system(size: 12))
+                                .foregroundColor(AKColor.muted)
+                            if errorText != nil {
+                                Button("点击重试") { Task { await load() } }
+                                    .font(.system(size: 13))
+                                    .foregroundColor(AKColor.brand)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
                     }
                     if hasMore && !messages.isEmpty {
                         Button {
@@ -492,6 +761,9 @@ struct ChatView: View {
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.listKey) { index, msg in
                         let prev = index > 0 ? messages[index - 1].createdAt : 0
+                        if index == firstUnreadIndex {
+                            unreadDivider
+                        }
                         if let stamp = chatDividerLabel(previous: prev, current: msg.createdAt) {
                             Text(stamp)
                                 .font(.system(size: 10.5))
@@ -502,8 +774,13 @@ struct ChatView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .padding(.vertical, 8)
                         }
-                        row(msg, readHint: hints[msg.listKey] ?? 0)
-                            .id(msg.listKey)
+                        HStack(alignment: .top, spacing: 8) {
+                            if selectMode {
+                                selectCircle(selected: selectedKeys.contains(msg.listKey))
+                            }
+                            row(msg, readHint: hints[msg.listKey] ?? 0)
+                        }
+                        .id(msg.listKey)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -573,9 +850,15 @@ struct ChatView: View {
         return text.isEmpty ? nil : text
     }
 
-    /// 被禁言时输入区置灰（对齐安卓 MutedComposerBar）
+    /// 被禁言 / 群封禁 / 全员禁言时输入区置灰（对齐安卓 MutedComposerBar）
     private var muteHint: String? {
-        guard isGroup, myRole != 1, myRole != 2 else { return nil }
+        guard isGroup else { return nil }
+        if groupInfo?.isBanned == 1 {
+            let reason = (groupInfo?.banReason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return "该群已被封禁，请联系在线客服处理" +
+                (reason.isEmpty ? "" : "（封禁原因：\(reason)）")
+        }
+        guard myRole != 1, myRole != 2 else { return nil }
         let until = groupInfo?.myMuteUntil ?? 0
         guard until > Int64(Date().timeIntervalSince1970) else { return nil }
         return "你已被禁言，无法发送消息"
@@ -796,33 +1079,45 @@ struct ChatView: View {
 
     /// 会话内图片组成预览列表，供分页器使用
     private func openImagePager(_ url: String) {
-        var list: [URL] = []
+        var items: [PreviewMedia] = []
         var at = 0
-        for m in messages where m.type == 5 && !isStickerMessage(m) {
-            if let t = m.text, let u = APIClient.fullURL(VoiceService.cleanPath(t)) {
-                if t == url { at = list.count }
-                list.append(u)
-            }
+        for m in messages {
+            let sticker = isStickerMessage(m)
+            guard (m.type == 5 && !sticker) || m.type == 15 else { continue }
+            let raw = m.text ?? ""
+            guard let u = APIClient.fullURL(VoiceService.cleanPath(raw)) else { continue }
+            if raw == url || VoiceService.cleanPath(raw) == url { at = items.count }
+            items.append(PreviewMedia(url: u, isVideo: m.type == 15, message: m))
         }
-        if list.isEmpty, let u = APIClient.fullURL(VoiceService.cleanPath(url)) {
-            list = [u]
+        if items.isEmpty, let u = APIClient.fullURL(VoiceService.cleanPath(url)) {
+            items = [PreviewMedia(url: u, isVideo: false, message: nil)]
         }
-        guard !list.isEmpty else { return }
-        previewImage = PreviewImage(urls: list, index: min(at, list.count - 1))
+        guard !items.isEmpty else { return }
+        previewImage = PreviewImage(items: items, index: min(at, items.count - 1))
     }
 
     private func openAlbum(_ paths: [String], index: Int) {
-        let lower = paths.first?.lowercased() ?? ""
-        if lower.hasSuffix(".mp4") || lower.hasSuffix(".mov") || lower.hasSuffix(".m4v") || lower.hasSuffix(".webm") {
-            if let u = APIClient.fullURL(VoiceService.cleanPath(paths[min(index, paths.count - 1)])) {
-                videoURL = u
-                showVideo = true
-            }
-            return
+        var items: [PreviewMedia] = []
+        for raw in paths {
+            guard let u = APIClient.fullURL(VoiceService.cleanPath(raw)) else { continue }
+            let lower = raw.lowercased()
+            let video = lower.hasSuffix(".mp4") || lower.hasSuffix(".mov")
+                || lower.hasSuffix(".m4v") || lower.hasSuffix(".webm")
+            items.append(PreviewMedia(url: u, isVideo: video, message: nil))
         }
-        let urls = paths.compactMap { APIClient.fullURL(VoiceService.cleanPath($0)) }
-        guard !urls.isEmpty else { return }
-        previewImage = PreviewImage(urls: urls, index: min(max(index, 0), urls.count - 1))
+        guard !items.isEmpty else { return }
+        previewImage = PreviewImage(items: items, index: min(max(index, 0), items.count - 1))
+    }
+
+    /// 群聊 @ 名字映射（@全体成员 → 0）
+    private var mentionMap: [String: Int64] {
+        guard isGroup else { return [:] }
+        var map: [String: Int64] = ["全体成员": 0]
+        for m in members {
+            let name = m.name ?? ""
+            if !name.isEmpty { map[name] = m.uid }
+        }
+        return map
     }
 
     @ViewBuilder
@@ -835,16 +1130,31 @@ struct ChatView: View {
             myAvatar: app.user?.avatar,
             myUid: myId,
             myName: app.user?.nickname ?? "我",
+            peerName: title,
             readHint: readHint,
             playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content ?? ""),
+            voicePlayed: playedVoice.contains(msg.listKey),
+            mentionMap: mentionMap,
+            onMention: { uid in
+                if uid > 0 { profileTarget = ProfileTarget(id: uid) }
+            },
             onVoiceTap: {
+                playedVoice.insert(msg.listKey)
                 voice.play(path: VoiceService.cleanPath(msg.text ?? msg.content ?? ""))
             },
             onRetry: {
                 Task { await resend(msg) }
             },
             onAvatarTap: {
-                if msg.fromUid != myId { profileTarget = ProfileTarget(id: msg.fromUid) }
+                profileTarget = ProfileTarget(id: msg.fromUid)
+            },
+            onAvatarLongPress: {
+                guard isGroup, msg.fromUid != myId else { return }
+                let name = members.first { $0.uid == msg.fromUid }?.name ?? msg.fromName ?? "成员"
+                insertMention(name: name, uid: msg.fromUid)
+            },
+            onLongPress: {
+                if selectMode { toggleSelect(msg) } else { menuTarget = msg }
             },
             onOpenLive: { gid in
                 liveGid = gid
@@ -887,147 +1197,162 @@ struct ChatView: View {
             }
         )
         .contentShape(Rectangle())
-        .contextMenu {
-            menuItems(msg)
+        .overlay {
+            if selectMode {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { toggleSelect(msg) }
+                    .onLongPressGesture { toggleSelect(msg) }
+            }
         }
     }
 
-    /// 长按菜单：顺序对齐安卓 ChatMenuSheet
-    @ViewBuilder
-    private func menuItems(_ msg: Message) -> some View {
-        if msg.type == 5, !isStickerMessage(msg), let url = msg.text, !url.isEmpty {
-            Button {
-                openImagePager(url)
-            } label: {
-                Label("查看大图", systemImage: "photo")
+    /// 长按菜单动作：顺序与安卓 ChatMenuSheet 一致
+    private func handleMenu(_ key: String, msg: Message) {
+        switch key {
+        case "reply":
+            replyTo = msg
+            inputFocused = true
+        case "copy":
+            UIPasteboard.general.string = copyText(msg) ?? ""
+            flash("已复制")
+        case "forward":
+            forwardMessages = [msg]
+            forwardTitle = forwardRecordTitle
+            showForward = true
+        case "multi":
+            selectedKeys = [msg.listKey]
+            selectMode = true
+        case "fav":
+            Task {
+                await APIClient.shared.addFavorite(message: msg, convName: title)
+                flash("已收藏")
             }
-        }
-        if msg.type != 11, msg.recalled == 0 {
-            Button {
-                replyTo = msg
-                inputFocused = true
-            } label: {
-                Label("回复", systemImage: "arrowshape.turn.up.left")
-            }
-        }
-        if let copy = copyText(msg) {
-            Button {
-                UIPasteboard.general.string = copy
-                errorText = "已复制"
-            } label: {
-                Label("复制", systemImage: "doc.on.doc")
-            }
-        }
-        if msg.id > 0, msg.type != 11, msg.recalled == 0 {
-            Button {
-                forwardMessages = [msg]
-                showForward = true
-            } label: {
-                Label("转发", systemImage: "arrowshape.turn.up.right")
-            }
-        }
-        if msg.type != 11, msg.recalled == 0 {
-            Button {
-                Task { await APIClient.shared.addFavorite(message: msg, convName: title) }
-                errorText = "已收藏"
-            } label: {
-                Label("收藏", systemImage: "star")
-            }
-        }
-        if canPin, msg.id > 0, msg.type != 11, msg.recalled == 0 {
-            Button {
+        case "pin":
+            if isGroup {
                 Task { await togglePin(msg) }
-            } label: {
-                Label(pinMsgId == msg.id ? "取消置顶" : "置顶", systemImage: "pin")
+            } else if pinMsgId == msg.id {
+                Task { await clearPin() }
+            } else {
+                pinScopeTarget = msg
             }
-        }
-        if msg.type == 5, msg.fromUid != myId, let url = msg.text, !url.isEmpty {
-            Button {
-                Task { await app.addEmoji(url: url) }
-            } label: {
-                Label("添加到表情", systemImage: "face.smiling")
+        case "emoji":
+            if let url = msg.text, !url.isEmpty {
+                Task {
+                    await app.addEmoji(url: url)
+                    flash("已添加到我的表情")
+                }
             }
-        }
-        if msg.fromUid != myId, msg.type != 11 {
-            Button(role: .destructive) {
-                reportTarget = msg
-            } label: {
-                Label("举报", systemImage: "exclamationmark.bubble")
-            }
-        }
-        if canRecall(msg) {
-            Button(role: .destructive) {
-                confirm = .recall(msg)
-            } label: {
-                Label(msg.fromUid == myId ? "撤回" : "撤回该消息", systemImage: "arrow.uturn.backward")
-            }
-        }
-        Button(role: .destructive) {
+        case "report":
+            reportTarget = msg
+        case "recall":
+            confirm = .recall(msg)
+        case "delete":
             confirm = .delete(msg)
-        } label: {
-            Label("删除", systemImage: "trash")
+        default:
+            break
+        }
+    }
+
+    private func insertText(_ value: String) {
+        text += value
+    }
+
+    /// @ 某人：替换光标前刚输入的 @关键字，不重复拼 @@
+    private func insertMention(name: String, uid: Int64) {
+        var base = text
+        if let at = base.lastIndex(of: "@") {
+            let tail = base[base.index(after: at)...]
+            if !tail.contains(where: { $0.isWhitespace }) {
+                base = String(base[..<at])
+            }
+        }
+        text = base + "@\(name) "
+        if !atUids.contains(uid) { atUids.append(uid) }
+        inputFocused = true
+    }
+
+    private func flash(_ message: String) {
+        errorText = message
+        errorToken += 1
+        let token = errorToken
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run {
+                if token == errorToken { errorText = nil }
+            }
         }
     }
 
     /* ---------------- 输入 ---------------- */
 
-    /// 安卓式头部：返回箭头 + 标题（群靓徽章）+ 搜索/通话
+    /// 安卓式头部：返回 + 标题（徽章）+ 固定高度副标题（正在输入）+ 右侧更多
     private var chatHeader: some View {
-        HStack(spacing: 10) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(AKColor.text)
-                    .frame(width: 32, height: 32)
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: 5) {
-                Text(title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(AKColor.text)
-                    .lineLimit(1)
-                if isGroup, let g = groupInfo, g.isPretty == 1, !g.displayNo.isEmpty {
-                    PrettyBadge(number: g.displayNo, isGroup: true)
-                }
-            }
-            Spacer(minLength: 0)
-            NavigationLink {
-                MessageSearchView(scopeType: convType, scopeId: convId, scopeTitle: title)
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 17))
-                    .foregroundColor(AKColor.text)
-                    .frame(width: 32, height: 32)
-            }
-            if isGroup {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
                 Button {
-                    showGroupInfo = true
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 22))
+                        .foregroundColor(AKColor.text)
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+
+                VStack(spacing: 0) {
+                    HStack(spacing: 3) {
+                        Text(title)
+                            .font(.system(size: 15.5, weight: .semibold))
+                            .foregroundColor(AKColor.text)
+                            .lineLimit(1)
+                        if isGroup {
+                            if let g = groupInfo, g.isPretty == 1, !g.displayNo.isEmpty {
+                                PrettyBadge(number: g.displayNo, isGroup: true)
+                            }
+                        } else {
+                            if let c = peerConv, c.isPretty == 1, let no = c.prettyNo, !no.isEmpty {
+                                PrettyBadge(number: no)
+                            }
+                            if let c = peerConv, c.vipLevel > 0 {
+                                VipBadge(level: c.vipLevel)
+                            }
+                        }
+                        if convId == app.botUid {
+                            BadgeView(text: "AI机器人", color: AKColor.link, background: AKColor.blueSoft)
+                        }
+                    }
+                    ZStack {
+                        if let typingName {
+                            Text("\(typingName) 正在输入…")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(AKColor.brand)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(height: 18)
+                }
+                .frame(maxWidth: .infinity)
+
+                Button {
+                    if isGroup {
+                        showGroupInfo = true
+                    } else {
+                        profileTarget = ProfileTarget(id: convId)
+                    }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 20))
                         .foregroundColor(AKColor.text)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 40, height: 40)
                 }
-            } else {
-                Menu {
-                    Button("语音通话") { startCall(1) }
-                    Button("视频通话") { startCall(2) }
-                } label: {
-                    Image(systemName: "phone")
-                        .font(.system(size: 17))
-                        .foregroundColor(AKColor.text)
-                        .frame(width: 32, height: 32)
-                }
+                .buttonStyle(.plain)
             }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 46)
-        .background(AKColor.card)
-        .overlay(alignment: .bottom) {
+            .padding(.horizontal, 2)
+            .padding(.vertical, 3)
             Rectangle().fill(AKColor.line).frame(height: 0.5)
         }
+        .background(AKColor.card)
     }
 
     private var hasText: Bool {
@@ -1035,120 +1360,115 @@ struct ChatView: View {
     }
 
     private var placeholder: String {
-        isGroup ? "发消息，@ 可提醒成员" : "发消息…"
+        "发消息…"
     }
 
     private var inputBar: some View {
         HStack(spacing: 6) {
             Button {
-                Task { await toggleRecord() }
+                voiceMode.toggle()
+                showMore = false
+                showEmoji = false
+                inputFocused = false
             } label: {
-                Image(systemName: voice.recording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 18))
+                Image(systemName: voiceMode ? "keyboard" : "mic")
+                    .font(.system(size: 19))
                     .foregroundColor(voice.recording ? .white : AKColor.sub)
                     .frame(width: 36, height: 36)
                     .background(voice.recording ? AKColor.red : AKColor.fill)
                     .clipShape(Circle())
             }
+            .buttonStyle(.plain)
 
-            TextField(placeholder, text: $text, axis: .vertical)
-                .focused($inputFocused)
-                .lineLimit(1...4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(AKColor.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .onChange(of: text) { value in
-                    handleInputChange(value)
-                }
-
-            if isGroup {
-                Button {
-                    showAtPicker = true
-                } label: {
-                    Text("@")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(AKColor.sub)
-                        .frame(width: 32, height: 32)
-                }
+            if voiceMode {
+                Text(voice.recording ? "松开发送" : "按住 说话")
+                    .font(.system(size: 14.5, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .background(voice.recording ? AKColor.fill : AKColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 19, style: .continuous)
+                            .stroke(AKColor.line, lineWidth: 0.5)
+                    )
+                    .contentShape(Rectangle())
+                    .gesture(recordGesture)
+            } else {
+                TextField(placeholder, text: $text, axis: .vertical)
+                    .focused($inputFocused)
+                    .lineLimit(1...4)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .onChange(of: text) { value in
+                        handleInputChange(value)
+                    }
+                    .onTapGesture {
+                        showMore = false
+                        showEmoji = false
+                        voiceMode = false
+                    }
             }
 
             Button {
-                showEmoji.toggle()
+                if showEmoji {
+                    showEmoji = false
+                    inputFocused = true
+                } else {
+                    showEmoji = true
+                    showMore = false
+                    voiceMode = false
+                    inputFocused = false
+                }
             } label: {
-                Image(systemName: showEmoji ? "keyboard" : "face.smiling")
+                Image(systemName: "face.smiling")
                     .font(.system(size: 21))
                     .foregroundColor(showEmoji ? AKColor.brand : AKColor.sub)
                     .frame(width: 36, height: 36)
             }
+            .buttonStyle(.plain)
 
             if hasText {
                 Button {
                     Task { await send() }
                 } label: {
                     Image(systemName: "paperplane.fill")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 18))
                         .foregroundColor(.white)
                         .frame(width: 36, height: 36)
                         .background(AKColor.brand)
                         .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
                 .disabled(sending)
             } else {
                 Button {
-                    showMore = true
+                    showMore.toggle()
+                    showEmoji = false
+                    voiceMode = false
+                    inputFocused = false
                 } label: {
                     Image(systemName: showMore ? "xmark" : "plus")
                         .font(.system(size: 22))
                         .foregroundColor(AKColor.sub)
                         .frame(width: 36, height: 36)
                 }
-                .sheet(isPresented: $showMore) {
-                    MorePanel(
-                        isGroup: isGroup,
-                        onPhoto: { showMore = false; showPhotoPicker = true },
-                        onCamera: {
-                            showMore = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showCamera = true }
-                        },
-                        onRedPacket: { showMore = false; showRedPacket = true },
-                        onTransfer: { showMore = false; showTransfer = true },
-                        onGift: { showMore = false; showGift = true },
-                        onVoiceCall: { showMore = false; startCall(1) },
-                        onVideoCall: { showMore = false; startCall(2) },
-                        onGroupCall: { type in
-                            showMore = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                                callType = type
-                                showGroupCall = true
-                            }
-                        },
-                        onGroupLive: {
-                            showMore = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                                liveGid = convId
-                                showLive = true
-                            }
-                        }
-                    )
-                    .presentationDetents([.height(isGroup ? 320 : 300)])
-                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .padding(.vertical, 6)
         .background(AKColor.card)
-        .onChange(of: photoItem) { item in
-            guard let item else { return }
-            Task { await sendPhoto(item) }
-        }
     }
 
     private func handleInputChange(_ value: String) {
         if isGroup, value.last == "@", !members.isEmpty {
             showAtPicker = true
         }
-        guard isGroup, !value.isEmpty, convId != myId else { return }
+        guard !value.isEmpty, !(isGroup == false && convId == myId) else { return }
         let now = Date().timeIntervalSince1970
         if now - lastTypingSent > 2 {
             lastTypingSent = now
@@ -1156,36 +1476,72 @@ struct ChatView: View {
         }
     }
 
-    private var emojiPanel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                if app.emojis.isEmpty {
-                    Text("还没有收藏表情，长按图片可添加")
-                        .font(.system(size: 12))
-                        .foregroundColor(AKColor.muted)
-                        .padding(.vertical, 18)
-                } else {
-                    ForEach(app.emojis) { emoji in
-                        Button {
-                            Task { await sendSticker(emoji.url) }
-                        } label: {
-                            AsyncImage(url: APIClient.fullURL(emoji.url)) { phase in
-                                if let image = phase.image {
-                                    image.resizable().scaledToFit()
-                                } else {
-                                    Color.clear
-                                }
-                            }
-                            .frame(width: 62, height: 62)
-                        }
-                    }
+    private var recordGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !voice.recording, !recordBusy {
+                    recordReleased = false
+                    startRecording()
+                }
+                voiceCancel = value.translation.height < -70
+            }
+            .onEnded { _ in
+                recordReleased = true
+                finishRecording()
+            }
+    }
+
+    private func startRecording() {
+        guard !recordBusy else { return }
+        recordBusy = true
+        Task {
+            let ok = await voice.startRecording()
+            await MainActor.run {
+                recordBusy = false
+                if !ok {
+                    flash("未授权麦克风，无法录音")
+                } else if recordReleased {
+                    _ = voice.stopRecording()
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
-        .frame(height: 86)
-        .background(AKColor.card)
+    }
+
+    private func finishRecording() {
+        let cancelled = voiceCancel
+        voiceCancel = false
+        guard voice.recording else { return }
+        guard let (url, seconds) = voice.stopRecording() else { return }
+        if cancelled {
+            flash("已取消")
+            return
+        }
+        Task {
+            sending = true
+            defer { sending = false }
+            let local = makeLocal(type: 6, content: "")
+            messages.append(local)
+            do {
+                let uploaded = try await app.uploadVoice(fileURL: url)
+                let saved = try await app.sendVoice(convType: convType, convId: convId,
+                                                    url: uploaded.url, seconds: seconds)
+                replaceLocal(local, with: saved)
+            } catch {
+                failLocal(local, "语音发送失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private var recordingStrip: some View {
+        HStack(spacing: 8) {
+            Circle().fill(AKColor.red).frame(width: 8, height: 8)
+            Text("松开发送")
+                .font(.system(size: 12))
+                .foregroundColor(AKColor.red)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(10)
+        .background(AKColor.redSoft)
     }
 
     /* ---------------- 数据 ---------------- */
@@ -1207,6 +1563,12 @@ struct ChatView: View {
             let list = try await app.loadHistory(convType: convType, convId: convId)
             messages = list.sorted { $0.id < $1.id }
             hasMore = list.count >= 40
+            if unreadAnchor == 0, let c = peerConv, c.unread > 0 {
+                let incoming = messages.filter { $0.fromUid != myId && $0.id > 0 }
+                if incoming.count >= c.unread {
+                    unreadAnchor = incoming[incoming.count - c.unread].id
+                }
+            }
             if let last = messages.last {
                 await app.markRead(convType: convType, convId: convId, lastId: last.id)
             }
@@ -1251,9 +1613,43 @@ struct ChatView: View {
                 pinMsgId = 0
             }
         } else {
-            let pin = try? await APIClient.shared.pinInfo(peer: convId)
-            pinText = pin?.digest
-            pinMsgId = pin?.msgId ?? 0
+            localPinId = Int64(UserDefaults.standard.integer(forKey: localPinKey))
+            if localPinId > 0 {
+                pinMsgId = localPinId
+                let text = UserDefaults.standard.string(forKey: localPinTextKey) ?? ""
+                pinText = text.isEmpty ? "置顶消息" : text
+            } else {
+                let pin = try? await APIClient.shared.pinInfo(peer: convId)
+                pinText = pin?.digest
+                pinMsgId = pin?.msgId ?? 0
+            }
+        }
+    }
+
+    private var localPinKey: String { "ios_private_pin_\(convType)_\(convId)" }
+    private var localPinTextKey: String { "ios_private_pin_text_\(convType)_\(convId)" }
+
+    /// 私聊置顶范围：仅自己（本地） / 双方可见（写服务端）
+    private func applyPinScope(shared: Bool) {
+        guard let msg = pinScopeTarget else { return }
+        pinScopeTarget = nil
+        if shared {
+            UserDefaults.standard.removeObject(forKey: localPinKey)
+            UserDefaults.standard.removeObject(forKey: localPinTextKey)
+            localPinId = 0
+            Task {
+                await APIClient.shared.setPinScoped(peer: convId, msgId: msg.id, shared: true)
+                await loadPin()
+                flash("已置顶（双方可见）")
+            }
+        } else {
+            let text = digest(msg)
+            UserDefaults.standard.set(Int(msg.id), forKey: localPinKey)
+            UserDefaults.standard.set(text, forKey: localPinTextKey)
+            localPinId = msg.id
+            pinMsgId = msg.id
+            pinText = text
+            flash("已置顶（仅自己可见）")
         }
     }
 
@@ -1385,12 +1781,6 @@ struct ChatView: View {
         }
     }
 
-    private func sendPhoto(_ item: PhotosPickerItem) async {
-        defer { photoItem = nil }
-        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-        await sendPhotoData(data)
-    }
-
     private func sendSticker(_ url: String) async {
         guard !sending else { return }
         sending = true
@@ -1400,26 +1790,6 @@ struct ChatView: View {
             messages.append(saved)
         } catch {
             errorText = "表情发送失败：\(error.localizedDescription)"
-        }
-    }
-
-    private func toggleRecord() async {
-        if voice.recording {
-            guard let (url, seconds) = voice.stopRecording() else { return }
-            sending = true
-            defer { sending = false }
-            do {
-                let local = makeLocal(type: 6, content: "")
-                messages.append(local)
-                let uploaded = try await app.uploadVoice(fileURL: url)
-                let saved = try await app.sendVoice(convType: convType, convId: convId, url: uploaded.url, seconds: seconds)
-                replaceLocal(local, with: saved)
-            } catch {
-                errorText = "语音发送失败：\(error.localizedDescription)"
-            }
-        } else {
-            let ok = await voice.startRecording()
-            if !ok { errorText = "未授权麦克风，无法录音" }
         }
     }
 
@@ -1448,9 +1818,78 @@ struct ChatView: View {
         }
     }
 
-    private func deleteLocal(_ msg: Message) {
+    private func sendPhotos(_ images: [UIImage], caption: String) async {
+        guard !images.isEmpty, !sending else { return }
+        sending = true
+        defer { sending = false }
+        let cap = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if images.count == 1 {
+            let local = makeLocal(type: 5, content: "")
+            messages.append(local)
+            do {
+                guard let data = images[0].jpegData(compressionQuality: 0.85) else {
+                    throw APIError.server("读取图片失败")
+                }
+                let up = try await app.uploadImage(data)
+                var extra: [String: Any] = [:]
+                if up.w > 0, up.h > 0 {
+                    extra["w"] = up.w
+                    extra["h"] = up.h
+                }
+                if !cap.isEmpty { extra["caption"] = cap }
+                var payload = up.url
+                if !extra.isEmpty,
+                   let json = try? JSONSerialization.data(withJSONObject: extra),
+                   let text = String(data: json, encoding: .utf8) {
+                    payload += "|#|" + text
+                }
+                let saved = try await APIClient.shared.sendTypedMessage(
+                    convType: convType, convId: convId, type: 5, content: payload,
+                    clientId: local.clientId ?? "ios_\(UUID().uuidString)"
+                )
+                replaceLocal(local, with: saved.message)
+                await app.refreshConversations()
+            } catch {
+                failLocal(local, "图片发送失败：\(error.localizedDescription)")
+            }
+            return
+        }
+
+        var imgs: [[String: Any]] = []
+        for image in images {
+            guard let data = image.jpegData(compressionQuality: 0.85),
+                  let up = try? await app.uploadImage(data) else { continue }
+            imgs.append(["url": up.url, "w": up.w, "h": up.h])
+        }
+        guard !imgs.isEmpty else {
+            flash("图片上传失败")
+            return
+        }
+        let obj: [String: Any] = ["imgs": imgs, "caption": cap]
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
+              let payload = String(data: data, encoding: .utf8) else { return }
+        let local = makeLocal(type: 31, content: payload)
+        messages.append(local)
+        do {
+            let saved = try await APIClient.shared.sendTypedMessage(
+                convType: convType, convId: convId, type: 31, content: payload,
+                clientId: local.clientId ?? "ios_\(UUID().uuidString)"
+            )
+            replaceLocal(local, with: saved.message)
+            await app.refreshConversations()
+        } catch {
+            failLocal(local, "图片发送失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func deleteLocalSilently(_ msg: Message) {
         messages.removeAll { $0.listKey == msg.listKey }
-        errorText = "已删除"
+    }
+
+    private func deleteLocal(_ msg: Message) {
+        deleteLocalSilently(msg)
+        flash("已删除")
     }
 
     private func togglePin(_ msg: Message) async {
@@ -1468,24 +1907,22 @@ struct ChatView: View {
         if isGroup {
             await APIClient.shared.setGroupTop(gid: convId, msgId: pinMsgId, top: false)
         } else {
+            UserDefaults.standard.removeObject(forKey: localPinKey)
+            UserDefaults.standard.removeObject(forKey: localPinTextKey)
+            localPinId = 0
             await APIClient.shared.setPin(peer: convId, msgId: 0)
         }
         await loadPin()
     }
 
     private func appendAt(uid: Int64, name: String) {
+        let display: String
         if uid == -1 {
-            text += "@全体成员 "
-            if !atUids.contains(-1) { atUids.append(-1) }
-            inputFocused = true
-            return
+            display = "全体成员"
+        } else {
+            display = members.first(where: { $0.uid == uid })?.name ?? name
         }
-        if let member = members.first(where: { $0.uid == uid }) {
-            let display = member.name ?? name
-            text += "@\(display) "
-            if !atUids.contains(uid) { atUids.append(uid) }
-        }
-        inputFocused = true
+        insertMention(name: display.isEmpty ? "成员" : display, uid: uid)
     }
 
     private func handle(_ ev: ChatEvent) {
@@ -1526,11 +1963,17 @@ private struct ChatMessageRow: View {
     let myAvatar: String?
     let myUid: Int64
     let myName: String
+    var peerName: String = "对方"
     let readHint: Int
     let playingVoice: Bool
+    var voicePlayed: Bool = true
+    var mentionMap: [String: Int64] = [:]
+    var onMention: (Int64) -> Void = { _ in }
     let onVoiceTap: () -> Void
     let onRetry: () -> Void
     let onAvatarTap: () -> Void
+    var onAvatarLongPress: () -> Void = {}
+    var onLongPress: () -> Void = {}
     var onOpenLive: (Int64) -> Void = { _ in }
     var onOpenGroup: (Int64) -> Void = { _ in }
     var onOpenProfile: (Int64) -> Void = { _ in }
@@ -1555,15 +1998,8 @@ private struct ChatMessageRow: View {
         return AKColor.text
     }
 
-    /// 气泡最大宽度：屏宽 70%（对齐安卓 maxBubble 0.68 并取整）
-    private var maxBubble: CGFloat { UIScreen.main.bounds.width * 0.70 }
-
-    private var mentionHighlight: Color {
-        if !mine, message.atMe == 1 || message.atAll == 1 {
-            return AKColor.goldSoft.opacity(0.55)
-        }
-        return Color.clear
-    }
+    /// 气泡最大宽度：屏宽 68%（对齐安卓 maxBubble 0.68）
+    private var maxBubble: CGFloat { UIScreen.main.bounds.width * 0.68 }
 
     private var bodyView: MessageBody {
         MessageBody(
@@ -1583,7 +2019,11 @@ private struct ChatMessageRow: View {
             onOpenFile: onOpenFile,
             onOpenMoment: onOpenMoment,
             onOpenRecord: onOpenRecord,
-            onOpenAlbum: onOpenAlbum
+            onOpenAlbum: onOpenAlbum,
+            peerName: peerName,
+            mentionMap: mentionMap,
+            onMention: onMention,
+            voicePlayed: voicePlayed
         )
     }
 
@@ -1600,7 +2040,9 @@ private struct ChatMessageRow: View {
                     Spacer(minLength: 44)
                 } else {
                     AvatarView(url: message.fromAvatar, name: displayName, size: 34)
+                        .padding(.top, isGroup ? 17 : 0)
                         .onTapGesture { onAvatarTap() }
+                        .onLongPressGesture { onAvatarLongPress() }
                     Spacer().frame(width: 7)
                 }
 
@@ -1611,22 +2053,15 @@ private struct ChatMessageRow: View {
                                 .font(.system(size: 11))
                                 .foregroundColor(nameColor)
                                 .lineLimit(1)
-                            if let role = member?.role, role == 1 || role == 2 {
-                                RoleBadge(role: role)
-                            }
                             if let m = member, m.isPretty == 1 {
                                 PrettyBadge(number: m.prettyNo ?? "")
                             }
                             if let m = member, m.vipLevel > 0 {
                                 VipBadge(level: m.vipLevel)
                             }
-                            if message.atMe == 1 || message.atAll == 1 {
-                                Text("@我")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(AKColor.red)
-                                    .padding(.horizontal, 3)
-                                    .background(AKColor.redSoft)
-                                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                            let role = member?.role ?? message.fromRole
+                            if role == 1 || role == 2 {
+                                RoleBadge(role: role)
                             }
                         }
                         .padding(.leading, 6)
@@ -1634,12 +2069,14 @@ private struct ChatMessageRow: View {
                     }
 
                     bodyView
+                        .contentShape(Rectangle())
+                        .onLongPressGesture(minimumDuration: 0.35) { onLongPress() }
 
                     HStack(spacing: 4) {
                         if message.status == 2 {
                             Button(action: onRetry) {
                                 Text("发送失败，点击重发")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 9.5))
                                     .foregroundColor(AKColor.red)
                             }
                             .buttonStyle(.plain)
@@ -1649,7 +2086,7 @@ private struct ChatMessageRow: View {
                                 .frame(width: 10, height: 10)
                         }
                         Text(ChatClock.clock(message.createdAt))
-                            .font(.system(size: 10))
+                            .font(.system(size: 9.5))
                             .foregroundColor(AKColor.placeholder)
                         if readHint == 1 {
                             Text("未读")
@@ -1667,12 +2104,276 @@ private struct ChatMessageRow: View {
                 if mine {
                     Spacer().frame(width: 7)
                     AvatarView(url: myAvatar, name: "我", size: 34)
+                        .onTapGesture { onAvatarTap() }
                 } else {
                     Spacer(minLength: 44)
                 }
             }
-            .background(mentionHighlight)
         }
+    }
+}
+
+/* ---------------- 长按菜单 / 拍照预览 / 录音浮层 ---------------- */
+
+/// 长按菜单：2~3 行 4 列图标网格，条目顺序对齐安卓 ChatMenuSheet
+private struct ChatMessageMenuSheet: View {
+    let message: Message
+    let isGroup: Bool
+    let mine: Bool
+    let myRole: Int
+    let pinned: Bool
+    let canRecall: Bool
+    let canPin: Bool
+    let canAddEmoji: Bool
+    let onPick: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private struct Item: Identifiable {
+        let key: String
+        let label: String
+        let icon: String
+        var danger: Bool = false
+        var id: String { key }
+    }
+
+    private var copyable: String? {
+        switch message.type {
+        case 1, 10:
+            let t = message.text ?? message.content ?? ""
+            return t.isEmpty ? nil : t
+        case 2, 20: return "[充值申请]"
+        case 3: return "[提现申请]"
+        case 5: return "[图片]"
+        case 6: return "[语音]"
+        case 7, 21: return "[红包]"
+        case 8, 22: return "[转账]"
+        case 9, 23: return "[礼物]"
+        case 12: return "[名片]"
+        case 13: return "[群名片]"
+        case 14: return "[通话]"
+        case 15: return "[视频]"
+        case 16: return "[动态]"
+        case 17: return "[聊天记录]"
+        case 18: return "[文件]"
+        case 19: return "[直播]"
+        case 31: return "[图片]"
+        case 11: return nil
+        default:
+            let t = (message.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return (t.isEmpty || t.hasPrefix("{")) ? nil : t
+        }
+    }
+
+    private var items: [Item] {
+        var out: [Item] = []
+        if message.type != 11 {
+            out.append(Item(key: "reply", label: "回复", icon: "arrowshape.turn.up.left"))
+        }
+        if copyable != nil {
+            out.append(Item(key: "copy", label: "复制", icon: "doc.on.doc"))
+        }
+        if message.type != 11 {
+            out.append(Item(key: "forward", label: "转发", icon: "arrowshape.turn.up.right"))
+            out.append(Item(key: "multi", label: "多选", icon: "checklist"))
+        }
+        if message.type != 11 {
+            out.append(Item(key: "fav", label: "收藏", icon: "star"))
+        }
+        if canPin {
+            out.append(Item(key: "pin", label: pinned ? "取消置顶" : "置顶", icon: "pin"))
+        }
+        if canAddEmoji {
+            out.append(Item(key: "emoji", label: "添加到表情", icon: "face.smiling"))
+        }
+        if !mine {
+            out.append(Item(key: "report", label: "举报", icon: "flag", danger: true))
+        }
+        if canRecall {
+            out.append(Item(key: "recall", label: mine ? "撤回" : "撤回该消息",
+                            icon: "arrow.uturn.backward", danger: true))
+        }
+        out.append(Item(key: "delete", label: "删除", icon: "trash", danger: true))
+        return out
+    }
+
+    var body: some View {
+        let rows = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(AKColor.line)
+                .frame(width: 36, height: 4)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+            ForEach(rows.indices, id: \.self) { i in
+                HStack(spacing: 0) {
+                    ForEach(rows[i]) { item in
+                        Button {
+                            dismiss()
+                            onPick(item.key)
+                        } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 22))
+                                Text(item.label)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                            }
+                            .foregroundColor(item.danger ? AKColor.red : AKColor.text)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if rows[i].count < 4 {
+                        ForEach(0..<(4 - rows[i].count), id: \.self) { _ in
+                            Spacer().frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .background(AKColor.card)
+        .presentationDetents([.height(items.count > 4 ? 250 : 170)])
+        .presentationDragIndicator(.hidden)
+    }
+}
+
+/// 发送前预览：单图整张 / 多图 2 列编号网格 + 说明输入（对齐安卓 PhotoSendPreview）
+private struct PhotoSendPreview: View {
+    let images: [UIImage]
+    @Binding var caption: String
+    let onCancel: () -> Void
+    let onSend: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Text("已选中 \(images.count) 张图片")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20))
+                        .foregroundColor(AKColor.sub)
+                        .frame(width: 34, height: 34)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+            .background(AKColor.card)
+
+            if images.count == 1, let image = images.first {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(10)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)],
+                              spacing: 6) {
+                        ForEach(images.indices, id: \.self) { i in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: images[i])
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(maxWidth: .infinity)
+                                    .aspectRatio(1, contentMode: .fill)
+                                    .clipped()
+                                Text("\(i + 1)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 22, height: 22)
+                                    .background(Color(hex: 0xFF6A00))
+                                    .clipShape(Circle())
+                                    .padding(6)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                    }
+                    .padding(8)
+                }
+            }
+
+            HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "face.smiling")
+                        .font(.system(size: 20))
+                        .foregroundColor(AKColor.placeholder)
+                    TextField("添加说明…", text: $caption)
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.text)
+                        .onChange(of: caption) { value in
+                            if value.count > 500 { caption = String(value.prefix(500)) }
+                        }
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+                .background(AKColor.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 21, style: .continuous))
+
+                Button {
+                    onSend(caption.trimmingCharacters(in: .whitespacesAndNewlines))
+                } label: {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                        .frame(width: 42, height: 42)
+                        .background(AKColor.brand)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(AKColor.card)
+        }
+        .background(AKColor.bg)
+    }
+}
+
+/// 录音浮层：波形 + 正在录音… + 上滑取消 / 松开取消
+private struct RecordingOverlay: View {
+    let cancel: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.25).ignoresSafeArea()
+            VStack(spacing: 12) {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSince1970
+                    HStack(spacing: 3) {
+                        ForEach(0..<5, id: \.self) { i in
+                            let h = CGFloat(8 + 16 * (0.5 + 0.5 * sin(t * 4 + Double(i) * 0.6)))
+                            Capsule()
+                                .fill(Color(hex: 0x4ADE80))
+                                .frame(width: 4, height: h)
+                        }
+                    }
+                    .frame(height: 32)
+                }
+                Text("正在录音…")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.9))
+                Text(cancel ? "松开取消" : "上滑取消")
+                    .font(.system(size: 12))
+                    .foregroundColor(cancel ? Color(hex: 0xFF4D4F) : Color(hex: 0xFF7A8A))
+            }
+            .padding(.horizontal, 32)
+            .padding(.vertical, 24)
+            .background(Color(hex: 0x181C24).opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -2026,6 +2727,16 @@ extension APIClient {
         ]
         if !atUids.isEmpty { body["at_uids"] = atUids }
         return try await post("api/v1/messages", body: body)
+    }
+
+    /// 私聊置顶：scope = all（双方可见）；仅自己可见在本地记录，不调接口
+    func setPinScoped(peer: Int64, msgId: Int64, shared: Bool) async {
+        await postIgnore("api/v1/pin", body: [
+            "conv_type": "private",
+            "conv_id": peer,
+            "msg_id": msgId,
+            "scope": shared ? "all" : "self"
+        ])
     }
 }
 

@@ -35,6 +35,7 @@ struct MessageSearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            header
             searchBar
             kindBar
             Color.clear.frame(height: 6)
@@ -49,14 +50,9 @@ struct MessageSearchView: View {
             }
         }
         .background(AKColor.bg)
-        .navigationTitle(scopeType.isEmpty ? "搜索全部聊天记录" : "查找聊天记录")
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                BackButton()
-            }
-        }
+        .reportsDetailPage()
+        .restoresSwipeBack()
+        .toolbar(.hidden, for: .navigationBar)
         .task {
             let seed = initialKeyword.trimmingCharacters(in: .whitespaces)
             if !seed.isEmpty && keyword.isEmpty {
@@ -70,6 +66,20 @@ struct MessageSearchView: View {
             searched = false
             Task { await search(reset: true) }
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            BackButton()
+                .frame(width: 44, height: 40)
+            Text(scopeType.isEmpty ? "搜索全部聊天记录" : "查找聊天记录")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(AKColor.text)
+                .frame(maxWidth: .infinity)
+            Spacer().frame(width: 44)
+        }
+        .padding(.vertical, 4)
+        .background(AKColor.card)
     }
 
     private var emptyText: String {

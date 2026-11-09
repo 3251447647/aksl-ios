@@ -51,6 +51,7 @@ struct EmojiManagerView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("我的表情")
         .navigationBarTitleDisplayMode(.inline)
         .task { await app.loadEmojis() }

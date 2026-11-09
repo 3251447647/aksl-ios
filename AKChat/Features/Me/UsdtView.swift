@@ -14,6 +14,7 @@ struct UsdtView: View {
     private let presets = [100, 500, 1000, 5000]
 
     private var coin: Int64 { Int64(coinText.trimmingCharacters(in: .whitespaces)) ?? 0 }
+    private var minCoin: Int64 { Int64(config?.min ?? 10) }
 
     private var estimate: String {
         guard let c = config, c.rate > 0, coin > 0 else { return "输入数量后显示预计支付" }
@@ -78,6 +79,7 @@ struct UsdtView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("USDT 充值")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
@@ -157,6 +159,13 @@ struct UsdtView: View {
                 .foregroundColor(coin > 0 ? Color(hex: 0x2FA84F) : AKColor.hint)
                 .padding(.top, 10)
 
+            if coin > 0 && coin < minCoin {
+                Text("最少 \(minCoin) K币")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.red)
+                    .padding(.top, 4)
+            }
+
             Button {
                 Task { await create() }
             } label: {
@@ -172,7 +181,8 @@ struct UsdtView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(busy || coin <= 0)
+            .disabled(busy || coin < minCoin)
+            .opacity(coin < minCoin ? 0.6 : 1)
             .padding(.top, 14)
         }
         .padding(16)

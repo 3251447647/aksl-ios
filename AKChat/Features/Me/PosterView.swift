@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 import CoreImage.CIFilterBuiltins
 
-/// 个人海报：头像 + 昵称 + AK号/靓号 + 二维码，可保存到相册或分享（对齐安卓 PosterScreen）
+/// 个人海报：头像 + 昵称 + AK号/靓号 + 二维码，整张卡保存到相册（对齐安卓 PosterScreen）
 struct PosterView: View {
     let name: String
     let avatar: String?
@@ -11,8 +11,8 @@ struct PosterView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var avatarImage: UIImage?
+    @State private var cardImage: UIImage?
     @State private var saved = false
-    @State private var showShare = false
 
     private var link: String { "https://www.aksliao.cn/user.php?id=\(uid)" }
 
@@ -27,33 +27,19 @@ struct PosterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List {
+            ScrollView {
                 posterCard
-                    .listRowInsets(EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                Text("保存后可直接发到朋友圈、群聊或分享给好友")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.placeholder)
-                    .frame(maxWidth: .infinity)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(14)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-
             actionBar
         }
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("邀请海报")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadAvatar() }
-        .sheet(isPresented: $showShare) {
-            if let img = renderPoster() {
-                ShareSheet(items: [img])
-            }
+        .task {
+            await loadAvatar()
+            renderCard()
         }
     }
 
@@ -144,36 +130,27 @@ struct PosterView: View {
     // MARK: - 底部操作
 
     private var actionBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                Task { await savePoster() }
-            } label: {
-                Text(saved ? "已保存到相册" : "↓  保存到相册")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(
-                        LinearGradient(colors: [Color(hex: 0x43C463), Color(hex: 0x2FA84F)],
-                                       startPoint: .leading, endPoint: .trailing)
+        Button {
+            savePoster()
+        } label: {
+            Text(cardImage == nil ? "正在生成海报…" : (saved ? "已保存到相册" : "↓  保存到相册"))
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .background(
+                    LinearGradient(
+                        colors: cardImage == nil
+                            ? [Color(hex: 0xB7C0C8), Color(hex: 0xA5AEB8)]
+                            : [Color(hex: 0x43C463), Color(hex: 0x2FA84F)],
+                        startPoint: .leading,
+                        endPoint: .trailing
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                showShare = true
-            } label: {
-                Text("分享")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(AKColor.text)
-                    .frame(width: 92)
-                    .frame(height: 50)
-                    .background(AKColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .buttonStyle(.plain)
+        .disabled(cardImage == nil)
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 6)
@@ -187,33 +164,15 @@ struct PosterView: View {
         }
     }
 
-    private func renderPoster() -> UIImage? {
-        let content = VStack(spacing: 12) {
-            if let avatarImage {
-                Image(uiImage: avatarImage)
-                    .resizable().scaledToFill()
-                    .frame(width: 72, height: 72)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-            Text(name).font(.system(size: 20, weight: .semibold)).foregroundColor(.black)
-            Text("AK号：\(number)").font(.system(size: 13)).foregroundColor(.gray)
-            if let qr = qrImage(link, scale: 12) {
-                Image(uiImage: qr).interpolation(.none).resizable().frame(width: 220, height: 220)
-            }
-            Text("扫码加我，一起聊").font(.system(size: 13)).foregroundColor(.gray)
-        }
-        .padding(28)
-        .frame(width: 360)
-        .background(Color.white)
-
-        let renderer = ImageRenderer(content: content)
+    private func renderCard() {
+        let width = max(UIScreen.main.bounds.width - 28, 280)
+        let renderer = ImageRenderer(content: posterCard.frame(width: width))
         renderer.scale = 3
-        return renderer.uiImage
+        cardImage = renderer.uiImage
     }
 
-    private func savePoster() async {
-        await loadAvatar()
-        guard let img = renderPoster() else { return }
+    private func savePoster() {
+        guard let img = cardImage else { return }
         UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
         saved = true
     }

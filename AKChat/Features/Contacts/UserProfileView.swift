@@ -21,6 +21,8 @@ struct UserProfileView: View {
     @State private var showNotFriend = false
     @State private var showBlockConfirm = false
     @State private var showReport = false
+    @State private var showSharePicker = false
+    @State private var shareBusy = false
     @State private var reportReason = ""
     @State private var reportNote = ""
     @State private var toastText: String?
@@ -55,6 +57,7 @@ struct UserProfileView: View {
         }
         .background(AKColor.bg)
         .overlay(alignment: .bottom) { toastView }
+        .reportsDetailPage()
         .navigationTitle(profile?.isSelf == 1 ? "我的主页" : "个人主页")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -93,8 +96,13 @@ struct UserProfileView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSettings) {
-            settingsSheet
+        .navigationDestination(isPresented: $showSettings) {
+            settingsPage
+                .reportsDetailPage()
+                .restoresSwipeBack()
+        }
+        .sheet(isPresented: $showSharePicker) {
+            sharePicker
         }
         .sheet(isPresented: $showReport) {
             reportSheet
@@ -294,14 +302,42 @@ struct UserProfileView: View {
             Text("个性签名")
                 .font(.system(size: 12))
                 .foregroundColor(AKColor.muted)
-            Text(p.bio)
+            Text(linkified(p.bio))
                 .font(.system(size: 13.5))
                 .foregroundColor(AKColor.text)
+                .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .background(AKColor.card)
+    }
+
+    /// 链接 / 号码可点（对齐安卓 LinkifiedText）
+    private func linkified(_ text: String) -> AttributedString {
+        var out = AttributedString(text)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue
+                                                 | NSTextCheckingResult.CheckingType.phoneNumber.rawValue) else {
+            return out
+        }
+        let full = text as NSString
+        detector.enumerateMatches(in: text, range: NSRange(location: 0, length: full.length)) { result, _, _ in
+            guard let result else { return }
+            let target: String?
+            if let url = result.url {
+                target = url.absoluteString
+            } else if let phone = result.phoneNumber {
+                target = "tel:" + phone
+            } else {
+                target = nil
+            }
+            guard let target, let url = URL(string: target) else { return }
+            if let range = Range(result.range, in: text),
+               let attRange = out.range(of: String(text[range])) {
+                out[attRange].link = url
+            }
+        }
+        return out
     }
 
     private func momentsCell(_ p: UserProfile) -> some View {
@@ -467,12 +503,31 @@ struct UserProfileView: View {
 
     // MARK: - 设置
 
-    private var settingsSheet: some View {
-        NavigationStack {
+    private var settingsPage: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                BackButton()
+                    .frame(width: 34, height: 34)
+                Spacer(minLength: 0)
+            }
+            .overlay(
+                Text("设置")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+            )
+            .padding(.horizontal, 8)
+            .frame(height: 46)
+            .frame(maxWidth: .infinity)
+            .background(AKColor.card)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(AKColor.line).frame(height: 0.5)
+            }
+
             ScrollView {
-                VStack(spacing: 10) {
-                    VStack(spacing: 0) {
-                        if profile?.isFriend == 1 {
+                VStack(spacing: 0) {
+                    if profile?.isFriend == 1 {
+                        settingsTitle("好友设置")
+                        settingsCard {
                             settingsRow("设置备注", value: profile?.remark ?? "", showArrow: true) {
                                 remarkText = profile?.remark ?? ""
                                 showRemark = true
@@ -481,19 +536,25 @@ struct UserProfileView: View {
                             toggleRow("消息免打扰", key: "is_mute", on: profile?.isMute == 1)
                             settingsDivider
                             toggleRow("置顶聊天", key: "is_top", on: profile?.isTop == 1)
-                            settingsDivider
                         }
+                    }
+
+                    settingsTitle("聊天")
+                    settingsCard {
+                        settingsRow("聊天背景", value: chatBg.isEmpty ? "默认" : "已设置", showArrow: true) {
+                            closeSettingsThen { showBgPicker = true }
+                        }
+                        settingsDivider
                         NavigationLink {
-                            QRCodeView(uid: uid, name: profile?.displayName ?? presetName,
-                                       avatar: profile?.avatar)
+                            QRCodeView(uid: uid,
+                                       name: profile?.displayName ?? presetName,
+                                       avatar: profile?.avatar,
+                                       number: profile?.showYxid.isEmpty == false ? (profile?.showYxid ?? "") : (profile?.yxId ?? ""),
+                                       isPretty: profile?.isPretty == 1)
                         } label: {
                             settingsRowContent("我的二维码", value: "", showArrow: true, destructive: false)
                         }
                         .buttonStyle(.plain)
-                        settingsDivider
-                        settingsRow("聊天背景", value: chatBg.isEmpty ? "默认" : "已设置", showArrow: true) {
-                            closeSettingsThen { showBgPicker = true }
-                        }
                         if !chatBg.isEmpty {
                             settingsDivider
                             Button {
@@ -508,10 +569,9 @@ struct UserProfileView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .background(AKColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                    VStack(spacing: 0) {
+                    settingsTitle("隐私")
+                    settingsCard {
                         if profile?.isBlocked == 1 {
                             Button {
                                 Task { await setBlocked(false) }
@@ -546,52 +606,76 @@ struct UserProfileView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .background(AKColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .padding(12)
-            }
-            .background(AKColor.bg)
-            .overlay(alignment: .bottom) { toastView }
-            .navigationTitle("设置")
-            .navigationBarTitleDisplayMode(.inline)
-            .alert("设置备注", isPresented: $showRemark) {
-                TextField("备注名", text: $remarkText)
-                Button("取消", role: .cancel) {}
-                Button("保存") {
-                    Task {
-                        do {
-                            _ = try await APIClient.shared.postRaw(
-                                "api/v1/friend/remark",
-                                body: ["user_id": uid, "remark": remarkText.trimmingCharacters(in: .whitespaces)]
-                            )
-                            await load()
-                            showToast("备注已保存")
-                        } catch let err {
-                            showToast(err.localizedDescription)
+
+                    if profile?.isFriend == 1 {
+                        settingsTitle("推荐")
+                        settingsCard {
+                            Button {
+                                closeSettingsThen { showSharePicker = true }
+                            } label: {
+                                settingsRowContent("分享好友名片", value: "", showArrow: false, destructive: false)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+
+                    Color.clear.frame(height: 24)
                 }
+                .padding(.horizontal, 14)
             }
-            .alert("拉黑", isPresented: $showBlockConfirm) {
-                Button("取消", role: .cancel) {}
-                Button("拉黑", role: .destructive) {
-                    Task {
-                        await setBlocked(true)
-                        showSettings = false
+            .background(AKColor.bg)
+        }
+        .background(AKColor.bg)
+        .overlay(alignment: .bottom) { toastView }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .alert("设置备注", isPresented: $showRemark) {
+            TextField("备注名", text: $remarkText)
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                Task {
+                    do {
+                        _ = try await APIClient.shared.postRaw(
+                            "api/v1/friend/remark",
+                            body: ["user_id": uid, "remark": remarkText.trimmingCharacters(in: .whitespaces)]
+                        )
+                        await load()
+                        showToast("备注已保存")
+                    } catch let err {
+                        showToast(err.localizedDescription)
                     }
-                }
-            } message: {
-                Text("拉黑后对方将无法给你发送私聊消息、看不到你的动态，也无法添加你为好友。")
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("关闭") { showSettings = false }
-                        .font(.system(size: 15))
-                        .foregroundColor(AKColor.text)
                 }
             }
         }
+        .alert("拉黑", isPresented: $showBlockConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("拉黑", role: .destructive) {
+                Task {
+                    await setBlocked(true)
+                    showSettings = false
+                }
+            }
+        } message: {
+            Text("拉黑后对方将无法给你发送私聊消息、看不到你的动态，也无法添加你为好友。")
+        }
+    }
+
+    private func settingsTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12.5))
+            .foregroundColor(AKColor.hint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 6)
+            .padding(.top, 18)
+            .padding(.bottom, 8)
+    }
+
+    private func settingsCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func settingsRow(_ title: String, value: String = "", showArrow: Bool,
@@ -611,9 +695,10 @@ struct UserProfileView: View {
             Spacer(minLength: 0)
             if !value.isEmpty {
                 Text(value)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13.5))
                     .foregroundColor(AKColor.muted)
                     .lineLimit(1)
+                    .padding(.trailing, 2)
             }
             if showArrow {
                 Image(systemName: "chevron.right")
@@ -621,13 +706,13 @@ struct UserProfileView: View {
                     .foregroundColor(AKColor.placeholder)
             }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 52)
+        .padding(.horizontal, 16)
+        .frame(height: 50)
         .contentShape(Rectangle())
     }
 
     private var settingsDivider: some View {
-        Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.leading, 18)
+        Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.leading, 16)
     }
 
     private func toggleRow(_ title: String, key: String, on: Bool) -> some View {
@@ -650,8 +735,83 @@ struct UserProfileView: View {
             .labelsHidden()
             .tint(AKColor.brand)
         }
-        .padding(.horizontal, 18)
-        .frame(height: 52)
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+    }
+
+    // MARK: - 分享好友名片
+
+    private var sharePicker: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                if app.conversations.isEmpty {
+                    Text("暂无可分享的会话")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.hint)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(app.conversations) { c in
+                            Button {
+                                Task { await shareCard(to: c) }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    AvatarView(url: c.avatar, name: c.name ?? "会话", size: 40)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(c.name ?? "会话")
+                                            .font(.system(size: 15))
+                                            .foregroundColor(AKColor.text)
+                                            .lineLimit(1)
+                                        Text(c.convType == "group" ? "群聊" : "好友")
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(AKColor.hint)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(shareBusy)
+                            .listRowBackground(AKColor.card)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(AKColor.bg)
+                }
+            }
+            .background(AKColor.bg)
+            .navigationTitle("分享给")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { showSharePicker = false }
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.text)
+                }
+            }
+        }
+    }
+
+    private func shareCard(to conv: Conversation) async {
+        guard !shareBusy else { return }
+        shareBusy = true
+        defer { shareBusy = false }
+        do {
+            let target: [String: Any] = ["type": conv.convType, "id": conv.convId]
+            let msg = try await APIClient.shared.postRaw(
+                "api/v1/share/card",
+                body: [
+                    "kind": "user",
+                    "id": uid,
+                    "targets": [target]
+                ]
+            )
+            showSharePicker = false
+            showToast(msg.isEmpty ? "名片已发送" : msg)
+        } catch let err {
+            showToast(err.localizedDescription)
+        }
     }
 
     private var reportSheet: some View {

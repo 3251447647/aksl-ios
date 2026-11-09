@@ -7,12 +7,22 @@ import AVKit
 struct MomentsView: View {
     @EnvironmentObject private var app: AppState
     @State private var showPublish = false
-    @State private var detailMoment: Moment?
     @State private var commentTarget: Moment?
-    @State private var commentText = ""
+    @State private var deleteTarget: Moment?
+    @State private var previewBox: MomentImageBox?
     /** 0=全部动态 1=我的动态 */
     @State private var tab = 0
+    @State private var mineMoments: [Moment] = []
+    @State private var mineLoading = false
     @State private var coverItem: PhotosPickerItem?
+
+    private var momentUnread: Int {
+        app.conversations.first { $0.convType == "moment" }?.unread ?? 0
+    }
+
+    private var shownMoments: [Moment] {
+        tab == 1 ? mineMoments : app.moments
+    }
 
     /// 顶部封面：自己的朋友圈封面 + 右上角相机 + 右下角署名（对齐安卓）
     private var coverHeader: some View {
@@ -79,17 +89,12 @@ struct MomentsView: View {
         }
     }
 
-    private var shownMoments: [Moment] {
-        guard tab == 1 else { return app.moments }
-        let me = app.user?.id ?? 0
-        return app.moments.filter { $0.userId == me }
-    }
-
     private var tabBar: some View {
         HStack(spacing: 0) {
             ForEach(Array(["全部动态", "我的动态"].enumerated()), id: \.offset) { i, title in
                 Button {
                     tab = i
+                    if i == 1 { Task { await loadMine() } }
                 } label: {
                     Text(title)
                         .font(.system(size: 13, weight: tab == i ? .semibold : .regular))
@@ -109,50 +114,59 @@ struct MomentsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                coverHeader
-                tabBar
-                if shownMoments.isEmpty {
-                    VStack(spacing: 6) {
-                        Text(tab == 1 ? "你还没有发过动态" : "还没有好友动态")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(AKColor.sub)
-                        Text(tab == 1 ? "点右上角发布，发第一条动态吧～" : "点右上角发布，发一条自己的动态")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(AKColor.muted)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 300)
-                }
-                ForEach(shownMoments) { moment in
-                    MomentCard(
-                        moment: moment,
-                        onLike: { Task { await app.likeMoment(moment) } },
-                        onComment: {
-                            commentTarget = moment
-                            commentText = ""
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    coverHeader
+                    tabBar
+                    if shownMoments.isEmpty {
+                        VStack(spacing: 6) {
+                            Text(tab == 1 ? "你还没有发过动态" : "还没有好友动态")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(AKColor.sub)
+                            Text(tab == 1
+                                 ? "点击右下角 + 号，发第一条动态吧～"
+                                 : "点击右下角 + 号，发一条自己的动态")
+                                .font(.system(size: 12.5))
+                                .foregroundColor(AKColor.muted)
                         }
-                    )
-                    .padding(.horizontal, 12)
-                    .onTapGesture { detailMoment = moment }
-                    .contextMenu {
-                        if moment.userId == (app.user?.id ?? 0) {
-                            Button(role: .destructive) {
-                                Task {
-                                    await APIClient.shared.deleteMoment(id: moment.id)
-                                    await app.loadMoments()
-                                }
-                            } label: {
-                                Label("删除动态", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 320)
+                    }
+                    ForEach(shownMoments) { moment in
+                        MomentCard(
+                            moment: moment,
+                            isMine: moment.userId == (app.user?.id ?? 0),
+                            onLike: { Task { await like(moment) } },
+                            onComment: { commentTarget = moment },
+                            onDelete: { deleteTarget = moment },
+                            onPreview: { index in
+                                previewBox = MomentImageBox(images: moment.images, index: index)
                             }
-                        }
+                        )
+                        .padding(.horizontal, 12)
                     }
                 }
+                .padding(.bottom, 90)
             }
-            .padding(.bottom, 16)
+            .background(AKColor.bg)
+
+            Button {
+                showPublish = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 56, height: 56)
+                    .background(AKColor.brand)
+                    .clipShape(Circle())
+                    .shadow(color: Color.black.opacity(0.18), radius: 6, y: 3)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 18)
+            .padding(.bottom, 24)
         }
-        .background(AKColor.bg)
+        .reportsDetailPage()
         .navigationTitle("朋友圈")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -161,55 +175,150 @@ struct MomentsView: View {
                 BackButton()
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 18) {
-                    NavigationLink {
-                        MomentNoticesView()
-                    } label: {
+                NavigationLink {
+                    MomentNoticesView()
+                } label: {
+                    ZStack(alignment: .topTrailing) {
                         Image(systemName: "bell").foregroundColor(AKColor.text)
-                    }
-                    Button { showPublish = true } label: {
-                        Image(systemName: "square.and.pencil").foregroundColor(AKColor.text)
+                        if momentUnread > 0 {
+                            Text("\(min(momentUnread, 99))")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 3)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .background(AKColor.red)
+                                .clipShape(Capsule())
+                                .offset(x: 8, y: -7)
+                        }
                     }
                 }
             }
         }
-        .refreshable { await app.loadMoments() }
+        .refreshable { await refresh() }
         .onChange(of: coverItem) { item in
             guard let item else { return }
             Task { await uploadCover(item) }
         }
         .task { await app.loadMoments() }
-        .sheet(item: $detailMoment) { m in
-            MomentDetailView(moment: m)
+        .fullScreenCover(item: $previewBox) { box in
+            MomentImagePager(images: box.images, start: box.index)
+        }
+        .sheet(item: $commentTarget) { m in
+            MomentReplySheet(moment: m)
+                .environmentObject(app)
         }
         .sheet(isPresented: $showPublish) {
             PublishMomentView { content, images, videoUrl, duration, cover in
                 await app.publishMoment(content: content, images: images,
                                         videoUrl: videoUrl, duration: duration, cover: cover)
+                if tab == 1 { await loadMine() }
             }
         }
-        .alert("评论", isPresented: Binding(
-            get: { commentTarget != nil },
-            set: { if !$0 { commentTarget = nil } }
+        .alert("删除动态", isPresented: Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
         )) {
-            TextField("说点什么…", text: $commentText)
-            Button("取消", role: .cancel) { commentTarget = nil }
-            Button("发送") {
-                if let target = commentTarget {
-                    Task { await app.commentMoment(target, content: commentText) }
+            Button("删除", role: .destructive) {
+                guard let target = deleteTarget else { return }
+                deleteTarget = nil
+                Task {
+                    await APIClient.shared.deleteMoment(id: target.id)
+                    await refresh()
                 }
-                commentTarget = nil
+            }
+            Button("取消", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("确定删除这条动态吗？点赞和评论将一并清除，此操作不可恢复。")
+        }
+    }
+
+    private func like(_ moment: Moment) async {
+        await app.likeMoment(moment)
+        if tab == 1 { await loadMine() }
+    }
+
+    private func refresh() async {
+        await app.loadMoments()
+        if tab == 1 { await loadMine() }
+    }
+
+    private func loadMine() async {
+        guard !mineLoading else { return }
+        mineLoading = true
+        defer { mineLoading = false }
+        if let data = try? await APIClient.shared.moments(mine: 1) {
+            mineMoments = data.list
+        }
+    }
+}
+
+/// 列表内图片全屏预览（支持左右切换与 1/N）
+struct MomentImageBox: Identifiable {
+    let id = UUID()
+    let images: [String]
+    let index: Int
+}
+
+struct MomentImagePager: View {
+    let images: [String]
+    @State private var index: Int
+    @Environment(\.dismiss) private var dismiss
+
+    init(images: [String], start: Int) {
+        self.images = images
+        _index = State(initialValue: min(max(start, 0), max(images.count - 1, 0)))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $index) {
+                ForEach(images.indices, id: \.self) { i in
+                    AsyncImage(url: APIClient.fullURL(images[i])) { phase in
+                        if let img = phase.image {
+                            img.resizable().scaledToFit()
+                        } else {
+                            ProgressView().tint(.white)
+                        }
+                    }
+                    .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .background(Color.white.opacity(0.18))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(14)
+                Spacer()
+                Text("\(index + 1)/\(images.count)")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.bottom, 30)
             }
         }
     }
 }
 
-/// 一条动态：头像 40 + 右侧整列（名字、时间、正文、三列方图、操作行、互动块），与安卓 MomentItem 同构
+/// 一条动态：头像 40 + 右侧整列（名字、时间、正文、图片、视频、操作行、互动块），与安卓 MomentItem 同构
 struct MomentCard: View {
     let moment: Moment
+    var isMine: Bool = false
     let onLike: () -> Void
     let onComment: () -> Void
-    /// 详情页点图放大；列表里点整卡进详情，不传
+    var onDelete: (() -> Void)? = nil
+    /// 点图放大；列表与详情都传
     var onPreview: ((Int) -> Void)? = nil
 
     @State private var expanded = false
@@ -224,28 +333,28 @@ struct MomentCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 4) {
                     Text(moment.nickname ?? "用户")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(AKColor.text)
                         .lineLimit(1)
                     if let no = moment.prettyYxid, !no.isEmpty {
-                        BadgeView(text: no, color: AKColor.gold, background: AKColor.goldSoft)
+                        PrettyBadge(number: no)
                     }
                     if moment.vipLevel > 0 {
-                        BadgeView(text: moment.vipLevel >= 2 ? "SVIP" : "VIP")
+                        VipBadge(level: moment.vipLevel)
                     }
                     Spacer(minLength: 0)
                 }
 
                 Text(Self.relative(moment.createdAt))
-                    .font(.system(size: 11))
+                    .font(.system(size: 11.5))
                     .foregroundColor(AKColor.hint)
-                    .padding(.top, 3)
+                    .padding(.top, 2)
 
                 if let content = moment.content, !content.isEmpty {
                     Text(content)
-                        .font(.system(size: 14))
+                        .font(.system(size: 15))
                         .foregroundColor(AKColor.text)
-                        .lineSpacing(5)
+                        .lineSpacing(7)
                         .lineLimit(expanded ? nil : 6)
                         .padding(.top, 6)
                     if content.count > 120 {
@@ -262,33 +371,14 @@ struct MomentCard: View {
                 }
 
                 if !images.isEmpty {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                        ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
-                            Color.clear
-                                .aspectRatio(1, contentMode: .fit)
-                                .overlay(
-                                    AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                        if let image = phase.image {
-                                            image.resizable().scaledToFill()
-                                        } else {
-                                            AKColor.fill
-                                        }
-                                    }
-                                )
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .contentShape(Rectangle())
-                                .onTapGesture { onPreview?(idx) }
-                        }
-                    }
-                    .padding(.top, 8)
+                    imageGrid.padding(.top, 8)
                 }
 
                 if !moment.videoUrl.isEmpty {
                     videoCell.padding(.top, 8)
                 }
 
-                Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.top, 6)
+                Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.top, 8)
 
                 actionRow
 
@@ -302,9 +392,46 @@ struct MomentCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    /// 图片网格：1 张 66% 宽、2-4 张两列、5 张以上三列（对齐安卓 MomentImageGrid）
+    @ViewBuilder
+    private var imageGrid: some View {
+        if images.count == 1 {
+            tile(path: images[0], index: 0)
+                .frame(width: 210, height: 231)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            let cols = images.count <= 4 ? 2 : 3
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: cols),
+                      spacing: 3) {
+                ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
+                    Color.clear
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay(tile(path: path, index: idx))
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func tile(path: String, index: Int) -> some View {
+        AsyncImage(url: APIClient.fullURL(path)) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFill()
+            } else {
+                AKColor.fill
+            }
+        }
+        .clipped()
+        .contentShape(Rectangle())
+        .onTapGesture { onPreview?(index) }
+    }
+
     private var videoCell: some View {
         ZStack {
-            if let u = APIClient.fullURL(moment.videoCover) {
+            if let u = APIClient.fullURL(moment.videoCover.isEmpty ? moment.videoUrl : moment.videoCover) {
                 AsyncImage(url: u) { phase in
                     if let img = phase.image {
                         img.resizable().scaledToFill()
@@ -315,12 +442,30 @@ struct MomentCard: View {
             } else {
                 Color.black.opacity(0.85)
             }
-            Image(systemName: "play.circle.fill")
-                .font(.system(size: 40))
-                .foregroundColor(.white.opacity(0.92))
+            Circle()
+                .fill(Color.black.opacity(0.55))
+                .frame(width: 44, height: 44)
+                .overlay(
+                    Text("▶")
+                        .font(.system(size: 18))
+                        .foregroundColor(.white)
+                )
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Text(Self.durationText(moment.duration))
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .padding(6)
+                }
+            }
         }
-        .frame(height: 200)
-        .frame(maxWidth: .infinity)
+        .frame(width: 210, height: 240)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .contentShape(Rectangle())
@@ -330,7 +475,7 @@ struct MomentCard: View {
         }
     }
 
-    /// 操作行：转发 / 评论 / 点赞，右对齐
+    /// 操作行：转发 / 评论 / 点赞 / 更多（自己的动态），右对齐
     private var actionRow: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
@@ -365,6 +510,16 @@ struct MomentCard: View {
                 .padding(.vertical, 3)
             }
             .buttonStyle(.plain)
+            if isMine, let onDelete {
+                Button(action: onDelete) {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18))
+                        .foregroundColor(AKColor.muted)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -392,17 +547,19 @@ struct MomentCard: View {
                 }
             }
         }
-        .padding(10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AKColor.fill)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private func commentRow(_ c: MomentComment) -> some View {
         HStack(alignment: .top, spacing: 8) {
             AvatarView(url: c.avatar, name: c.name ?? "用户", size: 24)
+                .clipShape(Circle())
             VStack(alignment: .leading, spacing: 1) {
-                Text(c.name ?? "用户")
+                Text((c.name ?? "").isEmpty ? "用户" : (c.name ?? "用户"))
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(AKColor.link)
                 if let reply = c.replyName, !reply.isEmpty {
@@ -420,6 +577,7 @@ struct MomentCard: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 5)
+        .padding(.horizontal, 2)
     }
 
     /// 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期
@@ -427,13 +585,19 @@ struct MomentCard: View {
         guard ts > 0 else { return "" }
         let diff = Date().timeIntervalSince1970 - TimeInterval(ts)
         if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(Int(diff / 60))分钟前" }
-        if diff < 86400 { return "\(Int(diff / 3600))小时前" }
-        if diff < 86400 * 30 { return "\(Int(diff / 86400))天前" }
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        if diff < 86400 * 30 { return "\(Int(diff / 86400)) 天前" }
         return TimeText.short(ts)
+    }
+
+    static func durationText(_ sec: Int) -> String {
+        let s = max(sec, 0)
+        return "\(s / 60):" + String(format: "%02d", s % 60)
     }
 }
 
+/// 发布动态：文字 1000 字 + 9 图 + 30 秒/30MB 视频，图片与视频互斥（对齐安卓 PublishMomentScreen）
 private struct PublishMomentView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppState
@@ -443,109 +607,144 @@ private struct PublishMomentView: View {
     @State private var previews: [Data] = []
     @State private var publishing = false
     @State private var errorText: String?
+    @State private var showEmoji = false
 
     let onPublish: (String, [String], String, Int, String) async -> Void
+
     @State private var videoItem: PhotosPickerItem?
     @State private var videoURL: String = ""
     @State private var videoCover: String = ""
     @State private var videoDuration: Int = 0
     @State private var uploadingVideo = false
 
+    private let maxLen = 1000
+    private let emojis = ["😀", "😄", "😁", "😆", "😅", "😂", "🙂", "😉",
+                          "😍", "🥰", "😘", "😎", "🤔", "😭", "😡", "🥳",
+                          "👍", "👏", "🙏", "💪", "❤️", "🔥", "🎉", "🌹"]
+
+    private var hasContent: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !previews.isEmpty
+            || !videoURL.isEmpty
+    }
+
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                TextEditor(text: $text)
-                    .frame(minHeight: 120)
-                    .padding(8)
-                    .background(AKColor.fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text("\(text.count)/500")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.hint)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-
-                PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
-                    Label("添加图片", systemImage: "photo")
-                        .font(.system(size: 14))
-                }
-
-                PhotosPicker(selection: $videoItem, matching: .videos) {
-                    Label(uploadingVideo ? "视频上传中…" : (videoURL.isEmpty ? "添加视频" : "更换视频"),
-                          systemImage: "video")
-                        .font(.system(size: 14))
-                }
-                if !videoCover.isEmpty, let u = APIClient.fullURL(videoCover) {
-                    ZStack {
-                        AsyncImage(url: u) { phase in
-                            if let img = phase.image {
-                                img.resizable().scaledToFill()
-                            } else {
-                                AKColor.fill
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $text)
+                            .font(.system(size: 15))
+                            .frame(height: 160)
+                            .padding(6)
+                            .background(AKColor.card)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(AKColor.line, lineWidth: 0.8)
+                            )
+                            .onChange(of: text) { value in
+                                if value.count > maxLen { text = String(value.prefix(maxLen)) }
                             }
+                        if text.isEmpty {
+                            Text("这一刻的想法…")
+                                .font(.system(size: 15))
+                                .foregroundColor(AKColor.placeholder)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 16)
+                                .allowsHitTesting(false)
                         }
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 34))
-                            .foregroundColor(.white.opacity(0.9))
                     }
-                    .frame(height: 180)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
 
-                if !previews.isEmpty {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                        ForEach(Array(previews.enumerated()), id: \.offset) { idx, data in
-                            ZStack(alignment: .topTrailing) {
-                                Color.clear
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .overlay(
-                                        Group {
-                                            if let image = UIImage(data: data) {
-                                                Image(uiImage: image)
-                                                    .resizable()
-                                                    .scaledToFill()
-                                            } else {
-                                                AKColor.fill
-                                            }
-                                        }
-                                    )
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    HStack {
+                        Button {
+                            showEmoji.toggle()
+                        } label: {
+                            Text("😊 表情")
+                                .font(.system(size: 13))
+                                .foregroundColor(AKColor.link)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(AKColor.fill)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        Spacer(minLength: 0)
+                        Text("\(text.count)/\(maxLen)")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(text.count > maxLen - 100 ? AKColor.red : AKColor.placeholder)
+                    }
+
+                    if showEmoji {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8),
+                                  spacing: 2) {
+                            ForEach(emojis, id: \.self) { e in
                                 Button {
-                                    previews.remove(at: idx)
-                                    if idx < items.count { items.remove(at: idx) }
+                                    if text.count + e.count <= maxLen { text += e }
                                 } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .frame(width: 18, height: 18)
-                                        .background(Color.black.opacity(0.6))
-                                        .clipShape(Circle())
+                                    Text(e)
+                                        .font(.system(size: 20))
+                                        .frame(height: 36)
+                                        .frame(maxWidth: .infinity)
                                 }
-                                .padding(4)
+                                .buttonStyle(.plain)
                             }
                         }
+                        .padding(6)
+                        .background(AKColor.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                    if !videoURL.isEmpty || uploadingVideo {
+                        videoPreview
+                    } else {
+                        imageGrid
+                        HStack {
+                            Text("\(previews.count)/9 张图片")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(AKColor.placeholder)
+                            Spacer(minLength: 0)
+                            PhotosPicker(selection: $videoItem, matching: .videos) {
+                                Text(uploadingVideo ? "读取视频中…" : "＋ 视频")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundColor(uploadingVideo ? AKColor.muted : AKColor.link)
+                            }
+                            .disabled(uploadingVideo)
+                        }
+                        if previews.isEmpty {
+                            Text("视频动态仅支持 1 个视频（30 秒内、30MB 内），与图片不能同时发布")
+                                .font(.system(size: 11))
+                                .foregroundColor(AKColor.hint)
+                                .lineSpacing(3)
+                        }
+                    }
+
+                    if let errorText {
+                        Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
                     }
                 }
-
-                if let errorText {
-                    Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
-                }
-                Spacer()
+                .padding(16)
             }
-            .padding(14)
-            .navigationTitle("发布动态")
+            .background(AKColor.card)
+            .navigationTitle("发表动态")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(publishing ? "发布中…" : "发布") {
+                    Button {
                         Task { await publish() }
+                    } label: {
+                        Text(publishing ? "发表中…" : "发表")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(AKColor.brand)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .disabled(publishing || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && items.isEmpty))
+                    .disabled(publishing || uploadingVideo || !hasContent)
                 }
             }
             .onChange(of: videoItem) { item in
@@ -553,28 +752,143 @@ private struct PublishMomentView: View {
                 Task { await uploadVideo(item) }
             }
             .onChange(of: items) { list in
-                Task {
-                    var dataList: [Data] = []
-                    for item in list {
-                        if let data = try? await item.loadTransferable(type: Data.self) {
-                            dataList.append(data)
+                Task { await loadImages(list) }
+            }
+        }
+    }
+
+    private var videoPreview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let u = APIClient.fullURL(videoCover) {
+                        AsyncImage(url: u) { phase in
+                            if let img = phase.image {
+                                img.resizable().scaledToFill()
+                            } else {
+                                Color.black
+                            }
+                        }
+                    } else {
+                        Color.black
+                    }
+                }
+                .frame(width: 150, height: 150)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    Circle()
+                        .fill(Color.black.opacity(0.6))
+                        .frame(width: 38, height: 38)
+                        .overlay(Text("▶").font(.system(size: 16)).foregroundColor(.white))
+                )
+
+                Button {
+                    videoItem = nil
+                    videoURL = ""
+                    videoCover = ""
+                    videoDuration = 0
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Color.black.opacity(0.6))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(3)
+            }
+            Text("视频 \(videoDuration) 秒 · 仅支持 30 秒内的视频")
+                .font(.system(size: 11.5))
+                .foregroundColor(AKColor.placeholder)
+            Button {
+                videoItem = nil
+                videoURL = ""
+                videoCover = ""
+                videoDuration = 0
+            } label: {
+                Text("移除后可重新选择图片")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.link)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var imageGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(100), spacing: 8), count: 3),
+                  alignment: .leading, spacing: 8) {
+            ForEach(Array(previews.enumerated()), id: \.offset) { idx, data in
+                ZStack(alignment: .topTrailing) {
+                    Group {
+                        if let image = UIImage(data: data) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                        } else {
+                            AKColor.fill
                         }
                     }
-                    previews = dataList
+                    .frame(width: 100, height: 100)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    Button {
+                        previews.remove(at: idx)
+                        if idx < items.count { items.remove(at: idx) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 20, height: 20)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(3)
+                }
+            }
+            if previews.count < 9 {
+                PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20))
+                        .foregroundColor(AKColor.muted)
+                        .frame(width: 100, height: 100)
+                        .background(AKColor.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
         }
     }
 
-    /// 视频：读数据 → 上传（kind=video）→ 抽首帧当封面（kind=moment）
+    private func loadImages(_ list: [PhotosPickerItem]) async {
+        var dataList: [Data] = []
+        for item in list {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                dataList.append(data)
+            }
+        }
+        await MainActor.run {
+            previews = dataList
+            if !dataList.isEmpty {
+                videoItem = nil
+                videoURL = ""
+                videoCover = ""
+                videoDuration = 0
+            }
+        }
+    }
+
+    /// 视频：30MB / 30 秒校验 → 上传 → 抽首帧当封面（kind=moment）
     private func uploadVideo(_ item: PhotosPickerItem) async {
         uploadingVideo = true
         errorText = nil
         defer { uploadingVideo = false }
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else { return }
-            if data.count > 60 * 1024 * 1024 {
-                errorText = "视频不能超过 60MB"
+            if data.count > 30 * 1024 * 1024 {
+                errorText = "视频不能超过 30MB（当前 \(data.count / 1024 / 1024)MB）"
                 return
             }
             let tmp = FileManager.default.temporaryDirectory
@@ -584,7 +898,15 @@ private struct PublishMomentView: View {
 
             let asset = AVURLAsset(url: tmp)
             let seconds = Int(CMTimeGetSeconds(asset.duration))
-            videoDuration = seconds > 0 ? seconds : 0
+            if seconds <= 0 {
+                errorText = "无法读取视频时长，请换一个视频"
+                return
+            }
+            if seconds > 30 {
+                errorText = "视频时长需在 30 秒以内（当前 \(seconds) 秒）"
+                return
+            }
+            videoDuration = seconds
 
             if let coverData = Self.coverData(from: asset) {
                 let up = try await app.uploadImage(coverData)
@@ -597,6 +919,8 @@ private struct PublishMomentView: View {
                 kind: "video"
             )
             videoURL = upVideo.url
+            items = []
+            previews = []
         } catch {
             errorText = "视频上传失败：\(error.localizedDescription)"
         }
@@ -606,14 +930,20 @@ private struct PublishMomentView: View {
     private static func coverData(from asset: AVURLAsset) -> Data? {
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 720, height: 720)
-        guard let cg = try? gen.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil) else {
+        gen.maximumSize = CGSize(width: 1080, height: 1080)
+        guard let cg = try? gen.copyCGImage(at: CMTime(seconds: 0.2, preferredTimescale: 600),
+                                           actualTime: nil) else {
             return nil
         }
-        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.8)
+        return UIImage(cgImage: cg).jpegData(compressionQuality: 0.85)
     }
 
     private func publish() async {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if content.isEmpty && previews.isEmpty && videoURL.isEmpty {
+            errorText = "请输入内容或添加图片/视频"
+            return
+        }
         publishing = true
         errorText = nil
         defer { publishing = false }
@@ -628,8 +958,132 @@ private struct PublishMomentView: View {
                 return
             }
         }
-        await onPublish(text.trimmingCharacters(in: .whitespacesAndNewlines), urls,
-                        videoURL, videoDuration, videoCover)
+        await onPublish(content, urls, videoURL, videoDuration, videoCover)
+        dismiss()
+    }
+}
+
+/// 朋友圈评论弹层：身份卡 + 500 字输入（对齐安卓 MomentReplySheet）
+private struct MomentReplySheet: View {
+    @EnvironmentObject private var app: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    let moment: Moment
+    @State private var text = ""
+    @State private var sending = false
+
+    private var myName: String { app.user?.displayName ?? "我" }
+    private var myNo: String { app.user?.prettyYxid ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("发表评论")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AKColor.text)
+                    Text("友善交流，理性发言")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AKColor.hint)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(AKColor.muted)
+                        .frame(width: 32, height: 32)
+                        .background(AKColor.fill)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 9) {
+                AvatarView(url: app.user?.avatar, name: myName, size: 38)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(myName)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(AKColor.text)
+                        if !myNo.isEmpty { PrettyBadge(number: myNo) }
+                        if (app.user?.vipLevel ?? 0) > 0 {
+                            VipBadge(level: app.user?.vipLevel ?? 0)
+                        }
+                    }
+                    Text(myNo.isEmpty ? "AK商聊用户" : "AK号 \(myNo)")
+                        .font(.system(size: 11))
+                        .foregroundColor(myNo.isEmpty ? AKColor.hint : AKColor.gold)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                LinearGradient(colors: [AKColor.brandSoft, AKColor.goldSoft.opacity(0.65)],
+                               startPoint: .leading, endPoint: .trailing)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .font(.system(size: 14))
+                    .frame(height: 120)
+                    .padding(6)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .onChange(of: text) { value in
+                        if value.count > 500 { text = String(value.prefix(500)) }
+                    }
+                if text.isEmpty {
+                    Text("说点什么…")
+                        .font(.system(size: 13.5))
+                        .foregroundColor(AKColor.placeholder)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                Text("\(text.count)/500")
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.placeholder)
+            }
+
+            Button {
+                Task { await send() }
+            } label: {
+                Text(sending ? "发送中…" : "发送")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(sending ? AKColor.hint : .white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(
+                        LinearGradient(colors: sending
+                                        ? [AKColor.fill, AKColor.fill]
+                                        : [AKColor.brand, Color(hex: 0x6C5CF0)],
+                                       startPoint: .leading, endPoint: .trailing)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(18)
+        .presentationDetents([.height(430), .large])
+        .presentationDragIndicator(.hidden)
+    }
+
+    private func send() async {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, !sending else { return }
+        sending = true
+        defer { sending = false }
+        await app.commentMoment(moment, content: content)
         dismiss()
     }
 }

@@ -7,6 +7,11 @@ struct WalletView: View {
     @State private var usdt: UsdtConfig?
     @State private var errorText: String?
     @State private var filter = 0
+    @State private var showRecharge = false
+    @State private var tip: String?
+    @State private var showCs = false
+    @State private var rechargeAmount = ""
+    @State private var rechargeRemark = ""
 
     private let filterTitles = ["全部", "收入", "支出"]
 
@@ -26,11 +31,6 @@ struct WalletView: View {
                 .listRowBackground(Color.clear)
 
             quickRow
-                .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 10, trailing: 14))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-
-            usdtEntry
                 .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -76,10 +76,25 @@ struct WalletView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
         .navigationTitle("K币钱包")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .sheet(isPresented: $showRecharge) {
+            rechargeSheet
+        }
+        .sheet(isPresented: $showCs) {
+            NavigationStack { CustomerServiceView() }
+        }
+        .alert("提示", isPresented: Binding(
+            get: { tip != nil },
+            set: { if !$0 { tip = nil } }
+        )) {
+            Button("好", role: .cancel) { tip = nil }
+        } message: {
+            Text(tip ?? "")
+        }
     }
 
     // MARK: - 余额卡
@@ -136,15 +151,31 @@ struct WalletView: View {
 
     private var quickRow: some View {
         HStack(spacing: 10) {
-            NavigationLink {
-                UsdtView()
+            Button {
+                rechargeAmount = ""
+                rechargeRemark = ""
+                showRecharge = true
             } label: {
                 quickAction("＋", "充值", Color(hex: 0x43C463))
             }
             .buttonStyle(.plain)
 
-            NavigationLink {
-                CustomerServiceView()
+            Button {
+                tip = "提现功能暂未开放，请使用网页版提交。"
+            } label: {
+                quickAction("↓", "提现", Color(hex: 0xFF8A3D))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                tip = "申请记录暂未开放，请使用网页版查看。"
+            } label: {
+                quickAction("▤", "我的申请", Color(hex: 0x6C8AE4))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showCs = true
             } label: {
                 quickAction("🎧", "客服", Color(hex: 0x2FA84F))
             }
@@ -168,6 +199,132 @@ struct WalletView: View {
         .padding(.vertical, 14)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    // MARK: - 充值面板
+
+    private var rechargeSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("充值K币")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AKColor.text)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 6) {
+                            Text("🎧").font(.system(size: 14))
+                            Text("联系客服完成付款")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(AKColor.text)
+                        }
+                        HStack(spacing: 10) {
+                            AvatarView(url: nil, name: "客服", size: 40)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("在线客服")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(AKColor.text)
+                                Text("请联系客服获取收款方式")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(AKColor.hint)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(AKColor.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.top, 10)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AKColor.blueSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                    if let u = usdt, u.enabled == 1, !u.address.isEmpty {
+                        usdtEntry
+                    }
+
+                    Text("充值金额 *")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.sub)
+                    TextField("请输入想要充值的K币数", text: $rechargeAmount)
+                        .keyboardType(.numberPad)
+                        .font(.system(size: 15))
+                        .padding(.horizontal, 14)
+                        .frame(height: 48)
+                        .background(AKColor.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .onChange(of: rechargeAmount) { value in
+                            rechargeAmount = String(value.filter { $0.isNumber }.prefix(7))
+                        }
+
+                    HStack(spacing: 8) {
+                        ForEach([100, 500, 1000, 5000], id: \.self) { v in
+                            Button {
+                                rechargeAmount = "\(v)"
+                            } label: {
+                                Text("\(v)")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(rechargeAmount == "\(v)" ? Color(hex: 0x2FA84F) : AKColor.sub)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(rechargeAmount == "\(v)" ? AKColor.brandSoft : AKColor.fill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    HStack(spacing: 6) {
+                        Text("备注").font(.system(size: 13)).foregroundColor(AKColor.sub)
+                        Text("选填").font(.system(size: 11.5)).foregroundColor(AKColor.placeholder)
+                    }
+                    TextField("付款方式 / 转账单号等", text: $rechargeRemark)
+                        .font(.system(size: 15))
+                        .padding(.horizontal, 14)
+                        .frame(height: 64, alignment: .topLeading)
+                        .padding(.top, 12)
+                        .background(AKColor.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .onChange(of: rechargeRemark) { value in
+                            if value.count > 50 { rechargeRemark = String(value.prefix(50)) }
+                        }
+
+                    Button {
+                        showRecharge = false
+                        showCs = true
+                    } label: {
+                        Text("联系客服充值")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(
+                                LinearGradient(colors: [Color(hex: 0x43C463), Color(hex: 0x2FA84F)],
+                                               startPoint: .leading, endPoint: .trailing)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(Int64(rechargeAmount) ?? 0 <= 0)
+                    .opacity((Int64(rechargeAmount) ?? 0) > 0 ? 1 : 0.6)
+
+                    Text("当前版本由客服确认到账")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AKColor.placeholder)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(18)
+            }
+            .background(AKColor.bg)
+            .navigationTitle("充值K币")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { showRecharge = false }
+                }
+            }
+        }
     }
 
     // MARK: - USDT 充值入口
@@ -263,7 +420,7 @@ struct WalletView: View {
                         .font(.system(size: 14.5))
                         .foregroundColor(AKColor.text)
                         .lineLimit(1)
-                    Text("\(TimeText.short(log.createdAt)) · 余额 \(log.balance)")
+                    Text("\(Self.logTime(log.createdAt)) · 余额 \(log.balance)")
                         .font(.system(size: 11.5))
                         .foregroundColor(AKColor.hint)
                 }
@@ -293,5 +450,15 @@ struct WalletView: View {
         } catch {
             errorText = error.localizedDescription
         }
+    }
+
+    /// 安卓账单时间：MM-dd HH:mm
+    private static func logTime(_ ts: Int64) -> String {
+        guard ts > 0 else { return "" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)!
+        f.dateFormat = "MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
     }
 }

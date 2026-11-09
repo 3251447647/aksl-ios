@@ -1,4 +1,6 @@
 import SwiftUI
+import AVFoundation
+import UIKit
 
 /// 聊天消息正文：按服务端 type 渲染文本、图片、语音与全部卡片。
 /// 卡片结构以 api_v1.php / im_push.php 的 extra 字段为准，与网页端保持同一口径。
@@ -31,6 +33,13 @@ struct MessageBody: View {
     var onOpenRecord: (String) -> Void = { _ in }
     /// 多图相册点击：urls + 起点
     var onOpenAlbum: ([String], Int) -> Void = { _, _ in }
+    /// 会话对方名称：转账/礼物卡片收款人兜底（对齐安卓 peerName）
+    var peerName: String = "对方"
+    /// 群聊 @ 名字 → uid（0 表示 @全体成员，-1 表示成员信息关闭）
+    var mentionMap: [String: Int64] = [:]
+    var onMention: (Int64) -> Void = { _ in }
+    /// 语音是否已播放过：对方发来的语音没播过显示红点
+    var voicePlayed: Bool = true
 
     private var ex: [String: JSONValue] { message.extraMap }
     private var rawText: String { message.text ?? message.content ?? "" }
@@ -69,7 +78,7 @@ struct MessageBody: View {
     }
 
     private var recipientName: String {
-        firstNonEmpty(cStr("to_name"), "对方")
+        firstNonEmpty(cStr("to_name"), peerName)
     }
 
     var body: some View {
@@ -77,8 +86,7 @@ struct MessageBody: View {
         case 11:
             systemRow
         case 2, 3, 20:
-            noticeCard(title: "充值申请", detail: rawText, icon: "creditcard.fill",
-                       tint: AKColor.gold, bg: AKColor.goldSoft)
+            rechargeCard
         case 7, 21:
             redPacket
         case 8, 22:
@@ -92,7 +100,13 @@ struct MessageBody: View {
         case 13:
             groupCard
         case 14:
-            callCard
+            if let line = groupCallLine {
+                systemCapsule(line)
+            } else if isGroupCallRecord {
+                EmptyView()
+            } else {
+                callCard
+            }
         case 15:
             videoBubble
         case 16:
@@ -110,7 +124,13 @@ struct MessageBody: View {
         case 31:
             albumBubble
         case 5:
-            imageBubble
+            if isSticker {
+                stickerBubble
+            } else if (message.text ?? "").isEmpty {
+                localPendingImage
+            } else {
+                imageBubble
+            }
         case 6:
             voiceBubble
         default:
@@ -120,36 +140,111 @@ struct MessageBody: View {
 
     /* ---------------- 基础消息 ---------------- */
 
+    private var textColor: Color { mine ? .white : AKColor.text }
+
     private var textBubble: some View {
-        Text(rawText)
-            .font(.system(size: 15))
-            .foregroundColor(mine ? .white : AKColor.text)
+        AKLinkText(text: rawText, color: textColor, fontSize: 14.5, lineHeight: 20,
+                   mentionMap: isGroup ? mentionMap : [:], onMention: onMention)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(mine ? Color.clear : AKColor.line, lineWidth: 0.5)
             )
-            .textSelection(.enabled)
+    }
+
+    private var isSticker: Bool {
+        if (message.clientId ?? "").hasPrefix("sticker_") { return true }
+        let t = message.text ?? ""
+        return t.contains("/emoji/") || t.contains("uploads/emoji")
+    }
+
+    /// 图片宽高比：优先 content 里的 w/h（0.4–2.5），老图按 4:3
+    private var imageMeta: (ratio: CGFloat, caption: String) {
+        let raw = message.content ?? ""
+        let parts = raw.components(separatedBy: "|#|")
+        if parts.count > 1, let o = MessageBody.jsonObject(parts.dropFirst().joined(separator: "|#|")) {
+            let w = (o["w"] as? NSNumber)?.doubleValue ?? 0
+            let h = (o["h"] as? NSNumber)?.doubleValue ?? 0
+            let cap = (o["caption"] as? String) ?? ""
+            if w > 0, h > 0 { return (CGFloat(min(max(w / h, 0.4), 2.5)), cap) }
+            return (4.0 / 3.0, cap)
+        }
+        return (4.0 / 3.0, "")
+    }
+
+    /// 本地上传中/失败的图片：先占位，避免出现 1×1 的空白
+    private var localPendingImage: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(AKColor.fill)
+            if message.status == 2 {
+                Text("发送失败")
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.sub)
+            } else {
+                ProgressView().scaleEffect(0.8)
+            }
+        }
+        .frame(width: 150, height: 150)
     }
 
     private var imageBubble: some View {
-        Group {
+        let meta = imageMeta
+        let boxW = min(200, 260 * meta.ratio)
+        let boxH = boxW / meta.ratio
+        return Group {
             if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? message.content ?? "")) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        RoundedRectangle(cornerRadius: 10).fill(AKColor.fill)
-                            .frame(width: 150, height: 150)
+                VStack(alignment: .leading, spacing: 0) {
+                    Color.clear
+                        .frame(width: boxW, height: boxH)
+                        .overlay {
+                            AsyncImage(url: url) { phase in
+                                if let image = phase.image {
+                                    image.resizable().scaledToFit()
+                                } else {
+                                    AKColor.fill
+                                }
+                            }
+                        }
+                        .clipped()
+                    if !meta.caption.isEmpty {
+                        Text(meta.caption)
+                            .font(.system(size: 14))
+                            .foregroundColor(AKColor.text)
+                            .lineSpacing(2)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
                     }
                 }
-                .frame(maxWidth: 190, maxHeight: 240)
+                .background(meta.caption.isEmpty ? Color.clear : AKColor.card)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             } else {
                 Color.clear.frame(width: 1, height: 1)
+            }
+        }
+    }
+
+    /// 表情：96×96、等比、无气泡；视频表情循环静音播放
+    private var stickerBubble: some View {
+        Group {
+            let raw = (message.text ?? message.content ?? "").lowercased()
+            if raw.hasSuffix(".mp4") || raw.hasSuffix(".mov") || raw.hasSuffix(".webm") || raw.hasSuffix(".m4v") {
+                if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? "")) {
+                    LoopingVideo(url: url)
+                        .frame(width: 96, height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            } else if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? "")) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFit()
+                    } else {
+                        AKColor.fill
+                    }
+                }
+                .frame(width: 96, height: 96)
             }
         }
     }
@@ -221,21 +316,50 @@ struct MessageBody: View {
         return Int(tail.prefix { $0.isNumber }) ?? 0
     }
 
+    @State private var voiceFill: CGFloat = 0
+
     private var voiceBubble: some View {
         Button(action: onVoiceTap) {
-            HStack(spacing: 6) {
-                Text(voiceSeconds > 0 ? "\(voiceSeconds)\"" : "语音")
-                    .font(.system(size: 14))
-                Image(systemName: playingVoice ? "stop.circle.fill" : "speaker.wave.2.fill")
-                    .font(.system(size: 15))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(voiceSeconds > 0 ? "\(voiceSeconds)\"" : "语音")
+                        .font(.system(size: 14))
+                    Image(systemName: playingVoice ? "stop.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 16))
+                    if !mine && !voicePlayed {
+                        Circle().fill(AKColor.red).frame(width: 7, height: 7)
+                    }
+                }
+                if playingVoice {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(AKColor.line).frame(height: 2)
+                            Capsule().fill(AKColor.brand)
+                                .frame(width: max(0, geo.size.width * voiceFill), height: 2)
+                        }
+                    }
+                    .frame(height: 2)
+                }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .frame(minWidth: 64 + CGFloat(min(60, max(1, voiceSeconds))) * 3, alignment: .leading)
+            .frame(minWidth: min(244, 64 + CGFloat(min(60, max(1, voiceSeconds))) * 3), alignment: .leading)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
-            .foregroundColor(mine ? .white : AKColor.text)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .foregroundColor(textColor)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(mine ? Color.clear : AKColor.line, lineWidth: 0.5)
+            )
         }
         .buttonStyle(.plain)
+        .onChange(of: playingVoice) { on in
+            if on {
+                voiceFill = 0
+                withAnimation(.linear(duration: Double(max(1, voiceSeconds)))) { voiceFill = 1 }
+            } else {
+                voiceFill = 0
+            }
+        }
     }
 
     /* ---------------- 引用 ---------------- */
@@ -300,17 +424,15 @@ struct MessageBody: View {
             }
             .buttonStyle(.plain)
 
-            Text(quoteBodyText)
-                .font(.system(size: 14.5))
-                .foregroundColor(mine ? .white : AKColor.text)
-                .textSelection(.enabled)
+            AKLinkText(text: quoteBodyText, color: textColor, fontSize: 14.5, lineHeight: 20,
+                       mentionMap: isGroup ? mentionMap : [:], onMention: onMention)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(mine ? Color.clear : AKColor.line, lineWidth: 0.5)
         )
     }
@@ -329,37 +451,162 @@ struct MessageBody: View {
         return raw.isEmpty ? "消息已撤回" : raw
     }
 
+    @Environment(\.colorScheme) private var colorScheme
+
     private var systemRow: some View {
-        Text(systemText)
-            .font(.system(size: 12))
+        VStack(spacing: 0) {
+            Text(systemText)
+                .font(.system(size: 11.5))
+                .foregroundColor(AKColor.muted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.4))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+    }
+
+    private var callRaw: String {
+        let c = message.content ?? ""
+        return c.isEmpty ? (message.text ?? "") : c
+    }
+
+    /// 群通话记录：已有配对系统消息时不再重复展示
+    private var isGroupCallRecord: Bool {
+        guard let o = MessageBody.jsonObject(callRaw) else { return false }
+        return (o["group"] as? NSNumber)?.intValue == 1
+    }
+
+    private var groupCallLine: String? {
+        guard isGroup,
+              let o = MessageBody.jsonObject(callRaw),
+              (o["group"] as? NSNumber)?.intValue == 1 else { return nil }
+        if (o["sys_written"] as? NSNumber)?.intValue == 1 { return nil }
+        let callerRaw = (o["caller_name"] as? String) ?? ""
+        let caller = (!callerRaw.isEmpty && callerRaw != "null") ? callerRaw
+            : firstNonEmpty(message.fromName ?? "", "群成员")
+        let dur = (o["duration"] as? NSNumber)?.intValue ?? 0
+        if (o["status"] as? NSNumber)?.intValue == 5 {
+            return "\(caller) 发起了群通话，已取消"
+        }
+        return "\(caller) 发起了群通话 " + String(format: "%02d:%02d", dur / 60, dur % 60)
+    }
+
+    private func systemCapsule(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11.5))
             .foregroundColor(AKColor.muted)
-            .multilineTextAlignment(.center)
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(AKColor.fill)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .frame(maxWidth: 280)
+            .padding(.vertical, 3)
+            .background(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
     }
 
     /* ---------------- 卡片 ---------------- */
 
-    private func noticeCard(title: String, detail: String, icon: String, tint: Color, bg: Color) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(tint)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(AKColor.text)
-                if !detail.isEmpty {
-                    Text(detail).font(.system(size: 12)).foregroundColor(AKColor.sub).lineLimit(2)
-                }
-            }
-            Spacer(minLength: 0)
+    /// 充值申请（type 2/3/20）：238 宽卡片，头部图标 + 状态胶囊 + 大号金额 + 提交时间
+    private var rechargeCard: some View {
+        let amount = cInt("amount") > 0 ? cInt("amount") : Int(cDbl("amount"))
+        var remark = firstNonEmpty(cStr("remark"), cStr("msg"))
+        /* 网页端 type=2 的正文就是备注，不是 JSON */
+        if remark.isEmpty, message.type == 2, MessageBody.jsonObject(rawText) == nil {
+            remark = rawText
         }
-        .padding(12)
-        .frame(width: 236, alignment: .leading)
-        .background(bg)
+        let status = cInt("status")
+        let reason = cStr("reject_reason")
+        let statusText: String = {
+            switch status {
+            case 1: return "已完成"
+            case 2: return "已取消"
+            default: return "待处理"
+            }
+        }()
+        let statusColor: Color = {
+            switch status {
+            case 1: return Color(hex: 0x0FB67A)
+            case 2: return AKColor.sub
+            default: return Color(hex: 0xE68600)
+            }
+        }()
+        let statusBg: Color = {
+            switch status {
+            case 1: return AKColor.brandSoft
+            case 2: return AKColor.fill
+            default: return AKColor.goldSoft
+            }
+        }()
+        let timeText = MessageBody.shortDateTime(message.createdAt)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(AKColor.brandSoft)
+                        .frame(width: 28, height: 28)
+                    Text("¥")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(Color(hex: 0x0FB67A))
+                }
+                Text("充值申请")
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                Spacer(minLength: 0)
+                Text(statusText)
+                    .font(.system(size: 10))
+                    .foregroundColor(statusColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(statusBg)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            HStack(alignment: .lastTextBaseline, spacing: 4) {
+                Text("\(amount)")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(AKColor.text)
+                Text("K币")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.sub)
+                    .padding(.bottom, 3)
+            }
+            .padding(.top, 10)
+            if !remark.isEmpty {
+                Text("备注：\(remark)")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.sub)
+                    .lineLimit(2)
+                    .padding(.top, 5)
+            }
+            if status == 2 && !reason.isEmpty {
+                Text("拒绝理由：\(reason)")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.red)
+                    .lineLimit(2)
+                    .padding(.top, 5)
+            }
+            Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.top, 10)
+            HStack(spacing: 0) {
+                Text("提交时间 \(timeText)")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.hint)
+                Spacer(minLength: 0)
+                Text("查看详情 ›")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.link)
+            }
+            .padding(.top, 8)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: 238, alignment: .leading)
+        .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AKColor.fill, lineWidth: 1)
+        )
     }
 
     private var redPacketRid: Int64 {
@@ -515,7 +762,7 @@ struct MessageBody: View {
         let icon = kind == "vip" ? (level >= 2 ? "👑" : "💎") : "🎁"
         let toUid = cInt("to_uid") > 0 ? Int64(cInt("to_uid")) : message.toUid
         let isRcv = myUid > 0 && toUid == myUid
-        let toName = firstNonEmpty(cStr("to_name"), recipientName)
+        let toName = firstNonEmpty(cStr("to_name"), peerName)
         let title = isRcv ? "送给你的礼物" : "送给 \(toName) 的礼物"
         let foot: String = {
             if done { return "已领取" }
@@ -523,13 +770,14 @@ struct MessageBody: View {
             if isRcv { return "点击领取" }
             return "仅指定成员可领"
         }()
-        return VStack(spacing: 0) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Text(icon)
-                    .font(.system(size: 20))
-                    .frame(width: 40, height: 40)
-                    .background(Color.white.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.white.opacity(0.2))
+                        .frame(width: 40, height: 40)
+                    Text(icon).font(.system(size: 20))
+                }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 13))
@@ -544,8 +792,7 @@ struct MessageBody: View {
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 13)
-
-            HStack(spacing: 4) {
+            HStack(spacing: 0) {
                 Text(foot).font(.system(size: 10.5)).foregroundColor(.white.opacity(0.9))
                 Spacer(minLength: 0)
                 Text("›").font(.system(size: 15)).foregroundColor(.white.opacity(0.7))
@@ -567,47 +814,66 @@ struct MessageBody: View {
 
     private var locationCard: some View {
         HStack(spacing: 10) {
-            Image(systemName: "mappin.and.ellipse")
-                .font(.system(size: 20)).foregroundColor(AKColor.brand)
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(AKColor.brandSoft)
+                    .frame(width: 36, height: 36)
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 17))
+                    .foregroundColor(AKColor.brand)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(firstNonEmpty(cStr("address"), rawText, "位置"))
-                    .font(.system(size: 13, weight: .medium)).foregroundColor(AKColor.text)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundColor(AKColor.text)
                     .lineLimit(2)
                 Text("位置").font(.system(size: 11)).foregroundColor(AKColor.muted)
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .frame(width: 236, alignment: .leading)
-        .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .akCardSurface()
     }
 
     private var userCard: some View {
         let uid = Int64(cInt("uid"))
         let nickname = firstNonEmpty(cStr("nickname"), "用户")
-        let number = firstNonEmpty(cStr("pretty_yxid"), cStr("yx_id"))
         let vip = cInt("vip_level")
-        let pretty = cStr("pretty_yxid").isEmpty ? 0 : 1
-        return HStack(spacing: 10) {
-            AvatarView(url: cStr("avatar"), name: nickname, size: 42)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Text(nickname).font(.system(size: 14.5, weight: .medium))
-                        .foregroundColor(akNameColor(vipLevel: vip, isPretty: pretty, isGroup: false))
+        let vipExpire = Int64(cInt("vip_expire"))
+        let now = Int64(Date().timeIntervalSince1970)
+        let vipShown = vipExpire > now ? vip : 0
+        let prettyNo = cStr("pretty_yxid")
+        let isPretty = prettyNo.isEmpty ? 0 : 1
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                AvatarView(url: cStr("avatar"), name: nickname, size: 42)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text(nickname)
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundColor(isPretty == 1 ? AKColor.red : AKColor.text)
+                            .lineLimit(1)
+                        if isPretty == 1 { PrettyBadge(number: prettyNo) }
+                        if vipShown > 0 { VipBadge(level: vipShown) }
+                    }
+                    Text("AK号：\(cStr("yx_id"))")
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.muted)
                         .lineLimit(1)
-                    if vip > 0 { VipBadge(level: vip) }
                 }
-                Text("AK号：\(number)").font(.system(size: 11)).foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            Text("名片").font(.system(size: 11)).foregroundColor(AKColor.hint)
+            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.top, 10)
+            HStack(spacing: 0) {
+                Text("推荐好友").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
+                Text("查看 ›").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+            }
+            .padding(.top, 7)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
         .frame(width: 232, alignment: .leading)
         .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { if uid > 0 { onOpenProfile(uid) } }
     }
@@ -616,27 +882,48 @@ struct MessageBody: View {
         let gid = Int64(cInt("gid"))
         let name = firstNonEmpty(cStr("name"), "群聊")
         let count = cInt("member_count")
-        let pretty = cInt("is_pretty") == 1
-        return HStack(spacing: 10) {
-            AvatarView(url: cStr("avatar"), name: name, size: 42)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    Text(name).font(.system(size: 14.5, weight: .medium))
-                        .foregroundColor(pretty ? AKColor.gold : AKColor.text)
+        let prettyNo = cStr("pretty_no")
+        let isPretty = cInt("is_pretty") == 1
+        let groupNo = (isPretty && !prettyNo.isEmpty) ? prettyNo : cStr("group_no")
+        let intro = cStr("intro").trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                AvatarView(url: cStr("avatar"), name: name, size: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text(name)
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundColor(isPretty ? AKColor.gold : AKColor.text)
+                            .lineLimit(1)
+                        if isPretty && !prettyNo.isEmpty { PrettyBadge(number: prettyNo, isGroup: true) }
+                    }
+                    Text("群号 \(groupNo)" + (count > 0 ? " · \(count) 人" : ""))
+                        .font(.system(size: 11))
+                        .foregroundColor(isPretty ? AKColor.gold : AKColor.muted)
                         .lineLimit(1)
-                    if pretty { PrettyBadge(number: cStr("pretty_no"), isGroup: true) }
                 }
-                Text(count > 0 ? "\(count) 人" : "群聊")
-                    .font(.system(size: 11)).foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            Text("群名片").font(.system(size: 11)).foregroundColor(AKColor.hint)
+            if !intro.isEmpty {
+                Text(intro)
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.sub)
+                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .padding(.top, 9)
+            }
+            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.top, 10)
+            HStack(spacing: 0) {
+                Text("群邀请").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
+                Text("查看 ›").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+            }
+            .padding(.top, 7)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
-        .frame(width: 232, alignment: .leading)
+        .frame(width: 242, alignment: .leading)
         .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { if gid > 0 { onOpenGroup(gid) } }
     }
@@ -646,31 +933,39 @@ struct MessageBody: View {
         let name = firstNonEmpty(cStr("name"), "群直播")
         let title = firstNonEmpty(cStr("title"), name)
         let gid = Int64(cInt("gid"))
-        return HStack(spacing: 10) {
-            AvatarView(url: cStr("avatar"), name: name, size: 38)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AKColor.text)
-                    .lineLimit(2)
-                HStack(spacing: 5) {
-                    Text("LIVE")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color(hex: 0xFF3B30))
-                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                    Text("群直播").font(.system(size: 11)).foregroundColor(AKColor.muted)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                AvatarView(url: cStr("avatar"), name: name, size: 44)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .lineLimit(2)
+                    HStack(spacing: 6) {
+                        Text("LIVE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(AKColor.red)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        Text("群直播").font(.system(size: 11)).foregroundColor(AKColor.muted)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            Text(gid > 0 ? "进入 ›" : "已结束").font(.system(size: 11)).foregroundColor(AKColor.hint)
+            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.top, 10)
+            HStack(spacing: 0) {
+                Text("AK商聊直播").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
+                Text("进入直播间 ›").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+            }
+            .padding(.top, 7)
         }
-        .padding(11)
-        .frame(width: 236, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(width: 242, alignment: .leading)
         .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { if gid > 0 { onOpenLive(gid) } }
     }
@@ -698,9 +993,7 @@ struct MessageBody: View {
                 Circle()
                     .fill(missed ? AKColor.redSoft : AKColor.blueSoft)
                     .frame(width: 34, height: 34)
-                Image(systemName: video ? "video.fill" : "phone.fill")
-                    .font(.system(size: 15))
-                    .foregroundColor(missed ? AKColor.red : AKColor.link)
+                Text(video ? "📹" : "📞").font(.system(size: 16))
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(main)
@@ -723,38 +1016,52 @@ struct MessageBody: View {
     private var videoBubble: some View {
         let cover = cStr("cover")
         let duration = cInt("duration")
-        return ZStack {
+        let ratio: CGFloat = {
+            let parts = (message.content ?? "").components(separatedBy: "|#|")
+            let json = parts.count > 1 ? parts.dropFirst().joined(separator: "|#|") : ""
+            if let o = MessageBody.jsonObject(json) {
+                let w = (o["w"] as? NSNumber)?.doubleValue ?? 0
+                let h = (o["h"] as? NSNumber)?.doubleValue ?? 0
+                if w > 0, h > 0 { return CGFloat(min(max(w / h, 0.4), 2.4)) }
+            }
+            return 3.0 / 4.0
+        }()
+        let boxW: CGFloat = ratio >= 1 ? 210 : 300 * ratio
+        let boxH: CGFloat = ratio >= 1 ? 210 / ratio : 300
+        return ZStack(alignment: .topLeading) {
             if let url = APIClient.fullURL(cover.isEmpty ? nil : cover) {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
                         image.resizable().scaledToFill()
                     } else {
-                        Color(hex: 0x1F2126)
+                        Color(hex: 0x202329)
                     }
                 }
             } else {
-                Color(hex: 0x1F2126)
+                Color(hex: 0x202329)
             }
-            Image(systemName: "play.circle.fill")
-                .font(.system(size: 38))
-                .foregroundColor(.white.opacity(0.92))
             if duration > 0 {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Text(String(format: "%02d:%02d", duration / 60, duration % 60))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Color.black.opacity(0.45))
-                            .clipShape(Capsule())
-                    }
-                }
-                .padding(6)
+                Text(String(format: "%02d:%02d", duration / 60, duration % 60))
+                    .font(.system(size: 11))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .padding(6)
+            }
+            HStack {
+                Spacer(minLength: 0)
+                Image(systemName: "speaker.slash.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white)
+                    .padding(2)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(6)
             }
         }
-        .frame(width: 190, height: 250)
+        .frame(width: boxW, height: boxH)
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -894,6 +1201,15 @@ struct MessageBody: View {
         .onTapGesture { if !url.isEmpty { onOpenFile(url) } }
     }
 
+    static func shortDateTime(_ ts: Int64) -> String {
+        guard ts > 0 else { return "" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)
+        f.dateFormat = "MM-dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
     static func jsonObject(_ raw: String?) -> [String: Any]? {
         guard let raw, let data = raw.data(using: .utf8) else { return nil }
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -904,5 +1220,168 @@ struct MessageBody: View {
         if bytes < 1024 { return "\(bytes) B" }
         if bytes < 1024 * 1024 { return String(format: "%.0f KB", Double(bytes) / 1024) }
         return String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
+    }
+}
+
+private enum CardMetrics {
+    static let width: CGFloat = 236
+    static let radius: CGFloat = 12
+    static let padding: CGFloat = 11
+}
+
+private extension View {
+    /// 卡片统一外观：白底、圆角 12、内边距 11、宽 236，卡片下留 2
+    func akCardSurface() -> some View {
+        padding(CardMetrics.padding)
+            .frame(width: CardMetrics.width, alignment: .leading)
+            .background(AKColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: CardMetrics.radius, style: .continuous))
+            .padding(.bottom, 2)
+    }
+}
+
+/* ---------------- 文本链接 / @提醒 ---------------- */
+
+/// 对齐安卓 LinkifiedText：URL 与 @名字 蓝色可点，数字串只在传入 onNumberTap 时识别
+struct AKLinkText: View {
+    let text: String
+    var color: Color = AKColor.text
+    var fontSize: CGFloat = 14.5
+    var lineHeight: CGFloat = 20
+    var mentionMap: [String: Int64] = [:]
+    var onMention: (Int64) -> Void = { _ in }
+    var onNumberTap: ((String) -> Void)? = nil
+
+    private enum HitKind {
+        case url(URL)
+        case mention(Int64)
+        case number(String)
+    }
+
+    private struct Hit {
+        let range: NSRange
+        let kind: HitKind
+    }
+
+    private var hits: [Hit] {
+        let ns = text as NSString
+        guard ns.length > 0 else { return [] }
+        var out: [Hit] = []
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            detector.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+                guard let match, let found = match.url else { return }
+                var url = found
+                if url.scheme == nil, let fixed = URL(string: "http://" + ns.substring(with: match.range)) {
+                    url = fixed
+                }
+                out.append(Hit(range: match.range, kind: .url(url)))
+            }
+        }
+        if !mentionMap.isEmpty, let re = try? NSRegularExpression(pattern: "@([^\\s@，,。：:]{1,24})") {
+            re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+                guard let match else { return }
+                let name = ns.substring(with: match.range(at: 1))
+                guard let uid = mentionMap[name] ?? mentionMap["*"] else { return }
+                out.append(Hit(range: match.range, kind: .mention(uid)))
+            }
+        }
+        if onNumberTap != nil, let re = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z])[0-9]{5,}(?![0-9A-Za-z])") {
+            re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+                guard let match else { return }
+                out.append(Hit(range: match.range, kind: .number(ns.substring(with: match.range))))
+            }
+        }
+        return out.sorted { $0.range.location < $1.range.location }
+    }
+
+    private var attributed: AttributedString {
+        let ns = text as NSString
+        var out = AttributedString()
+        var cursor = 0
+        for hit in hits {
+            if hit.range.location < cursor { continue }
+            if hit.range.location > cursor {
+                var plain = AttributedString(ns.substring(with: NSRange(location: cursor, length: hit.range.location - cursor)))
+                plain.foregroundColor = color
+                out += plain
+            }
+            let raw = ns.substring(with: hit.range)
+            var piece = AttributedString(raw)
+            switch hit.kind {
+            case .url(let url):
+                piece.link = url
+                piece.foregroundColor = AKColor.link
+            case .mention(let uid):
+                piece.foregroundColor = AKColor.link
+                if uid > 0, let url = URL(string: "akmention://\(uid)") { piece.link = url }
+            case .number(let no):
+                piece.foregroundColor = AKColor.link
+                if let url = URL(string: "aknumber://\(no)") { piece.link = url }
+            }
+            out += piece
+            cursor = NSMaxRange(hit.range)
+        }
+        if cursor < ns.length {
+            var tail = AttributedString(ns.substring(from: cursor))
+            tail.foregroundColor = color
+            out += tail
+        }
+        return out
+    }
+
+    var body: some View {
+        Text(attributed)
+            .font(.system(size: fontSize))
+            .lineSpacing(max(0, lineHeight - fontSize * 1.2))
+            .environment(\.openURL, OpenURLAction { url in
+                if url.scheme == "akmention" {
+                    if let uid = Int64(url.host ?? "") { onMention(uid) }
+                    return .handled
+                }
+                if url.scheme == "aknumber" {
+                    if let no = url.host { onNumberTap?(no) }
+                    return .handled
+                }
+                return .systemAction
+            })
+    }
+}
+
+/* ---------------- 视频表情 ---------------- */
+
+/// 96dp 循环静音播放，无控制条（对齐安卓 StickerVideo）
+struct LoopingVideo: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> LoopingVideoView {
+        let view = LoopingVideoView()
+        view.load(url)
+        return view
+    }
+
+    func updateUIView(_ uiView: LoopingVideoView, context: Context) {}
+}
+
+final class LoopingVideoView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+
+    func load(_ url: URL) {
+        let p = AVQueuePlayer()
+        let item = AVPlayerItem(url: url)
+        looper = AVPlayerLooper(player: p, templateItem: item)
+        p.isMuted = true
+        p.play()
+        if let layer = layer as? AVPlayerLayer {
+            layer.player = p
+            layer.videoGravity = .resizeAspect
+        }
+        player = p
+    }
+
+    deinit {
+        player?.pause()
     }
 }
