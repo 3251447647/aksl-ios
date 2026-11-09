@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("ak.notify.vibrate") private var vibrate = true
     @State private var showLogout = false
     @State private var showDelete = false
+    @AppStorage("colorSchemeMode") private var schemeMode = 0
 
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
 
@@ -23,6 +24,13 @@ struct SettingsView: View {
                 Text("横幅样式、免打扰与会话通知开关由系统「设置 → 通知 → AK商聊」控制。")
                     .font(.system(size: 11))
                     .foregroundColor(AKColor.muted)
+            }
+            Section("外观") {
+                Picker("深色模式", selection: $schemeMode) {
+                    Text("跟随系统").tag(0)
+                    Text("浅色").tag(1)
+                    Text("深色").tag(2)
+                }
             }
             Section("账号") {
                 NavigationLink("隐私与安全") { PrivacySettingsView() }

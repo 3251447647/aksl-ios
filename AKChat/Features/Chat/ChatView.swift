@@ -45,6 +45,9 @@ struct ChatView: View {
     @State private var chatBg: String?
     @State private var showLive = false
     @State private var liveGid: Int64 = 0
+    @State private var active: GroupActiveData?
+    @State private var showGroupCall = false
+    @State private var callType = 1
     @State private var previewGroupId: Int64 = 0
     @State private var showGroupPreview = false
     @State private var showCall = false
@@ -52,10 +55,69 @@ struct ChatView: View {
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
 
+    /// 群内进行中的通话/直播横条（对齐安卓 GroupActiveBar）
+    @ViewBuilder
+    private var activeBar: some View {
+        if let live = active?.live, live.liveId > 0 {
+            Button {
+                showLive = true
+            } label: {
+                barContent(icon: "dot.radiowaves.left.and.right",
+                           title: live.title.isEmpty ? "群直播进行中" : live.title,
+                           subtitle: "\(live.hostName) · \(live.viewers) 人观看",
+                           tint: Color(hex: 0xFF4D6D))
+            }
+            .buttonStyle(.plain)
+        } else if let call = active?.call, call.callId > 0 {
+            Button {
+                callType = call.callType == 2 ? 2 : 1
+                showGroupCall = true
+            } label: {
+                barContent(icon: call.callType == 2 ? "video.fill" : "phone.fill",
+                           title: call.callType == 2 ? "群视频通话进行中" : "群语音通话进行中",
+                           subtitle: "\(call.callerName) 发起 · \(call.members) 人在线",
+                           tint: AKColor.brand)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func barContent(icon: String, title: String, subtitle: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .foregroundColor(.white)
+                .frame(width: 30, height: 30)
+                .background(tint)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 13, weight: .medium)).foregroundColor(AKColor.text).lineLimit(1)
+                Text(subtitle).font(.system(size: 11)).foregroundColor(AKColor.muted).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text("加入")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(tint)
+                .clipShape(Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(AKColor.cardAlt)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AKColor.line).frame(height: 0.5)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let pinText {
                 pinBar(pinText)
+            }
+            if isGroup {
+                activeBar
             }
             messageList
 
@@ -229,6 +291,9 @@ struct ChatView: View {
         .fullScreenCover(isPresented: $showCall) {
             CallScreen()
         }
+        .sheet(isPresented: $showGroupCall) {
+            NavigationStack { GroupCallView(gid: convId, callType: callType) }
+        }
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
             chatBg = cachedBg()
@@ -242,6 +307,7 @@ struct ChatView: View {
             if isGroup {
                 await loadMembers()
                 await loadPendingNotice()
+                active = try? await APIClient.shared.groupActive(gid: convId)
             }
         }
         .onReceive(app.$incoming.compactMap { $0 }) { msg in
