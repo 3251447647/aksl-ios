@@ -7,6 +7,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // 全局去掉 iOS 系统导航栏返回按钮的「Back」文字，只保留「<」箭头（与安卓一致）
+        UINavigationBar.appearance().backIndicatorImage = UIImage(systemName: "chevron.left")
+        UINavigationBar.appearance().backIndicatorTransitionMaskImage = UIImage(systemName: "chevron.left")
+        UIBarButtonItem.appearance().setBackButtonTitlePositionAdjustment(
+            UIOffset(horizontal: -200, vertical: 0), for: .default
+        )
+        UITableView.appearance().sectionHeaderTopPadding = 0
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
             guard granted else { return }
