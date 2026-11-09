@@ -144,7 +144,7 @@ struct LiveKitRoomView: View {
     /// 屏幕共享：ReplayKit 采集 → LiveKit BufferCapturer 推帧（App 切后台会停）
     private func startScreenShare() async {
         guard !sharingScreen else { return }
-        let track = LocalVideoTrack.createBufferTrack(name: "screen")
+        let track = await LocalVideoTrack.createBufferTrack(name: "screen")
         guard let capturer = track.capturer as? BufferCapturer else {
             error = "当前设备不支持屏幕共享"
             return
