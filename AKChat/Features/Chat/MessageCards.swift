@@ -108,7 +108,12 @@ struct MessageBody: View {
                 callCard
             }
         case 15:
-            videoBubble
+            // 15 正常是视频；内容是带 items 的聊天记录 JSON 时按记录卡片渲染
+            if isForwardedRecord {
+                chatRecordCard
+            } else {
+                videoBubble
+            }
         case 16:
             momentCard
         case 17:
@@ -159,6 +164,15 @@ struct MessageBody: View {
         if (message.clientId ?? "").hasPrefix("sticker_") { return true }
         let t = message.text ?? ""
         return t.contains("/emoji/") || t.contains("uploads/emoji")
+    }
+
+    /// 合并转发内容是 {title, sub, items} JSON；视频消息是 URL|#|JSON，不会互相误判
+    private var isForwardedRecord: Bool {
+        guard let o = MessageBody.jsonObject(message.content) ?? MessageBody.jsonObject(message.text),
+              (o["items"] as? [Any]) != nil else {
+            return false
+        }
+        return true
     }
 
     /// 图片宽高比：优先 content 里的 w/h（0.4–2.5），老图按 4:3
@@ -1172,7 +1186,10 @@ struct MessageBody: View {
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture { onOpenRecord(message.content ?? message.text ?? "") }
+        .onTapGesture {
+            let raw = (message.content?.isEmpty == false ? message.content : message.text) ?? ""
+            onOpenRecord(raw)
+        }
     }
 
     private var fileCard: some View {

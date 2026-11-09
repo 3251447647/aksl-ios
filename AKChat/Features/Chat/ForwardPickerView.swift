@@ -8,8 +8,14 @@ struct ForwardPickerView: View {
 
     let messages: [Message]
     var title: String = "聊天记录"
+    var screenTitle: String = "选择会话"
+    var subtitleOverride: String? = nil
+    /// 每成功发往一个会话回调一次：服务端推送会排除发送者，调用方用它把消息即时补进当前会话
+    var onSent: (String, Int64, Message?) -> Void = { _, _, _ in }
 
     @State private var picked: Set<String> = []
+    /// 选中项的快照：搜索词变化后 rows 会被过滤，已选目标仍要能发出去
+    @State private var pickedRows: [String: ForwardRow] = [:]
     @State private var keyword = ""
     @State private var searchResults: [ForwardRow] = []
     @State private var searching = false
@@ -70,6 +76,17 @@ struct ForwardPickerView: View {
                 return a.key < b.key
             }
         return localRows + extra
+    }
+
+    /// 可选目标从全量候选取：搜索关键字过滤后，选中项可能已不在 rows 里
+    private var sendableRows: [ForwardRow] {
+        var seen = Set<String>()
+        var out: [ForwardRow] = []
+        for row in base + searchResults where !seen.contains(row.key) {
+            seen.insert(row.key)
+            out.append(row)
+        }
+        return out
     }
 
     private var subtitle: String {
@@ -150,10 +167,10 @@ struct ForwardPickerView: View {
                     .frame(width: 44, height: 40)
             }
             VStack(spacing: 1) {
-                Text("选择会话")
+                Text(screenTitle)
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(AKColor.text)
-                Text(subtitle)
+                Text(subtitleOverride ?? subtitle)
                     .font(.system(size: 10.5))
                     .foregroundColor(AKColor.hint)
             }
@@ -208,7 +225,13 @@ struct ForwardPickerView: View {
     private func rowView(_ row: ForwardRow) -> some View {
         let on = picked.contains(row.key)
         return Button {
-            if on { picked.remove(row.key) } else { picked.insert(row.key) }
+            if on {
+                picked.remove(row.key)
+                pickedRows[row.key] = nil
+            } else {
+                picked.insert(row.key)
+                pickedRows[row.key] = row
+            }
         } label: {
             HStack(spacing: 11) {
                 AvatarView(url: row.avatar, name: row.name, size: 42)
@@ -272,7 +295,10 @@ struct ForwardPickerView: View {
 
     private func submit() async {
         guard !submitting else { return }
-        let targets = rows.filter { picked.contains($0.key) }
+        let targets = picked.compactMap { key -> ForwardRow? in
+            if let row = pickedRows[key] { return row }
+            return sendableRows.first { $0.key == key }
+        }
         guard !targets.isEmpty else {
             hint = "请选择会话"
             return
@@ -289,12 +315,15 @@ struct ForwardPickerView: View {
             let ctype = String(parts[0])
             do {
                 if let payload {
-                    _ = try await APIClient.shared.sendTypedMessage(
+                    let res = try await APIClient.shared.sendTypedMessage(
                         convType: ctype, convId: cid, type: 17, content: payload,
                         clientId: "ios_fwd_\(UUID().uuidString)"
                     )
+                    onSent(ctype, cid, res.message)
                 } else if let first = messages.first {
-                    try await forwardOne(first, convType: ctype, convId: cid)
+                    if let sent = try await forwardOne(first, convType: ctype, convId: cid) {
+                        onSent(ctype, cid, sent)
+                    }
                 }
             } catch {
                 failed += 1
@@ -309,39 +338,44 @@ struct ForwardPickerView: View {
     }
 
     /// 单条转发：与安卓 forwardOne 一致（文本原样、记录重发、媒体重发、其余 [消息]）
-    private func forwardOne(_ m: Message, convType: String, convId: Int64) async throws {
+    private func forwardOne(_ m: Message, convType: String, convId: Int64) async throws -> Message? {
         let text = m.text ?? ""
         switch m.type {
         case 1, 10:
-            guard !text.isEmpty else { return }
-            _ = try await APIClient.shared.sendTypedMessage(
+            guard !text.isEmpty else { return nil }
+            let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: m.type, content: text,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
+            return res.message
         case 16:
-            _ = try await APIClient.shared.sendTypedMessage(
+            let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: 1, content: "[动态分享]",
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
+            return res.message
         case 17:
             let raw = (m.content ?? "").isEmpty ? text : (m.content ?? "")
-            guard !raw.isEmpty else { return }
-            _ = try await APIClient.shared.sendTypedMessage(
+            guard !raw.isEmpty else { return nil }
+            let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: 17, content: raw,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
+            return res.message
         case 5, 6, 15:
-            guard !text.isEmpty else { return }
+            guard !text.isEmpty else { return nil }
             let prefix = m.type == 5 && isSticker(m) ? "sticker_" : "ios_fwd_"
-            _ = try await APIClient.shared.sendTypedMessage(
+            let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: m.type, content: text,
                 clientId: prefix + UUID().uuidString
             )
+            return res.message
         default:
-            _ = try await APIClient.shared.sendTypedMessage(
+            let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: 1, content: "[消息]",
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
+            return res.message
         }
     }
 

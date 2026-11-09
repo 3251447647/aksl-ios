@@ -107,9 +107,11 @@ struct ChatView: View {
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
 
-    /// 私聊对方在会话列表里的信息（靓号/VIP 徽章用）
-    private var peerConv: Conversation? {
-        app.conversations.first { $0.convType == convType && $0.convId == convId }
+    /// 私聊对方在会话列表里的信息（靓号/VIP 徽章用）。缓存一份，避免每次 body 都 first(where:)
+    @State private var peerConv: Conversation?
+
+    private func syncPeerConv() {
+        peerConv = app.conversations.first { $0.convType == convType && $0.convId == convId }
     }
 
     /// 群内进行中的通话/直播横条（对齐安卓 GroupActiveBar）
@@ -260,15 +262,12 @@ struct ChatView: View {
         }
         .background(
             ZStack {
-                if let chatBg, let u = APIClient.fullURL(chatBg) {
-                    AsyncImage(url: u) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFill()
-                        } else {
-                            AKColor.bg
-                        }
-                    }
-                    .clipped()
+                if let chatBg {
+                    AKImage(url: chatBg,
+                            size: UIScreen.main.bounds.size,
+                            contentMode: .fill,
+                            placeholder: AKColor.bg)
+                        .clipped()
                     AKColor.bg.opacity(0.42)
                 } else {
                     AKColor.bg
@@ -358,8 +357,10 @@ struct ChatView: View {
                 UserProfileView(uid: target.id, gid: target.gid)
             }
         }
-        .sheet(isPresented: $showForward) {
-            ForwardPickerView(messages: forwardMessages, title: forwardTitle)
+        .sheet(isPresented: $showForward, onDismiss: { Task { await load() } }) {
+            ForwardPickerView(messages: forwardMessages, title: forwardTitle) { ctype, cid, sent in
+                appendForwarded(convType: ctype, convId: cid, message: sent)
+            }
         }
         .sheet(item: $menuTarget) { msg in
             ChatMessageMenuSheet(
@@ -370,7 +371,7 @@ struct ChatView: View {
                 pinned: pinMsgId == msg.id,
                 canRecall: canRecall(msg),
                 canPin: canPin && msg.id > 0 && msg.type != 11,
-                canAddEmoji: msg.type == 5 && msg.fromUid != myId,
+                canAddEmoji: msg.type == 5 && msg.fromUid != myId && isStickerMessage(msg),
                 onPick: { key in handleMenu(key, msg: msg) }
             )
         }
@@ -513,9 +514,18 @@ struct ChatView: View {
         .sheet(isPresented: $showGift) {
             GiftSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
         }
+        .onAppear {
+            /* 正在看的会话不弹本地通知 */
+            LocalNotifier.shared.activeKey = LocalNotifier.shared.key(convType, convId)
+            syncPeerConv()
+        }
+        .onDisappear {
+            LocalNotifier.shared.activeKey = nil
+        }
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
             chatBg = cachedBg()
+            syncPeerConv()
             /* 先把消息拉下来渲染，其余数据并行补齐，避免打开会话卡顿 */
             await load()
 
@@ -561,6 +571,7 @@ struct ChatView: View {
         .onReceive(app.$chatEvent.compactMap { $0 }) { ev in
             handle(ev)
         }
+        .onChange(of: app.conversations) { _ in syncPeerConv() }
         .onChange(of: photoItems) { items in
             guard !items.isEmpty else { return }
             Task {
@@ -628,10 +639,16 @@ struct ChatView: View {
         return messages.firstIndex { $0.id >= unreadAnchor && $0.fromUid != myId } ?? -1
     }
 
+    private var unreadMessageCount: Int {
+        guard unreadAnchor > 0 else { return 0 }
+        var n = 0
+        for m in messages where m.id >= unreadAnchor && m.fromUid != myId { n += 1 }
+        return n
+    }
+
     /// 「以下是新消息 · N 条」分割线（对齐安卓 UnreadDividerRow）
-    private var unreadDivider: some View {
-        let count = messages.filter { unreadAnchor > 0 && $0.id >= unreadAnchor && $0.fromUid != myId }.count
-        return HStack(spacing: 0) {
+    private func unreadDivider(count: Int) -> some View {
+        HStack(spacing: 0) {
             Rectangle().fill(AKColor.line).frame(height: 0.5)
             Text(count > 0 ? "以下是新消息 · \(count) 条" : "以下是新消息")
                 .font(.system(size: 11))
@@ -649,6 +666,18 @@ struct ChatView: View {
             selectedKeys.remove(msg.listKey)
         } else {
             selectedKeys.insert(msg.listKey)
+        }
+    }
+
+    /// 转发成功后把服务端返回的消息直接补进当前会话：服务端推送会排除发送者自己
+    private func appendForwarded(convType: String, convId: Int64, message: Message?) {
+        guard convType == self.convType, convId == self.convId, let message else { return }
+        if message.id != 0, messages.contains(where: { $0.id == message.id }) { return }
+        if let client = message.clientId, !client.isEmpty,
+           messages.contains(where: { $0.clientId == client }) { return }
+        messages.append(message)
+        if message.id > 0 {
+            Task { await app.markRead(convType: self.convType, convId: self.convId, lastId: message.id) }
         }
     }
 
@@ -734,7 +763,14 @@ struct ChatView: View {
 
 
     private var messageList: some View {
+        /* 派生数据一次算好：成员索引、@映射、已读提示、时间分隔都不再逐行重算 */
         let hints = readHints
+        let memberLookup = memberMap
+        let mentions = mentionMap
+        let mentionStamp = mentions.hashValue
+        let dividers = dividerLabels
+        let firstUnread = firstUnreadIndex
+        let unreadCount = unreadMessageCount
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
@@ -766,11 +802,10 @@ struct ChatView: View {
                         .padding(.vertical, 6)
                     }
                     ForEach(Array(messages.enumerated()), id: \.element.listKey) { index, msg in
-                        let prev = index > 0 ? messages[index - 1].createdAt : 0
-                        if index == firstUnreadIndex {
-                            unreadDivider
+                        if index == firstUnread {
+                            unreadDivider(count: unreadCount)
                         }
-                        if let stamp = chatDividerLabel(previous: prev, current: msg.createdAt) {
+                        if let stamp = dividers[msg.listKey] {
                             Text(stamp)
                                 .font(.system(size: 10.5))
                                 .foregroundColor(AKColor.muted)
@@ -784,7 +819,8 @@ struct ChatView: View {
                             if selectMode {
                                 selectCircle(selected: selectedKeys.contains(msg.listKey))
                             }
-                            row(msg, readHint: hints[msg.listKey] ?? 0)
+                            row(msg, member: memberLookup[msg.fromUid], mentionMap: mentions,
+                                mentionStamp: mentionStamp, readHint: hints[msg.listKey] ?? 0)
                         }
                         .id(msg.listKey)
                     }
@@ -978,6 +1014,28 @@ struct ChatView: View {
         return ChatClock.label(current)
     }
 
+    /// 一次算好每条消息的时间分隔标签，避免每行 body 重算时反复格式化时间
+    private var dividerLabels: [String: String] {
+        var out: [String: String] = [:]
+        var previous: Int64 = 0
+        for m in messages {
+            if let label = chatDividerLabel(previous: previous, current: m.createdAt) {
+                out[m.listKey] = label
+            }
+            previous = m.createdAt
+        }
+        return out
+    }
+
+    /// 群成员按 uid 建索引：消息行里不再逐条 first(where:)
+    private var memberMap: [Int64: GroupMember] {
+        guard isGroup, !members.isEmpty else { return [:] }
+        var map: [Int64: GroupMember] = [:]
+        map.reserveCapacity(members.count)
+        for m in members { map[m.uid] = m }
+        return map
+    }
+
     private func isStickerMessage(_ m: Message) -> Bool {
         if (m.clientId ?? "").hasPrefix("sticker_") { return true }
         let s = (m.text?.isEmpty == false ? m.text : m.content) ?? ""
@@ -1127,12 +1185,13 @@ struct ChatView: View {
     }
 
     @ViewBuilder
-    private func row(_ msg: Message, readHint: Int) -> some View {
+    private func row(_ msg: Message, member: GroupMember?, mentionMap: [String: Int64],
+                     mentionStamp: Int, readHint: Int) -> some View {
         ChatMessageRow(
             message: msg,
             mine: msg.fromUid == myId,
             isGroup: isGroup,
-            member: members.first { $0.uid == msg.fromUid },
+            member: member,
             myAvatar: app.user?.avatar,
             myUid: myId,
             myName: app.user?.nickname ?? "我",
@@ -1141,6 +1200,7 @@ struct ChatView: View {
             playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content ?? ""),
             voicePlayed: playedVoice.contains(msg.listKey),
             mentionMap: mentionMap,
+            mentionStamp: mentionStamp,
             onMention: { uid in
                 if uid > 0 { profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0) }
             },
@@ -1156,7 +1216,7 @@ struct ChatView: View {
             },
             onAvatarLongPress: {
                 guard isGroup, msg.fromUid != myId else { return }
-                let name = members.first { $0.uid == msg.fromUid }?.name ?? msg.fromName ?? "成员"
+                let name = member?.name ?? msg.fromName ?? "成员"
                 insertMention(name: name, uid: msg.fromUid)
             },
             onLongPress: {
@@ -1202,6 +1262,7 @@ struct ChatView: View {
                 openAlbum(urls, index: index)
             }
         )
+        .equatable()
         .contentShape(Rectangle())
         .overlay {
             if selectMode {
@@ -1961,7 +2022,7 @@ struct ChatView: View {
 
 /* ---------------- 单条消息 ---------------- */
 
-private struct ChatMessageRow: View {
+private struct ChatMessageRow: View, Equatable {
     let message: Message
     let mine: Bool
     let isGroup: Bool
@@ -1974,6 +2035,8 @@ private struct ChatMessageRow: View {
     let playingVoice: Bool
     var voicePlayed: Bool = true
     var mentionMap: [String: Int64] = [:]
+    /// @ 名单的指纹：成员变化时行会重建，但比较本身不做 O(成员数) 的字典逐项对比
+    var mentionStamp: Int = 0
     var onMention: (Int64) -> Void = { _ in }
     let onVoiceTap: () -> Void
     let onRetry: () -> Void
@@ -2076,7 +2139,12 @@ private struct ChatMessageRow: View {
 
                     bodyView
                         .contentShape(Rectangle())
-                        .onLongPressGesture(minimumDuration: 0.35) { onLongPress() }
+                        // 气泡里的 Text 链接与卡片点击手势会把普通 onLongPressGesture 吃掉，
+                        // 用 simultaneousGesture 让长按与子手势同时识别，文字/图片/卡片都能弹菜单。
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.35)
+                                .onEnded { _ in onLongPress() }
+                        )
 
                     HStack(spacing: 4) {
                         if message.status == 2 {
@@ -2116,6 +2184,22 @@ private struct ChatMessageRow: View {
                 }
             }
         }
+    }
+
+    /// LazyVStack 行复用：数据没变就跳过 body 重算（回调闭包不参与比较）
+    static func == (lhs: ChatMessageRow, rhs: ChatMessageRow) -> Bool {
+        lhs.message == rhs.message
+            && lhs.mine == rhs.mine
+            && lhs.isGroup == rhs.isGroup
+            && lhs.member == rhs.member
+            && lhs.myAvatar == rhs.myAvatar
+            && lhs.myUid == rhs.myUid
+            && lhs.myName == rhs.myName
+            && lhs.peerName == rhs.peerName
+            && lhs.readHint == rhs.readHint
+            && lhs.playingVoice == rhs.playingVoice
+            && lhs.voicePlayed == rhs.voicePlayed
+            && lhs.mentionStamp == rhs.mentionStamp
     }
 }
 

@@ -16,6 +16,7 @@ struct IncomingCall: Identifiable {
 /// 搜索条、通讯录通知条、会话行（44 头像 / 右侧时间与未读窄列 / 置顶底色 / @我）。
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.colorScheme) private var scheme
     @State private var showCreateGroup = false
     @State private var showAddFriend = false
     @State private var showSearch = false
@@ -73,10 +74,18 @@ struct HomeView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await app.refreshConversations() }
-            .task {
+            .refreshable {
+                let t = AKPerf.start()
                 await app.refreshConversations()
+                AKPerf.log("home.refresh", since: t, "\(app.conversations.count) 个会话")
+            }
+            .task {
+                let t = AKPerf.start()
+                await app.refreshConversations()
+                AKPerf.log("home.conversations", since: t, "\(app.conversations.count) 个会话")
+                let c = AKPerf.start()
                 await app.loadContacts()
+                AKPerf.log("home.contacts", since: c)
             }
             .sheet(isPresented: $showScanner) {
                 ScannerView { code in handleScan(code) }
@@ -245,7 +254,8 @@ struct HomeView: View {
                     NavigationLink {
                         ChatView(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
                     } label: {
-                        ConversationRow(conv: conv)
+                        ConversationRow(conv: conv, dark: scheme == .dark)
+                            .equatable()
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -299,13 +309,15 @@ struct HomeView: View {
 }
 
 /// 会话行：严格对齐安卓 ConvRow（44 头像 / 12·8 内边距 / 右侧 44 窄列 / 17 未读圆 / 置顶底色）
-private struct ConversationRow: View {
+/// Equatable：会话数据没变时，首页整体重算（秒回推送/未读变化）不会重建这一行
+private struct ConversationRow: View, Equatable {
     let conv: Conversation
-    @Environment(\.colorScheme) private var scheme
+    /// 由父视图传入而不是读 @Environment，这样深色/浅色切换也能参与 == 比较
+    let dark: Bool
 
     private var rowBg: Color {
         guard conv.isTop == 1 else { return AKColor.card }
-        return scheme == .dark ? Color(hex: 0x1E2128) : Color(hex: 0xF0F2F5)
+        return dark ? Color(hex: 0x1E2128) : Color(hex: 0xF0F2F5)
     }
 
     private var title: String {
@@ -350,6 +362,7 @@ private struct ConversationRow: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(AKColor.text)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                     if conv.isPretty == 1, let no = conv.prettyNo, !no.isEmpty {
                         PrettyBadge(number: no, isGroup: conv.convType == "group")
                     }
@@ -375,7 +388,7 @@ private struct ConversationRow: View {
                         .foregroundColor(.white)
                         .frame(minWidth: 17, minHeight: 17)
                         .background(conv.isMute == 1
-                                    ? (scheme == .dark ? Color(hex: 0x4A4E55) : Color(hex: 0xC7C9CC))
+                                    ? (dark ? Color(hex: 0x4A4E55) : Color(hex: 0xC7C9CC))
                                     : Color(hex: 0xF54D4D))
                         .clipShape(Capsule())
                 } else if conv.isMute == 1 {

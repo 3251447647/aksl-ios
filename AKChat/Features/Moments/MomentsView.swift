@@ -10,15 +10,17 @@ struct MomentsView: View {
     @State private var commentTarget: Moment?
     @State private var deleteTarget: Moment?
     @State private var previewBox: MomentImageBox?
+    /** 点赞乐观状态：调用接口期间先按本地状态渲染，列表刷新后以服务端为准 */
+    @State private var likeOverrides: [Int64: MomentLikeOverride] = [:]
+    @State private var liking: Set<Int64> = []
+    @State private var repostTarget: Moment?
     /** 0=全部动态 1=我的动态 */
     @State private var tab = 0
     @State private var mineMoments: [Moment] = []
     @State private var mineLoading = false
     @State private var coverItem: PhotosPickerItem?
-
-    private var momentUnread: Int {
-        app.conversations.first { $0.convType == "moment" }?.unread ?? 0
-    }
+    /// 朋友圈未读角标：缓存一份，避免每次 body 都 first(where:) 扫会话列表
+    @State private var momentUnread = 0
 
     private var shownMoments: [Moment] {
         tab == 1 ? mineMoments : app.moments
@@ -28,14 +30,10 @@ struct MomentsView: View {
     private var coverHeader: some View {
         ZStack(alignment: .topTrailing) {
             Group {
-                if let u = APIClient.fullURL(app.momentCover), !app.momentCover.isEmpty {
-                    AsyncImage(url: u) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFill()
-                        } else {
-                            AKColor.fill
-                        }
-                    }
+                if APIClient.fullURL(app.momentCover) != nil {
+                    AKImage(url: app.momentCover,
+                            size: CGSize(width: UIScreen.main.bounds.width, height: 200),
+                            contentMode: .fill)
                 } else {
                     LinearGradient(colors: [AKColor.brand, Color(hex: 0x06AD56)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -142,7 +140,9 @@ struct MomentsView: View {
                             onDelete: { deleteTarget = moment },
                             onPreview: { index in
                                 previewBox = MomentImageBox(images: moment.images, index: index)
-                            }
+                            },
+                            likeOverride: likeOverrides[moment.id],
+                            onRepost: { repostTarget = moment }
                         )
                         .padding(.horizontal, 12)
                     }
@@ -199,13 +199,25 @@ struct MomentsView: View {
             guard let item else { return }
             Task { await uploadCover(item) }
         }
-        .task { await app.loadMoments() }
+        .task {
+            syncUnread()
+            let t = AKPerf.start()
+            await app.loadMoments()
+            AKPerf.log("moments.load", since: t, "\(app.moments.count) 条动态")
+        }
+        .onChange(of: app.conversations) { _ in syncUnread() }
         .fullScreenCover(item: $previewBox) { box in
             MomentImagePager(images: box.images, start: box.index)
         }
         .sheet(item: $commentTarget) { m in
             MomentReplySheet(moment: m)
                 .environmentObject(app)
+        }
+        .sheet(item: $repostTarget) { m in
+            RepostMomentSheet(moment: m) {
+                await app.loadMoments()
+                if tab == 1 { await loadMine() }
+            }
         }
         .sheet(isPresented: $showPublish) {
             PublishMomentView { content, images, videoUrl, duration, cover in
@@ -233,22 +245,37 @@ struct MomentsView: View {
     }
 
     private func like(_ moment: Moment) async {
+        guard !liking.contains(moment.id) else { return }
+        liking.insert(moment.id)
+        let base = MomentLikeOverride.current(moment, local: likeOverrides[moment.id])
+        likeOverrides[moment.id] = base.toggled(uid: app.user?.id ?? 0,
+                                                name: app.user?.displayName ?? "我")
         await app.likeMoment(moment)
         if tab == 1 { await loadMine() }
+        likeOverrides.removeValue(forKey: moment.id)
+        liking.remove(moment.id)
     }
 
     private func refresh() async {
+        let t = AKPerf.start()
         await app.loadMoments()
         if tab == 1 { await loadMine() }
+        AKPerf.log("moments.refresh", since: t, "\(shownMoments.count) 条动态")
+    }
+
+    private func syncUnread() {
+        momentUnread = app.conversations.first { $0.convType == "moment" }?.unread ?? 0
     }
 
     private func loadMine() async {
         guard !mineLoading else { return }
         mineLoading = true
         defer { mineLoading = false }
+        let t = AKPerf.start()
         if let data = try? await APIClient.shared.moments(mine: 1) {
             mineMoments = data.list
         }
+        AKPerf.log("moments.mine", since: t, "\(mineMoments.count) 条动态")
     }
 }
 
@@ -274,12 +301,12 @@ struct MomentImagePager: View {
             Color.black.ignoresSafeArea()
             TabView(selection: $index) {
                 ForEach(images.indices, id: \.self) { i in
-                    AsyncImage(url: APIClient.fullURL(images[i])) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFit()
-                        } else {
-                            ProgressView().tint(.white)
-                        }
+                    ZStack {
+                        ProgressView().tint(.white)
+                        AKImage(url: images[i],
+                                size: UIScreen.main.bounds.size,
+                                contentMode: .fit,
+                                placeholder: .clear)
                     }
                     .tag(i)
                 }
@@ -311,6 +338,31 @@ struct MomentImagePager: View {
     }
 }
 
+/// 点赞的本地覆盖值：接口返回前先按它渲染，刷新后丢弃
+struct MomentLikeOverride: Equatable {
+    var liked: Int
+    var likeCount: Int
+    var likes: [MomentLike]
+
+    static func current(_ moment: Moment, local: MomentLikeOverride?) -> MomentLikeOverride {
+        local ?? MomentLikeOverride(liked: moment.liked,
+                                       likeCount: moment.likeCount,
+                                       likes: moment.likes)
+    }
+
+    /// 与安卓 toggleLike 同一口径：心形取反、计数保底 0、名单按 uid 增删
+    func toggled(uid: Int64, name: String) -> MomentLikeOverride {
+        let turnOn = liked != 1
+        var next = likes.filter { $0.uid != uid }
+        if turnOn {
+            next.append(MomentLike(uid: uid, name: name))
+        }
+        return MomentLikeOverride(liked: turnOn ? 1 : 0,
+                                  likeCount: max(0, likeCount + (turnOn ? 1 : -1)),
+                                  likes: next)
+    }
+}
+
 /// 一条动态：头像 40 + 右侧整列（名字、时间、正文、图片、视频、操作行、互动块），与安卓 MomentItem 同构
 struct MomentCard: View {
     let moment: Moment
@@ -320,11 +372,17 @@ struct MomentCard: View {
     var onDelete: (() -> Void)? = nil
     /// 点图放大；列表与详情都传
     var onPreview: ((Int) -> Void)? = nil
+    /// 点赞乐观覆盖：列表与详情共用
+    var likeOverride: MomentLikeOverride? = nil
+    var onRepost: (() -> Void)? = nil
 
     @State private var expanded = false
     @State private var playVideo = false
 
     private var images: [String] { Array(moment.images.prefix(9)) }
+    private var liked: Bool { (likeOverride?.liked ?? moment.liked) == 1 }
+    private var likeCount: Int { likeOverride?.likeCount ?? moment.likeCount }
+    private var likeList: [MomentLike] { likeOverride?.likes ?? moment.likes }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -382,7 +440,7 @@ struct MomentCard: View {
 
                 actionRow
 
-                if !moment.likes.isEmpty || !moment.comments.isEmpty {
+                if !likeList.isEmpty || !moment.comments.isEmpty {
                     interactions.padding(.top, 8)
                 }
             }
@@ -396,7 +454,7 @@ struct MomentCard: View {
     @ViewBuilder
     private var imageGrid: some View {
         if images.count == 1 {
-            tile(path: images[0], index: 0)
+            tile(path: images[0], index: 0, side: 231)
                 .frame(width: 210, height: 231)
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -408,7 +466,7 @@ struct MomentCard: View {
                 ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
                     Color.clear
                         .aspectRatio(1, contentMode: .fit)
-                        .overlay(tile(path: path, index: idx))
+                        .overlay(tile(path: path, index: idx, side: cols == 2 ? 170 : 110))
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
@@ -416,30 +474,22 @@ struct MomentCard: View {
         }
     }
 
-    private func tile(path: String, index: Int) -> some View {
-        AsyncImage(url: APIClient.fullURL(path)) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFill()
-            } else {
-                AKColor.fill
-            }
-        }
-        .clipped()
-        .contentShape(Rectangle())
-        .onTapGesture { onPreview?(index) }
+    /// side：目标展示边长（pt），只用于选择解码像素
+    private func tile(path: String, index: Int, side: CGFloat) -> some View {
+        AKImage(url: path, size: side)
+            .clipped()
+            .contentShape(Rectangle())
+            .onTapGesture { onPreview?(index) }
     }
 
     private var videoCell: some View {
         ZStack {
-            if let u = APIClient.fullURL(moment.videoCover.isEmpty ? moment.videoUrl : moment.videoCover) {
-                AsyncImage(url: u) { phase in
-                    if let img = phase.image {
-                        img.resizable().scaledToFill()
-                    } else {
-                        Color.black.opacity(0.85)
-                    }
-                }
+            if !moment.videoCover.isEmpty {
+                AKImage(url: moment.videoCover,
+                        size: CGSize(width: 210, height: 240),
+                        placeholder: Color.black.opacity(0.85))
             } else {
+                /* 没封面直接黑底：视频地址交给图片解码器也画不出帧，不白花一次下载 */
                 Color.black.opacity(0.85)
             }
             Circle()
@@ -479,11 +529,17 @@ struct MomentCard: View {
     private var actionRow: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            Text("转发")
-                .font(.system(size: 12))
-                .foregroundColor(AKColor.link)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
+            Button {
+                onRepost?()
+            } label: {
+                Text("转发")
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.link)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+            }
+            .buttonStyle(.plain)
+            .disabled(onRepost == nil)
             Button(action: onComment) {
                 HStack(spacing: 3) {
                     Image(systemName: "bubble.left")
@@ -499,13 +555,13 @@ struct MomentCard: View {
             .buttonStyle(.plain)
             Button(action: onLike) {
                 HStack(spacing: 3) {
-                    Image(systemName: moment.liked == 1 ? "heart.fill" : "heart")
+                    Image(systemName: liked ? "heart.fill" : "heart")
                         .font(.system(size: 18, weight: .regular))
-                    if moment.likeCount > 0 {
-                        Text("\(moment.likeCount)").font(.system(size: 12))
+                    if likeCount > 0 {
+                        Text("\(likeCount)").font(.system(size: 12))
                     }
                 }
-                .foregroundColor(moment.liked == 1 ? AKColor.red : AKColor.muted)
+                .foregroundColor(liked ? AKColor.red : AKColor.muted)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
             }
@@ -526,20 +582,20 @@ struct MomentCard: View {
     /// 灰底点赞+评论块
     private var interactions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !moment.likes.isEmpty {
+            if !likeList.isEmpty {
                 HStack(alignment: .top, spacing: 5) {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 13))
                         .foregroundColor(AKColor.red)
                         .padding(.top, 2)
-                    Text(moment.likes.compactMap { $0.name }.joined(separator: "、"))
+                    Text(likeList.compactMap { $0.name }.joined(separator: "、"))
                         .font(.system(size: 13))
                         .foregroundColor(AKColor.link)
                         .lineSpacing(3)
                 }
             }
             if !moment.comments.isEmpty {
-                if !moment.likes.isEmpty {
+                if !likeList.isEmpty {
                     Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.vertical, 6)
                 }
                 ForEach(moment.comments) { c in
@@ -761,14 +817,10 @@ private struct PublishMomentView: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topTrailing) {
                 Group {
-                    if let u = APIClient.fullURL(videoCover) {
-                        AsyncImage(url: u) { phase in
-                            if let img = phase.image {
-                                img.resizable().scaledToFill()
-                            } else {
-                                Color.black
-                            }
-                        }
+                    if APIClient.fullURL(videoCover) != nil {
+                        AKImage(url: videoCover,
+                                size: CGSize(width: 150, height: 150),
+                                placeholder: Color.black)
                     } else {
                         Color.black
                     }

@@ -661,7 +661,7 @@ struct TransferSheet: View {
 
 /* ================= 送礼物 ================= */
 
-/// 送礼物：分类 + 礼物网格 + 数量 + 支付密码（对齐安卓 GiftDialog）
+/// 送礼物：礼券头部（收礼人）+ 分类 + 四列宫格 + 底部数量/余额/赠送（对齐安卓 GiftDialog）
 struct GiftSheet: View {
     let convType: String
     let convId: Int64
@@ -679,10 +679,13 @@ struct GiftSheet: View {
     @State private var members: [GroupMember] = []
     @State private var loadingMembers = false
     @State private var balance: Int64?
+    @State private var loadingGifts = true
+    @State private var loadFailed = false
     @State private var busy = false
     @State private var errorText: String?
+    @State private var pulse = false
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
 
     private var isGroup: Bool { convType == "group" }
     private var myId: Int64 { app.user?.id ?? 0 }
@@ -692,114 +695,294 @@ struct GiftSheet: View {
     private var total: Int {
         (picked?.coin ?? 0) * count
     }
+    private var maxCount: Int {
+        picked?.type == "pretty" ? 1 : 99
+    }
+    private var pickedMember: GroupMember? {
+        members.first { $0.uid == toUid }
+    }
+    private var conv: Conversation? {
+        app.conversations.first { $0.convType == convType && $0.convId == convId }
+    }
+    private var receiverName: String {
+        if isGroup { return pickedMember?.name ?? "请选择收礼人" }
+        let name = conv?.name ?? ""
+        return name.isEmpty ? "对方" : name
+    }
+    private var receiverAvatar: String? {
+        isGroup ? pickedMember?.avatar : conv?.avatar
+    }
     private var balanceText: String {
-        let text = balance.map { String($0) } ?? "--"
-        return "余额 \(text) K币"
+        (balance.map { String($0) } ?? "--") + " K币"
     }
 
     var body: some View {
         VStack(spacing: 0) {
             PaySheetHeader(title: "送礼物") { dismiss() }
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(spacing: 12) {
+                    receiverCard
+
                     if isGroup {
                         PayMemberPicker(members: members, picked: $toUid, loading: loadingMembers)
-                        Spacer().frame(height: 10)
                     }
 
-                    if !categories.isEmpty {
+                    if !loadingGifts && !categories.isEmpty {
                         categoryChips
-                        Spacer().frame(height: 10)
                     }
 
-                    if list.isEmpty {
-                        HStack {
-                            Spacer()
-                            Text("该分类暂无礼物")
-                                .font(.system(size: 12.5))
-                                .foregroundColor(AKColor.muted)
-                            Spacer()
-                        }
-                        .frame(height: 150)
-                    } else {
-                        ScrollView {
-                            LazyVGrid(columns: columns, spacing: 8) {
-                                ForEach(list, id: \.stableKey) { g in
-                                    giftCell(g)
-                                }
-                            }
-                            .padding(.vertical, 1)
-                        }
-                        .frame(height: min(CGFloat((list.count + 3) / 4) * 86, 250))
-                        .scrollIndicators(.hidden)
-                    }
+                    giftGrid
 
-                    Spacer().frame(height: 10)
-                    HStack(spacing: 6) {
-                        Text(balanceText)
-                            .font(.system(size: 11.5))
-                            .foregroundColor(AKColor.muted)
-                        Spacer(minLength: 6)
-                        Text("数量")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(AKColor.muted)
-                        Button {
-                            if count > 1 { count -= 1 }
-                        } label: {
-                            Text("−")
-                                .font(.system(size: 15))
-                                .foregroundColor(AKColor.text)
-                                .frame(width: 28, height: 28)
-                                .background(AKColor.fill)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        Text("\(count)")
-                            .font(.system(size: 13))
-                            .foregroundColor(AKColor.text)
-                            .frame(minWidth: 20)
-                        Button {
-                            let max = picked?.type == "pretty" ? 1 : 99
-                            if count < max { count += 1 }
-                        } label: {
-                            Text("+")
-                                .font(.system(size: 15))
-                                .foregroundColor(AKColor.text)
-                                .frame(width: 28, height: 28)
-                                .background(AKColor.fill)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    Spacer().frame(height: 8)
                     PayInputField(placeholder: "支付密码", text: $password, limit: 8,
                                   fontSize: 14, weight: .regular, height: 44, secure: true)
 
                     if let errorText, !errorText.isEmpty {
-                        Spacer().frame(height: 10)
                         PayErrorLine(text: errorText)
-                    }
-
-                    Spacer().frame(height: 14)
-                    PayGradientButton(title: total > 0 ? "赠送 · \(total) K币" : "赠送",
-                                      colors: [AKColor.gold, Color(hex: 0xE0900F)],
-                                      busy: busy) {
-                        Task { await send() }
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+                .padding(.bottom, 14)
             }
             .scrollDismissesKeyboard(.interactively)
+
+            footerBar
         }
         .background(AKColor.card)
         .presentationDragIndicator(.visible)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
         .task {
             await loadGifts()
             await loadBalance()
             if isGroup { await loadMembers() }
         }
+    }
+
+    // MARK: - 礼券头部
+
+    /// 顶部礼券：收礼人 + K币余额（私聊取会话信息，群聊取已选成员）
+    private var receiverCard: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                LinearGradient(colors: [Color(hex: 0xFFD98A), Color(hex: 0xFFB020)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                Text("礼")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 46, height: 46)
+            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(isGroup ? "礼物送给" : "送礼物给")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.muted)
+                HStack(spacing: 6) {
+                    if isGroup && pickedMember == nil {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(AKColor.placeholder)
+                    } else {
+                        AvatarView(url: receiverAvatar, name: receiverName, size: 20)
+                            .clipShape(Circle())
+                    }
+                    Text(receiverName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(AKColor.text)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AKColor.goldSoft)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AKColor.gold.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    // MARK: - 礼物宫格
+
+    @ViewBuilder
+    private var giftGrid: some View {
+        if loadingGifts {
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(0..<8, id: \.self) { _ in
+                    skeletonCell
+                }
+            }
+        } else if list.isEmpty {
+            emptyView
+        } else {
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(list, id: \.stableKey) { g in
+                    giftCell(g)
+                }
+            }
+        }
+    }
+
+    private var skeletonCell: some View {
+        VStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(AKColor.fill)
+                .frame(width: 56, height: 56)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(AKColor.fill)
+                .frame(height: 10)
+                .padding(.horizontal, 6)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(AKColor.fill)
+                .frame(width: 38, height: 9)
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .opacity(pulse ? 0.55 : 1)
+    }
+
+    private var emptyView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "gift")
+                .font(.system(size: 34, weight: .light))
+                .foregroundColor(AKColor.placeholder)
+            Text(loadFailed ? "礼物列表加载失败" : "该分类暂无礼物")
+                .font(.system(size: 13))
+                .foregroundColor(AKColor.muted)
+            if loadFailed {
+                Button {
+                    Task { await loadGifts() }
+                } label: {
+                    Text("重新加载")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundColor(AKColor.gold)
+                        .padding(.horizontal, 16)
+                        .frame(height: 32)
+                        .background(AKColor.card)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 190)
+        .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func giftCell(_ g: GiftItem) -> some View {
+        let on = picked?.type == g.type && picked?.id == g.id
+        let isPretty = g.type == "pretty"
+        return Button {
+            picked = g
+            if g.type != "vip" { count = 1 }
+        } label: {
+            VStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(isPretty ? AKColor.redSoft : AKColor.goldSoft)
+                    LinearGradient(colors: isPretty
+                                    ? [Color(hex: 0xFF7A8D), Color(hex: 0xFF4D6D)]
+                                    : [Color(hex: 0xFFD98A), Color(hex: 0xFFB020)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(6)
+                    Text(isPretty ? "靓" : "👑")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 56, height: 56)
+
+                Text(g.name)
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Text("\(g.coin) K币")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(AKColor.gold)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity)
+            .background(on ? AKColor.goldSoft : AKColor.fill)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(on ? AKColor.gold : Color.clear, lineWidth: 1.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 底部数量与赠送
+
+    private var footerBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Text("数量")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                stepperButton("−", enabled: count > 1) {
+                    if count > 1 { count -= 1 }
+                }
+                Text("\(count)")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+                    .frame(minWidth: 34)
+                stepperButton("+", enabled: count < maxCount) {
+                    if count < maxCount { count += 1 }
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("K币余额")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(AKColor.muted)
+                    Text(balanceText)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(AKColor.gold)
+                }
+            }
+
+            PayGradientButton(title: total > 0 ? "赠送 · \(total) K币" : "赠送",
+                              colors: [AKColor.gold, Color(hex: 0xE0900F)],
+                              busy: busy) {
+                Task { await send() }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(AKColor.card)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AKColor.line)
+                .frame(height: 0.5)
+        }
+    }
+
+    private func stepperButton(_ title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(enabled ? AKColor.text : AKColor.placeholder)
+                .frame(width: 32, height: 32)
+                .background(AKColor.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
     private var categoryChips: some View {
@@ -827,44 +1010,18 @@ struct GiftSheet: View {
         .scrollIndicators(.hidden)
     }
 
-    private func giftCell(_ g: GiftItem) -> some View {
-        let on = picked?.type == g.type && picked?.id == g.id
-        let isPretty = g.type == "pretty"
-        return Button {
-            picked = g
-            if g.type != "vip" { count = 1 }
-        } label: {
-            VStack(spacing: 5) {
-                Text(isPretty ? "靓" : "👑")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(isPretty ? AKColor.red : AKColor.gold)
-                    .frame(width: 34, height: 34)
-                    .background(isPretty ? AKColor.redSoft : AKColor.goldSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Text(g.name)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.text)
-                    .lineLimit(1)
-                Text("\(g.coin) K币")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(AKColor.gold)
-            }
-            .padding(.vertical, 9)
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity)
-            .background(on ? AKColor.goldSoft : AKColor.fill)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
     private func loadGifts() async {
-        if let data = try? await APIClient.shared.gifts() {
+        loadingGifts = true
+        defer { loadingGifts = false }
+        do {
+            let data = try await APIClient.shared.gifts()
             gifts = data.list
             categories = data.categories
+            loadFailed = false
+        } catch {
+            loadFailed = true
         }
-        if categories.isEmpty {
+        if categories.isEmpty && !gifts.isEmpty {
             categories = [GiftCategory(id: 0, name: "全部礼物", gifts: gifts)]
         }
         if !categories.indices.contains(catIndex) { catIndex = 0 }

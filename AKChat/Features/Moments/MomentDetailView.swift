@@ -13,6 +13,9 @@ struct MomentDetailView: View {
     @State private var previewBox: MomentImageBox?
     @State private var showDelete = false
     @State private var gone = false
+    @State private var likeOverride: MomentLikeOverride?
+    @State private var liking = false
+    @State private var repostTarget: Moment?
 
     /// 点赞/评论后 AppState 会重新拉列表，这里始终渲染最新一条
     private var current: Moment {
@@ -35,12 +38,14 @@ struct MomentDetailView: View {
                         MomentCard(
                             moment: current,
                             isMine: mine,
-                            onLike: { Task { await app.likeMoment(current) } },
+                            onLike: { Task { await toggleLike() } },
                             onComment: { composing = true },
                             onDelete: { showDelete = true },
                             onPreview: { idx in
                                 previewBox = MomentImageBox(images: current.images, index: idx)
-                            }
+                            },
+                            likeOverride: likeOverride,
+                            onRepost: { repostTarget = current }
                         )
                         .padding(12)
                     }
@@ -61,6 +66,11 @@ struct MomentDetailView: View {
             }
             .fullScreenCover(item: $previewBox) { box in
                 MomentImagePager(images: box.images, start: box.index)
+            }
+            .sheet(item: $repostTarget) { m in
+                RepostMomentSheet(moment: m) {
+                    await app.loadMoments()
+                }
             }
             .alert("删除动态", isPresented: $showDelete) {
                 Button("删除", role: .destructive) {
@@ -140,6 +150,21 @@ struct MomentDetailView: View {
             await app.commentMoment(current, content: content)
             text = ""
             composing = false
+        }
+    }
+
+    /// 点赞：先本地取反渲染，再用 /moments/like 的结果刷新校准
+    private func toggleLike() async {
+        guard !liking else { return }
+        liking = true
+        defer { liking = false }
+        let m = current
+        let base = MomentLikeOverride.current(m, local: likeOverride)
+        likeOverride = base.toggled(uid: app.user?.id ?? 0,
+                                    name: app.user?.displayName ?? "我")
+        await app.likeMoment(m)
+        if app.moments.contains(where: { $0.id == m.id }) {
+            likeOverride = nil
         }
     }
 }

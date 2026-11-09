@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 我的收藏：搜索 + 整屏白底列表 + 详情页（对齐安卓 FavoritesScreen）
+/// 我的收藏：搜索 + 整屏列表 + 收藏详情（对齐安卓 FavoritesScreen）
 struct FavoritesView: View {
     @State private var items: [FavoriteItem] = []
     @State private var page = 1
@@ -12,45 +12,30 @@ struct FavoritesView: View {
     @State private var query = ""
     @State private var detailItem: FavoriteItem?
     @State private var deleteTarget: FavoriteItem?
+    /// FavoriteItem 是 Core 的只读模型：编辑后的正文按 id 覆盖，避免整页重拉
+    @State private var editedContent: [Int64: String] = [:]
 
     private var shown: [FavoriteItem] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return items }
         return items.filter {
-            $0.content.localizedCaseInsensitiveContains(q)
+            content($0).localizedCaseInsensitiveContains(q)
                 || $0.fromName.localizedCaseInsensitiveContains(q)
                 || $0.convName.localizedCaseInsensitiveContains(q)
         }
     }
 
+    private func content(_ item: FavoriteItem) -> String {
+        editedContent[item.id] ?? item.content
+    }
+
     var body: some View {
         List {
             if !items.isEmpty {
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16))
-                        .foregroundColor(AKColor.hint)
-                    TextField("搜索收藏内容 / 来源", text: $query)
-                        .font(.system(size: 13.5))
-                        .foregroundColor(AKColor.text)
-                    if !query.isEmpty {
-                        Button {
-                            query = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 15))
-                                .foregroundColor(AKColor.hint)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .background(AKColor.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
+                searchBar
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
 
             if loading {
@@ -61,6 +46,7 @@ struct FavoritesView: View {
                     .listRowBackground(Color.clear)
             } else if items.isEmpty {
                 emptyState
+                    .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else if shown.isEmpty {
@@ -72,11 +58,18 @@ struct FavoritesView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(shown.indices, id: \.self) { index in
-                    row(shown[index], last: index == shown.count - 1)
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                    row(item, last: index == shown.count - 1)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         .listRowBackground(AKColor.card)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                deleteTarget = item
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
                 }
                 if hasMore {
                     Button {
@@ -110,7 +103,11 @@ struct FavoritesView: View {
         .reportsDetailPage()
         .navigationTitle("我的收藏")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
+            }
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 6) {
                     Text("我的收藏")
@@ -125,15 +122,18 @@ struct FavoritesView: View {
             }
         }
         .task { await load() }
-        .sheet(item: $detailItem) { item in
-            FavoriteDetailView(item: item,
-                               onCopy: {
-                                   UIPasteboard.general.string = Self.favoriteText(item)
-                               },
-                               onDelete: {
-                                   detailItem = nil
-                                   deleteTarget = item
-                               })
+        .navigationDestination(isPresented: Binding(
+            get: { detailItem != nil },
+            set: { if !$0 { detailItem = nil } }
+        )) {
+            if let item = detailItem {
+                FavoriteDetailView(
+                    item: item,
+                    content: content(item),
+                    onSave: { text in await saveEdit(item, text) },
+                    onDelete: { await remove(item) }
+                )
+            }
         }
         .alert("删除这条收藏？", isPresented: Binding(
             get: { deleteTarget != nil },
@@ -148,6 +148,31 @@ struct FavoritesView: View {
         } message: {
             Text("删除后无法恢复。")
         }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15))
+                .foregroundColor(AKColor.hint)
+            TextField("搜索收藏内容 / 来源", text: $query)
+                .font(.system(size: 13.5))
+                .foregroundColor(AKColor.text)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.hint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var emptyState: some View {
@@ -171,38 +196,37 @@ struct FavoritesView: View {
     private func row(_ item: FavoriteItem, last: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon(for: item.type))
-                    .font(.system(size: 16))
-                    .foregroundColor(AKColor.brand)
-                    .frame(width: 42, height: 42)
-                    .background(AKColor.brandSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(alignment: .top, spacing: 10) {
+                    AvatarView(url: nil, name: item.fromName.isEmpty ? "未知" : item.fromName, size: 42)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Text(item.fromName.isEmpty ? "未知" : item.fromName)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(AKColor.text)
-                            .lineLimit(1)
-                        Text(Self.typeLabel(item.type))
-                            .font(.system(size: 10))
-                            .foregroundColor(AKColor.brandDark)
-                        if !item.convName.isEmpty {
-                            Text("· \(item.convName)")
-                                .font(.system(size: 10))
-                                .foregroundColor(AKColor.muted)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 6) {
+                            Text(item.fromName.isEmpty ? "未知" : item.fromName)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(AKColor.text)
                                 .lineLimit(1)
+                            if !item.convName.isEmpty {
+                                Text("· \(item.convName)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(AKColor.muted)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
                         }
+                        .padding(.bottom, 5)
+
+                        summary(item)
+
+                        Text(Self.timeText(item.createdAt))
+                            .font(.system(size: 10.5))
+                            .foregroundColor(AKColor.placeholder)
+                            .padding(.top, 6)
                     }
-                    Text(summary(item))
-                        .font(.system(size: 13))
-                        .foregroundColor(AKColor.sub)
-                        .lineLimit(3)
-                    Text(Self.timeText(item.createdAt))
-                        .font(.system(size: 10.5))
-                        .foregroundColor(AKColor.placeholder)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { detailItem = item }
 
                 Button {
                     deleteTarget = item
@@ -216,8 +240,6 @@ struct FavoritesView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .contentShape(Rectangle())
-            .onTapGesture { detailItem = item }
 
             if !last {
                 Rectangle()
@@ -228,43 +250,47 @@ struct FavoritesView: View {
         }
     }
 
-    private func icon(for type: Int) -> String {
-        switch type {
-        case 5: return "photo"
-        case 6: return "waveform"
-        case 7, 21: return "yensign.circle"
-        case 8, 22: return "arrow.left.arrow.right"
-        case 9, 23: return "gift"
-        case 12, 13: return "person.crop.rectangle"
-        case 15: return "video"
-        case 18: return "doc"
-        default: return "text.alignleft"
-        }
-    }
-
-    private func summary(_ item: FavoriteItem) -> String {
+    @ViewBuilder
+    private func summary(_ item: FavoriteItem) -> some View {
         switch item.type {
-        case 5: return "[图片]"
-        case 6: return "[语音]"
-        case 7, 21: return "[红包]"
-        case 8, 22: return "[转账]"
-        case 9, 23: return "[礼物]"
-        case 12: return "[个人名片]"
-        case 13: return "[群名片]"
-        case 15: return "[视频]"
-        case 18: return "[文件]"
-        case 14: return "[通话]"
-        case 17: return "[聊天记录]"
-        default: return Self.favoriteText(item)
+        case 5:
+            AsyncImage(url: Self.mediaURL(content(item))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    AKColor.fill
+                }
+            }
+            .frame(width: 110, height: 110)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        case 6:
+            Text("语音消息")
+                .font(.system(size: 13))
+                .foregroundColor(AKColor.sub)
+        case 10:
+            Text(Self.favoriteText(content(item)))
+                .font(.system(size: 13))
+                .foregroundColor(AKColor.sub)
+                .lineLimit(3)
+        default:
+            Text(content(item))
+                .font(.system(size: 13))
+                .foregroundColor(AKColor.sub)
+                .lineLimit(3)
         }
     }
 
-    static func favoriteText(_ item: FavoriteItem) -> String {
-        let raw = item.content
+    static func favoriteText(_ raw: String) -> String {
         if let r = raw.range(of: "|#|", options: .backwards) {
             return String(raw[r.upperBound...])
         }
         return raw
+    }
+
+    static func mediaURL(_ raw: String) -> URL? {
+        let path = raw.components(separatedBy: "|#|").first ?? raw
+        return APIClient.fullURL(path.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     static func typeLabel(_ type: Int) -> String {
@@ -294,6 +320,7 @@ struct FavoritesView: View {
             items = data.list
             hasMore = data.hasMore == 1
             page = 1
+            editedContent = [:]
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -315,144 +342,197 @@ struct FavoritesView: View {
         }
     }
 
+    private func saveEdit(_ item: FavoriteItem, _ text: String) async -> String? {
+        let value = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(5000))
+        guard !value.isEmpty else { return "内容不能为空" }
+        do {
+            _ = try await APIClient.shared.postRaw(
+                "api/v1/favorites/update",
+                body: ["id": item.id, "content": value]
+            )
+            editedContent[item.id] = value
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     private func remove(_ item: FavoriteItem) async {
         items.removeAll { $0.id == item.id }
+        editedContent.removeValue(forKey: item.id)
         await APIClient.shared.deleteFavorite(id: item.id)
     }
 }
 
-/// 收藏详情整页：内容 + 复制 / 删除
+/// 收藏详情整页：内容 + 编辑 / 转发 / 复制 / 删除（对齐安卓 FavoriteDetail）
 private struct FavoriteDetailView: View {
     let item: FavoriteItem
-    let onCopy: () -> Void
-    let onDelete: () -> Void
+    let onSave: (String) async -> String?
+    let onDelete: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var editing = false
+    @State private var draft: String
     @State private var preview = false
+    @State private var confirmDelete = false
+    @State private var showForward = false
+    @State private var saving = false
+    @State private var toastText: String?
 
-    private var text: String { FavoritesView.favoriteText(item) }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 10) {
-                        Image(systemName: icon)
-                            .font(.system(size: 16))
-                            .foregroundColor(AKColor.brand)
-                            .frame(width: 36, height: 36)
-                            .background(AKColor.brandSoft)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.fromName.isEmpty ? "未知" : item.fromName)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(AKColor.text)
-                            Text(sourceLine)
-                                .font(.system(size: 11))
-                                .foregroundColor(AKColor.muted)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.vertical, 12)
-
-                    if item.type == 5 {
-                        AsyncImage(url: APIClient.fullURL(item.content)) { phase in
-                            if let img = phase.image {
-                                img.resizable().scaledToFit()
-                            } else {
-                                AKColor.fill
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 260)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .onTapGesture { preview = true }
-                    } else if item.type == 6 {
-                        Text("语音消息").font(.system(size: 14)).foregroundColor(AKColor.sub)
-                    } else if item.type == 15 {
-                        Text("视频消息").font(.system(size: 14)).foregroundColor(AKColor.sub)
-                    } else {
-                        Text(text)
-                            .font(.system(size: 15))
-                            .foregroundColor(AKColor.text)
-                            .lineSpacing(7)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    Text(FavoritesView.timeText(item.createdAt))
-                        .font(.system(size: 11))
-                        .foregroundColor(AKColor.placeholder)
-                        .padding(.top, 14)
-                }
-                .padding(14)
-            }
-            .background(AKColor.bg)
-            .navigationTitle("收藏详情")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Image(systemName: "trash").foregroundColor(AKColor.red)
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 10) {
-                    action("复制", enabled: item.type != 5 && item.type != 6 && item.type != 15) {
-                        onCopy()
-                    }
-                    action("删除", danger: true) {
-                        onDelete()
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(AKColor.card)
-            }
-            .fullScreenCover(isPresented: $preview) {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    AsyncImage(url: APIClient.fullURL(item.content)) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFit()
-                        } else {
-                            ProgressView().tint(.white)
-                        }
-                    }
-                    VStack {
-                        HStack {
-                            Spacer()
-                            Button("关闭") { preview = false }
-                                .foregroundColor(.white)
-                        }
-                        .padding()
-                        Spacer()
-                    }
-                }
-            }
-        }
+    init(item: FavoriteItem,
+         content: String,
+         onSave: @escaping (String) async -> String?,
+         onDelete: @escaping () async -> Void) {
+        self.item = item
+        self.onSave = onSave
+        self.onDelete = onDelete
+        _text = State(initialValue: content)
+        _draft = State(initialValue: content)
     }
 
-    private var icon: String {
-        switch item.type {
-        case 5: return "photo"
-        case 6: return "waveform"
-        case 15: return "video"
-        default: return "text.alignleft"
-        }
+    private var name: String { item.fromName.isEmpty ? "未知" : item.fromName }
+    private var isMedia: Bool { item.type == 5 || item.type == 6 || item.type == 15 }
+    private var editable: Bool { !isMedia }
+    /// 引用消息的正文取 |#| 之后；媒体保持原始地址
+    private var displayText: String {
+        isMedia ? text : FavoritesView.favoriteText(text)
     }
 
     private var sourceLine: String {
         var parts: [String] = []
-        if !item.convName.isEmpty { parts.append("来源 \(item.convName)") }
+        if !item.convName.isEmpty { parts.append(item.convName) }
         parts.append(FavoritesView.typeLabel(item.type))
         return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    AvatarView(url: nil, name: name, size: 36)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(name)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AKColor.text)
+                        Text(sourceLine)
+                            .font(.system(size: 11))
+                            .foregroundColor(AKColor.muted)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Rectangle()
+                    .fill(AKColor.line)
+                    .frame(height: 0.5)
+                    .padding(.vertical, 12)
+
+                if item.type == 5 {
+                    AsyncImage(url: FavoritesView.mediaURL(text)) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFit()
+                        } else {
+                            AKColor.fill
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 260)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture { preview = true }
+                } else if item.type == 6 {
+                    Text("语音消息")
+                        .font(.system(size: 14))
+                        .foregroundColor(AKColor.sub)
+                } else if item.type == 15 {
+                    Text("视频消息")
+                        .font(.system(size: 14))
+                        .foregroundColor(AKColor.sub)
+                } else {
+                    Text(displayText)
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.text)
+                        .lineSpacing(7)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text(FavoritesView.timeText(item.createdAt))
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.placeholder)
+                    .padding(.top, 14)
+            }
+            .padding(14)
+        }
+        .background(AKColor.bg)
+        .reportsDetailPage()
+        .navigationTitle("收藏详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    confirmDelete = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(AKColor.red)
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) { bottomBar }
+        .overlay(alignment: .bottom) { toastView }
+        .fullScreenCover(isPresented: $preview) { previewView }
+        .sheet(isPresented: $showForward) {
+            ForwardPickerView(
+                messages: [Self.forwardMessage(item, content: text)],
+                screenTitle: "转发收藏",
+                subtitleOverride: "选择会话，把这条收藏发过去"
+            )
+        }
+        .alert("编辑收藏", isPresented: $editing) {
+            TextField("收藏内容", text: $draft)
+            Button("保存") { Task { await saveEdit() } }
+            Button("取消", role: .cancel) { draft = displayText }
+        } message: {
+            Text("文字类收藏可编辑，最多 5000 字")
+        }
+        .alert("删除这条收藏？", isPresented: $confirmDelete) {
+            Button("删除", role: .destructive) {
+                Task {
+                    await onDelete()
+                    dismiss()
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("删除后无法恢复。")
+        }
+    }
+
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            action("编辑", enabled: editable) {
+                draft = displayText
+                editing = true
+            }
+            action("转发") {
+                showForward = true
+            }
+            action("复制", enabled: !isMedia) {
+                UIPasteboard.general.string = displayText
+                showToast("已复制")
+            }
+            action("删除", danger: true) {
+                confirmDelete = true
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AKColor.card)
     }
 
     private func action(_ title: String, enabled: Bool = true, danger: Bool = false,
@@ -468,5 +548,74 @@ private struct FavoriteDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+
+    private var previewView: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            AsyncImage(url: FavoritesView.mediaURL(text)) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFit()
+                } else {
+                    ProgressView().tint(.white)
+                }
+            }
+            VStack {
+                HStack {
+                    Spacer()
+                    Button("关闭") { preview = false }
+                        .foregroundColor(.white)
+                }
+                .padding()
+                Spacer()
+            }
+        }
+    }
+
+    private var toastView: some View {
+        Group {
+            if let toastText {
+                Text(toastText)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color(hex: 0x1A1D26).opacity(0.88))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 76)
+            }
+        }
+    }
+
+    private func saveEdit() async {
+        guard !saving else { return }
+        let value = String(draft.trimmingCharacters(in: .whitespacesAndNewlines).prefix(5000))
+        guard !value.isEmpty else {
+            showToast("内容不能为空")
+            return
+        }
+        saving = true
+        defer { saving = false }
+        if let error = await onSave(value) {
+            showToast(error)
+        } else {
+            text = value
+            editing = false
+            showToast("已保存")
+        }
+    }
+
+    private func showToast(_ message: String) {
+        toastText = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            if toastText == message { toastText = nil }
+        }
+    }
+
+    private static func forwardMessage(_ item: FavoriteItem, content: String) -> Message {
+        Message(local: "private", convId: 0, fromUid: 0,
+                type: item.type, content: content, localId: -1)
     }
 }

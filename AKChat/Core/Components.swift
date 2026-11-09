@@ -1,4 +1,56 @@
 import SwiftUI
+import UIKit
+
+/// 统一网络图片视图：内存 NSCache + 磁盘 URLCache + 按目标尺寸降采样，下载最多 4 并发。
+/// `size` 只用于决定解码像素，不参与布局；布局仍由调用方的 frame 决定。
+struct AKImage: View {
+    let url: String?
+    let size: CGSize
+    var contentMode: ContentMode = .fill
+    var placeholder: Color = AKColor.fill
+
+    @StateObject private var model = AKImageModel()
+
+    init(url: String?, size: CGSize, contentMode: ContentMode = .fill, placeholder: Color = AKColor.fill) {
+        self.url = url
+        self.size = size
+        self.contentMode = contentMode
+        self.placeholder = placeholder
+    }
+
+    init(url: String?, size: CGFloat, contentMode: ContentMode = .fill, placeholder: Color = AKColor.fill) {
+        self.init(url: url, size: CGSize(width: size, height: size),
+                  contentMode: contentMode, placeholder: placeholder)
+    }
+
+    private var request: AKImageRequest? {
+        guard let resolved = APIClient.fullURL(url) else { return nil }
+        return AKImageRequest(url: resolved, size: size)
+    }
+
+    /// 先看本次加载结果，再同步查内存缓存：命中时第一帧就不闪占位
+    private var image: UIImage? {
+        guard let request else { return nil }
+        if let loaded = model.loaded, loaded.key == request.key { return loaded.image }
+        return AKImageLoader.shared.cachedImage(for: request)
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else {
+                placeholder
+            }
+        }
+        .task(id: request?.key) {
+            guard let request else { return }
+            await model.load(request)
+        }
+    }
+}
 
 struct AvatarView: View {
     let url: String?
@@ -6,17 +58,11 @@ struct AvatarView: View {
     var size: CGFloat = 48
 
     var body: some View {
-        Group {
-            if let url = APIClient.fullURL(url) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        fallback
-                    }
-                }
-            } else {
-                fallback
+        ZStack {
+            fallback
+            if APIClient.fullURL(url) != nil {
+                /* 占位透出底下的首字色块；图片加载完成后覆盖它，不会先白一下 */
+                AKImage(url: url, size: size, contentMode: .fill, placeholder: .clear)
             }
         }
         .frame(width: size, height: size)

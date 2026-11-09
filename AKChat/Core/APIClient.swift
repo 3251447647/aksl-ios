@@ -22,6 +22,8 @@ final class APIClient {
     static let wsURL = URL(string: "wss://www.aksliao.cn/ws")!
 
     private let session: URLSession
+    /// 上传并发闸门：同时最多 4 个上传，避免多图/视频发送时把带宽占满而拖慢消息
+    private static let uploadGate = AKConcurrencyLimiter(limit: 4)
 
     private init() {
         let cfg = URLSessionConfiguration.default
@@ -486,6 +488,8 @@ final class APIClient {
         if let token = SessionStore.shared.token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
         let (respData, resp): (Data, URLResponse)
+        await APIClient.uploadGate.acquire()
+        defer { APIClient.uploadGate.release() }
         do {
             (respData, resp) = try await session.upload(for: req, from: body)
         } catch {

@@ -1,6 +1,8 @@
 import SwiftUI
 import LiveKit
 import ReplayKit
+import UIKit
+import Combine
 
 /// 直播评论（含会员/靓号角标字段，Core 的 LiveComment 没有）
 struct LiveCommentFull: Decodable, Identifiable {
@@ -177,6 +179,7 @@ struct LiveRoomView: View {
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var room = Room()
+    @StateObject private var kitObserver = LiveKitRoomObserver()
 
     @State private var phase = "loading"          // loading / prestart / room / blocked
     @State private var blockedMsg = ""
@@ -218,6 +221,15 @@ struct LiveRoomView: View {
     @State private var screenFlag = 0
     @State private var closing = false
 
+    /// 视频视图重建信号：回前台/重连后换一个新的渲染视图，避免停在最后一帧
+    @State private var renderNonce = 0
+    /// 连接进行中，避免前台事件与首次进房同时发起两次 connect
+    @State private var connecting = false
+    /// 已离开页面：所有异步连接回来时必须丢弃结果
+    @State private var left = false
+    /// 连接代号：旧的连接任务回来后不许覆盖新的错误/状态
+    @State private var connectAttempt = 0
+
     private let bg = Color(hex: 0x0D0F14)
     private let panelBg = Color(hex: 0x14161B)
     private let white90 = Color.white.opacity(0.9)
@@ -234,6 +246,9 @@ struct LiveRoomView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task { await handleForeground() }
+        }
         .onDisappear {
             pollTask?.cancel()
             tipTask?.cancel()
@@ -347,7 +362,8 @@ struct LiveRoomView: View {
         ZStack {
             Color.black
             if let track = displayTrack {
-                LiveKitVideoTile(track: track)
+                LiveKitVideoTile(track: track, refreshToken: kitObserver.revision, recoversFromStall: true)
+                    .id(renderNonce)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             } else if connectError != nil {
@@ -431,6 +447,19 @@ struct LiveRoomView: View {
             .padding(.vertical, 12)
 
             heartLayer
+
+            // 画面还在但连接已失败（典型是回前台重连失败）：盖一条错误，不能只停在最后一帧
+            if connectError != nil, displayTrack != nil {
+                VStack {
+                    Spacer()
+                    stageTip(title: "画面已断开", detail: connectError, retry: true)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .background(Color.black.opacity(0.66))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .padding(.bottom, 10)
+                }
+            }
         }
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -453,7 +482,13 @@ struct LiveRoomView: View {
             }
             if retry {
                 Button {
-                    Task { await connectSfu() }
+                    Task {
+                        if connecting {
+                            showTip("正在连接，请稍候")
+                        } else {
+                            await connectSfu(forceReconnect: true)
+                        }
+                    }
                 } label: {
                     Text("重试")
                         .font(.system(size: 12))
@@ -494,6 +529,8 @@ struct LiveRoomView: View {
             if let s = screenTrack { return s }
             return room.localParticipant.videoTracks.compactMap { $0.track as? VideoTrack }.first
         }
+        // 订阅回调里记下的轨道最新；没有时再遍历远端参与者兜底
+        if let remote = kitObserver.remoteVideo { return remote }
         for p in room.remoteParticipants.values {
             for pub in p.videoTracks {
                 if let track = pub.track as? VideoTrack { return track }
@@ -1151,48 +1188,112 @@ struct LiveRoomView: View {
             // 主播重新进入：不自动开麦，避免静默开播
             micOn = false
         }
+        kitObserver.attach(room)
         startPolling()
         await connectSfu()
         await loadMembers()
     }
 
-    private func connectSfu(_ create: Bool = false, title: String = "") async {
+    private func connectSfu(_ create: Bool = false, title: String = "", forceReconnect: Bool = false) async {
+        guard !left, !closing else { return }
+        if room.connectionState == .connected && !forceReconnect { return }
+        // 同一时刻只允许一条连接：旧 attempt 晚回来时不能把新连接断掉
+        if connecting { return }
+
+        connectAttempt &+= 1
+        let attempt = connectAttempt
+        connecting = true
+        defer {
+            if attempt == connectAttempt { connecting = false }
+        }
         connectError = nil
-        if room.connectionState == .connected { return }
+
+        if forceReconnect, room.connectionState != .disconnected {
+            await room.disconnect()
+        }
+        guard attempt == connectAttempt, !left, !closing else { return }
+
         var query = ["id": "\(gid)"]
         if create {
             query["create"] = "1"
             query["title"] = title
         }
-        guard let data: LiveRoomData = try? await APIClient.shared.get("api/v1/group/live/room", query: query) else {
-            connectError = "进入直播间失败，请稍后重试"
+
+        let data: LiveRoomData
+        do {
+            data = try await APIClient.shared.get("api/v1/group/live/room", query: query)
+        } catch {
+            guard attempt == connectAttempt, !left, !closing else { return }
+            connectError = "进入直播间失败：\(error.localizedDescription)"
             return
         }
-        guard let sfu = data.sfu, sfu.enabled == 1,
-              let url = sfu.url, let token = sfu.token, !url.isEmpty, !token.isEmpty,
-              let u = URL(string: url) else {
-            let msg = (data.msg ?? "").trimmingCharacters(in: .whitespaces)
-            connectError = msg.isEmpty ? "媒体服务未启用" : msg
+        guard attempt == connectAttempt, !left, !closing else { return }
+
+        let serverMsg = (data.msg ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sfu = data.sfu else {
+            connectError = serverMsg.isEmpty ? "媒体服务未启用（服务端未返回 SFU 配置）" : serverMsg
             return
         }
+        if (sfu.enabled ?? 1) != 1 {
+            connectError = serverMsg.isEmpty ? "媒体服务未启用（SFU enabled=0）" : serverMsg
+            return
+        }
+        let rawURL = (sfu.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawURL.isEmpty else {
+            connectError = "媒体服务配置缺少 URL，请联系管理员"
+            return
+        }
+        let rawToken = (sfu.token ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawToken.isEmpty else {
+            connectError = "媒体服务未返回 Token，请重试"
+            return
+        }
+        guard let u = URL(string: rawURL) else {
+            connectError = "媒体服务地址无效：\(rawURL)"
+            return
+        }
+
         /* LiveKit 连接可能长时间停在 connecting：兜底提示，避免画面区永远显示「正在进入直播间」 */
         let watchdog = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
-            if !Task.isCancelled, room.connectionState != .connected, connectError == nil {
-                connectError = "连接媒体服务器超时，请检查网络后重试"
+            guard !Task.isCancelled, attempt == connectAttempt, !left, !closing else { return }
+            if room.connectionState != .connected, connectError == nil {
+                connectError = "连接媒体服务器超时（15 秒），请检查网络后重试"
             }
         }
         do {
-            try await room.connect(url: u.absoluteString, token: token)
+            try await room.connect(url: u.absoluteString, token: rawToken)
             watchdog.cancel()
+            // 连接期间用户已经离开：必须断开，不能把新连接留在后台
+            guard attempt == connectAttempt, !left, !closing else {
+                await room.disconnect()
+                return
+            }
             connectError = nil
+            kitObserver.refresh()
             if isHost && micOn {
                 try? await room.localParticipant.setMicrophone(enabled: true)
             }
         } catch {
             watchdog.cancel()
-            connectError = error.localizedDescription
+            guard attempt == connectAttempt, !left, !closing else { return }
+            connectError = "连接媒体服务器失败：\(error.localizedDescription)"
         }
+    }
+
+    /// 回前台：先重建渲染视图，再根据连接状态决定是否重新进房
+    private func handleForeground() async {
+        guard phase == "room", !left, !closing else { return }
+        renderNonce &+= 1
+        kitObserver.refresh()
+        if room.connectionState == .connected {
+            await resumeScreenCaptureIfNeeded()
+            return
+        }
+        // 首连还在进行中：只重建画面，等它自己完成/超时
+        guard !connecting else { return }
+        await connectSfu(forceReconnect: true)
+        await resumeScreenCaptureIfNeeded()
     }
 
     private func startPolling() {
@@ -1410,15 +1511,7 @@ struct LiveRoomView: View {
             return
         }
         screenTrack = track
-        RPScreenRecorder.shared().startCapture { sample, type, _ in
-            if type == .video { capturer.capture(sample) }
-        } completionHandler: { err in
-            if let err {
-                Task { @MainActor in
-                    showTip("屏幕采集失败：\(err.localizedDescription)")
-                }
-            }
-        }
+        startScreenCapture(capturer)
         do {
             let pub = try await room.localParticipant.publish(videoTrack: track)
             screenPublication = pub
@@ -1429,6 +1522,26 @@ struct LiveRoomView: View {
             screenTrack = nil
             showTip("共享失败：\(error.localizedDescription)")
         }
+    }
+
+    /// 屏幕采集单独拆出：iOS 回后台会停掉 RPScreenRecorder，回前台要重新挂上同一个 BufferCapturer
+    private func startScreenCapture(_ capturer: BufferCapturer) {
+        RPScreenRecorder.shared().startCapture { sample, type, _ in
+            if type == .video { capturer.capture(sample) }
+        } completionHandler: { err in
+            if let err {
+                Task { @MainActor in
+                    showTip("屏幕采集失败：\(err.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func resumeScreenCaptureIfNeeded() async {
+        guard isHost, sharing else { return }
+        guard RPScreenRecorder.shared().isRecording == false else { return }
+        guard let capturer = screenTrack?.capturer as? BufferCapturer else { return }
+        startScreenCapture(capturer)
     }
 
     private func stopShare() async {
@@ -1473,7 +1586,12 @@ struct LiveRoomView: View {
     }
 
     private func teardown() async {
+        left = true
+        connectAttempt &+= 1
+        connecting = false
         pollTask?.cancel()
+        tipTask?.cancel()
+        kitObserver.detach()
         if sharing {
             RPScreenRecorder.shared().stopCapture { _ in }
             sharing = false

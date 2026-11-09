@@ -24,94 +24,57 @@ struct AboutView: View {
     }
 
     var body: some View {
-        List {
-            Group {
+        ScrollView {
+            VStack(spacing: 0) {
                 hero
-                    .listRowInsets(EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
 
                 HStack(spacing: 10) {
                     miniFeature("即时", "消息秒达")
                     miniFeature("安全", "隐私加密")
                     miniFeature("免费", "永久开放")
                 }
-                .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-            }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
 
-            Group {
-                sectionTitle("产品简介")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                section("产品简介") {
+                    Text("\(siteName) 是一款专注于「商务社交 · 高效沟通」的即时通讯应用。\n\n我们相信，好的产品应当让人与人之间的连接更简单、更真诚、更有温度。\n\n无论您是想找一个专属靓号彰显独特身份，还是想与好友畅快聊天、分享生活，\(siteName) 都能为您提供流畅稳定的体验。")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.sub)
+                        .lineSpacing(6)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .akCardRow(top: true, bottom: true, radius: 16)
+                }
 
-                Text("\(siteName) 是一款专注于「商务社交 · 高效沟通」的即时通讯应用。\n\n我们相信，好的产品应当让人与人之间的连接更简单、更真诚、更有温度。\n\n无论您是想找一个专属靓号彰显独特身份，还是想与好友畅快聊天、分享生活，\(siteName) 都能为您提供流畅稳定的体验。")
-                    .font(.system(size: 13))
-                    .foregroundColor(AKColor.sub)
-                    .lineSpacing(6)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .akCardRow(top: true, bottom: true, radius: 16)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                sectionTitle("核心功能")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                featuresCard
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-            }
-
-            Group {
-                sectionTitle("我们的承诺")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                promisesCard
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                sectionTitle("联系我们")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                linksCard
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                sectionTitle("协议与政策")
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-
-                policyCard
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                section("核心功能") { featuresCard }
+                section("我们的承诺") { promisesCard }
+                section("联系我们") { linksCard }
+                section("协议与政策") { policyCard }
 
                 footer
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 24, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 24)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .scrollIndicators(.hidden)
         .background(AKColor.bg.ignoresSafeArea())
         .reportsDetailPage()
         .navigationTitle("关于 \(siteName)")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// 标题 + 卡片分组：ScrollView 内统一 14 左右边距（与安卓 AboutScreen 同口径）
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle(title)
+            content()
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
     }
 
     // MARK: - 核心功能 / 承诺 / 联系 / 协议
@@ -189,10 +152,12 @@ struct AboutView: View {
             Link(destination: URL(string: officialSite)!) {
                 linkRow("🌐", 0x2FBE6E, "官方网站", officialSite)
             }
+            .buttonStyle(.plain)
             divider64
             NavigationLink { CustomerServiceView() } label: {
                 linkRow("🎧", 0x6C8AE4, "在线客服", "有任何问题，欢迎随时咨询")
             }
+            .buttonStyle(.plain)
         }
         .akCardRow(top: true, bottom: true, radius: 16)
     }
@@ -202,10 +167,12 @@ struct AboutView: View {
             NavigationLink { PolicyDetailView(kind: .terms) } label: {
                 linkRow("📄", 0x2FBE6E, "用户协议", "使用前请阅读本协议", chevron: false)
             }
+            .buttonStyle(.plain)
             divider64
             NavigationLink { PolicyDetailView(kind: .privacy) } label: {
                 linkRow("🔒", 0x6C8AE4, "隐私政策", "我们如何收集与保护你的信息", chevron: false)
             }
+            .buttonStyle(.plain)
         }
         .akCardRow(top: true, bottom: true, radius: 16)
     }
@@ -256,27 +223,31 @@ struct AboutView: View {
                 .foregroundColor(.white.opacity(0.8))
                 .padding(.top, 2)
 
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Link(destination: URL(string: officialSite)!) {
                     Text("下载 App")
-                        .font(.system(size: 13.5, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color(hex: 0x1FA45B))
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
                         .background(AKColor.card)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .buttonStyle(.plain)
+
                 NavigationLink { CustomerServiceView() } label: {
                     Text("在线客服")
-                        .font(.system(size: 13.5, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 9)
-                        .background(Color.white.opacity(0.2))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(Color.white.opacity(0.22))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .buttonStyle(.plain)
             }
-            .padding(.top, 16)
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
         }
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity)

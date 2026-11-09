@@ -8,12 +8,12 @@ struct ContactsView: View {
     @State private var tab = 0
     @State private var activeLetter: String?
     @State private var bubbleGen = 0
+    /// 分组/索引字母缓存：每次 body 重算 + 每个拖动手势帧都重新分组太贵（首字母还要跑 CFStringTransform）
+    @State private var sections: [FriendSection] = []
+    @State private var letters: [String] = []
 
     private var friends: [ContactFriend] { app.contacts?.friends ?? [] }
     private var groups: [ContactGroup] { app.contacts?.groups ?? [] }
-
-    /// 索引条只列出实际存在的字母（安卓 LetterBar 同口径），# 排最后
-    private var indexLetters: [String] { friendSections.map { $0.letter } }
 
     private static let indexCellHeight: CGFloat = 17
 
@@ -33,8 +33,21 @@ struct ContactsView: View {
             }
             .background(AKColor.bg)
             .toolbar(.hidden, for: .navigationBar)
-            .refreshable { await app.loadContacts() }
-            .task { await app.loadContacts() }
+            .refreshable {
+                let t = AKPerf.start()
+                await app.loadContacts()
+                rebuildSections()
+                AKPerf.log("contacts.refresh", since: t, "\(friends.count) 位好友")
+            }
+            .task {
+                /* 回到本页时先用已有数据出分组，再拉接口校正 */
+                if sections.isEmpty { rebuildSections() }
+                let t = AKPerf.start()
+                await app.loadContacts()
+                rebuildSections()
+                AKPerf.log("contacts.load", since: t, "\(friends.count) 位好友")
+            }
+            .onChange(of: friends) { _ in rebuildSections() }
             .navigationDestination(isPresented: Binding(
                 get: { profileTarget != nil },
                 set: { if !$0 { profileTarget = nil } }
@@ -179,7 +192,7 @@ struct ContactsView: View {
 
     @ViewBuilder
     private var friendPane: some View {
-        if friendSections.isEmpty {
+        if sections.isEmpty {
             emptyState("还没有好友，点上面「新朋友」添加")
         } else {
             ScrollViewReader { proxy in
@@ -191,7 +204,7 @@ struct ContactsView: View {
                                 .foregroundColor(AKColor.muted)
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
-                            ForEach(friendSections) { sec in
+                            ForEach(sections) { sec in
                                 letterHead(sec.letter)
                                     .id("sec-" + sec.letter)
                                 VStack(spacing: 0) {
@@ -357,7 +370,7 @@ struct ContactsView: View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             VStack(spacing: 0) {
-                ForEach(indexLetters, id: \.self) { letter in
+                ForEach(letters, id: \.self) { letter in
                     Text(letter)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(AKColor.sub)
@@ -368,11 +381,11 @@ struct ContactsView: View {
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .onChanged { value in
-                        let letters = indexLetters
-                        guard !letters.isEmpty else { return }
+                        let list = letters
+                        guard !list.isEmpty else { return }
                         let idx = Int(value.location.y / Self.indexCellHeight)
-                        let clamped = min(max(idx, 0), letters.count - 1)
-                        pick(letters[clamped], proxy)
+                        let clamped = min(max(idx, 0), list.count - 1)
+                        pick(list[clamped], proxy)
                     }
                     .onEnded { _ in
                         let gen = bubbleGen
@@ -393,7 +406,7 @@ struct ContactsView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if gen == bubbleGen { activeLetter = nil }
         }
-        if friendSections.contains(where: { $0.letter == letter }) {
+        if letters.contains(letter) {
             proxy.scrollTo("sec-" + letter, anchor: .top)
         }
     }
@@ -406,17 +419,21 @@ struct ContactsView: View {
         var id: String { letter }
     }
 
-    private var friendSections: [FriendSection] {
+    /// 联系人变化时才重建：按首字母分桶 + 桶内按显示名排序
+    private func rebuildSections() {
         var buckets: [String: [ContactFriend]] = [:]
         for f in friends {
             buckets[Self.initial(of: f.displayName), default: []].append(f)
         }
-        let letters = buckets.keys.sorted { a, b in
+        let order = buckets.keys.sorted { a, b in
             if a == "#" { return false }
             if b == "#" { return true }
             return a < b
         }
-        return letters.map { FriendSection(letter: $0, items: (buckets[$0] ?? []).sorted { $0.displayName < $1.displayName }) }
+        sections = order.map {
+            FriendSection(letter: $0, items: (buckets[$0] ?? []).sorted { $0.displayName < $1.displayName })
+        }
+        letters = order
     }
 
     private static func initial(of name: String) -> String {

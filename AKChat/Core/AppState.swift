@@ -295,6 +295,15 @@ final class AppState: ObservableObject {
                 let message = try? JSONDecoder().decode(Message.self, from: payloadData)
             else { return }
             incoming = message
+            /* 本地通知兜底：不是自己发的、且不在该会话里时提醒 */
+            if message.fromUid != (user?.uid ?? 0), message.recalled != 1 {
+                LocalNotifier.shared.post(
+                    convType: message.convType,
+                    convId: message.convId,
+                    sender: message.fromName ?? "新消息",
+                    body: LocalNotifier.digest(message)
+                )
+            }
             Task { await refreshConversations() }
             return
         }

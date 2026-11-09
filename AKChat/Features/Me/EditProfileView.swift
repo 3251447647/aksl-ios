@@ -1,4 +1,6 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
 /// 个人资料：渐变身份卡 + 基础资料 / 账号信息 / 联系方式 / 安全设置（对齐安卓 ProfileEditScreen）
 struct EditProfileView: View {
@@ -8,6 +10,13 @@ struct EditProfileView: View {
     @State private var nickname = ""
     @State private var bio = ""
     @State private var saving = false
+    @State private var avatarPath: String?
+    @State private var showAvatarMenu = false
+    @State private var showCameraPicker = false
+    @State private var showAlbumPicker = false
+    @State private var avatarItem: PhotosPickerItem?
+    @State private var uploadingAvatar = false
+    @State private var toastText: String?
 
     private var vipLevel: Int { app.user?.vipLevel ?? 0 }
     private var vipDays: Int { app.user?.vipDays ?? 0 }
@@ -209,6 +218,39 @@ struct EditProfileView: View {
         .onAppear {
             nickname = app.user?.nickname ?? ""
             bio = app.user?.bio ?? ""
+            avatarPath = nil
+        }
+        .confirmationDialog("更换头像", isPresented: $showAvatarMenu, titleVisibility: .visible) {
+            Button("拍照") { openCamera() }
+            Button("从相册选择") { showAlbumPicker = true }
+            Button("取消", role: .cancel) {}
+        }
+        .fullScreenCover(isPresented: $showCameraPicker) {
+            AvatarCameraPicker(
+                onImage: { image in
+                    showCameraPicker = false
+                    Task { await uploadAvatar(image) }
+                },
+                onCancel: { showCameraPicker = false }
+            )
+            .ignoresSafeArea()
+        }
+        .photosPicker(isPresented: $showAlbumPicker, selection: $avatarItem, matching: .images)
+        .onChange(of: avatarItem) { item in
+            guard let item else { return }
+            Task { await uploadAvatar(item) }
+        }
+        .overlay(alignment: .bottom) {
+            if let toastText {
+                Text(toastText)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.72))
+                    .clipShape(Capsule())
+                    .padding(.bottom, 24)
+            }
         }
         .onChange(of: nickname) { value in
             if value.count > 20 { nickname = String(value.prefix(20)) }
@@ -235,10 +277,33 @@ struct EditProfileView: View {
     private var identityCard: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
-                AvatarView(url: app.user?.avatar, name: app.user?.displayName ?? "我", size: 62)
+                Button {
+                    showAvatarMenu = true
+                } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        AvatarView(url: avatarPath ?? app.user?.avatar,
+                                   name: app.user?.displayName ?? "我", size: 62)
+                        if uploadingAvatar {
+                            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                                .fill(Color.black.opacity(0.45))
+                                .frame(width: 62, height: 62)
+                                .overlay(ProgressView().tint(.white))
+                        } else {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 21, height: 21)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                .offset(x: 2, y: 2)
+                        }
+                    }
                     .padding(3)
                     .background(Color.white.opacity(0.2))
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(uploadingAvatar)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 5) {
                         Text(app.user?.nickname ?? "")
@@ -384,5 +449,133 @@ struct EditProfileView: View {
                                 bio: bio.trimmingCharacters(in: .whitespaces))
         saving = false
         dismiss()
+    }
+
+    // MARK: - 头像
+
+    private func openCamera() {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            showCameraPicker = true
+        } else {
+            showToast("当前设备无法使用相机，请从相册选择")
+        }
+    }
+
+    private func uploadAvatar(_ item: PhotosPickerItem) async {
+        defer { avatarItem = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                showToast("图片读取失败，请重试")
+                return
+            }
+            await uploadAvatar(image)
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    private func uploadAvatar(_ image: UIImage) async {
+        guard let jpeg = image.jpegForAvatar() else {
+            showToast("图片处理失败，请重试")
+            return
+        }
+        await uploadAvatar(jpeg)
+    }
+
+    /// 服务端 /upload?kind=avatar 会直接写 yx_user.avatar；这里再提交一次资料，失败时能拿到服务端提示
+    private func uploadAvatar(_ data: Data) async {
+        guard !uploadingAvatar else { return }
+        uploadingAvatar = true
+        defer { uploadingAvatar = false }
+        do {
+            let up = try await APIClient.shared.upload(
+                data: data,
+                filename: "avatar_ios_\(Int(Date().timeIntervalSince1970)).jpg",
+                kind: "avatar"
+            )
+            let nick = nickname.trimmingCharacters(in: .whitespaces)
+            let intro = bio.trimmingCharacters(in: .whitespaces)
+            _ = try await APIClient.shared.postRaw("api/v1/profile/update", body: [
+                "nickname": nick.isEmpty ? (app.user?.nickname ?? "") : nick,
+                "bio": intro,
+                "avatar": up.url
+            ])
+            avatarPath = up.url
+            if let me = try? await APIClient.shared.me() {
+                app.user = me
+                SessionStore.shared.user = me
+            }
+            showToast("头像已更新")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    private func showToast(_ message: String) {
+        toastText = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            if toastText == message { toastText = nil }
+        }
+    }
+}
+
+/// 头像压缩：长边 800，避免大图超过服务端 12MB 上限
+private extension UIImage {
+    func jpegForAvatar(maxSide: CGFloat = 800) -> Data? {
+        let longest = max(size.width, size.height)
+        guard longest > 0 else { return nil }
+        let ratio = min(1, maxSide / longest)
+        let target = CGSize(width: (size.width * ratio).rounded(),
+                            height: (size.height * ratio).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        let scaled = renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: target))
+        }
+        return scaled.jpegData(compressionQuality: 0.85)
+    }
+}
+
+/// 系统相机拍照（头像）
+private struct AvatarCameraPicker: UIViewControllerRepresentable {
+    var onImage: (UIImage) -> Void
+    var onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImage: onImage, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onImage: (UIImage) -> Void
+        let onCancel: () -> Void
+
+        init(onImage: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImage = onImage
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                onImage(image)
+            } else {
+                onCancel()
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
     }
 }
