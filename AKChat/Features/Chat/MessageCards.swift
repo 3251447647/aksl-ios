@@ -70,7 +70,7 @@ struct MessageBody: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .textSelection(.enabled)
     }
 
@@ -115,7 +115,7 @@ struct MessageBody: View {
             .padding(.horizontal, 12).padding(.vertical, 9)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
             .foregroundColor(mine ? .white : AKColor.text)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 
