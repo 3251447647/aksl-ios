@@ -51,30 +51,49 @@ struct NoticesView: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(box.value.title ?? "公告")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundColor(AKColor.text)
-                        Text(TimeText.short(box.value.createdAt))
-                            .font(.system(size: 11)).foregroundColor(AKColor.muted)
-                        if !box.value.images.isEmpty {
-                            ForEach(box.value.images, id: \.self) { path in
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFit()
-                                    } else {
-                                        Color.clear.frame(height: 160)
-                                    }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(box.value.title ?? "公告")
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundColor(AKColor.text)
+                            HStack(spacing: 8) {
+                                if box.value.isTop == 1 {
+                                    BadgeView(text: "置顶", color: AKColor.red, background: AKColor.redSoft)
                                 }
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Text(TimeText.full(box.value.createdAt))
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(AKColor.muted)
+                            }
+                            Rectangle().fill(AKColor.line).frame(height: 0.5)
+                            Text(box.value.content ?? "")
+                                .font(.system(size: 14.5))
+                                .foregroundColor(AKColor.text)
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AKColor.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                        if !box.value.images.isEmpty {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                                ForEach(box.value.images, id: \.self) { path in
+                                    AsyncImage(url: APIClient.fullURL(path)) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            AKColor.fill
+                                        }
+                                    }
+                                    .aspectRatio(1, contentMode: .fill)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
                             }
                         }
-                        Text(box.value.content ?? "")
-                            .font(.system(size: 14))
-                            .foregroundColor(AKColor.text)
-                            .textSelection(.enabled)
                         Spacer()
                     }
-                    .padding(16)
+                    .padding(12)
                 }
                 .background(AKColor.bg)
                 .navigationTitle("公告详情")
