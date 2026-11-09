@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var showLogout = false
     @State private var showDelete = false
     @AppStorage("colorSchemeMode") private var schemeMode = 0
+    @AppStorage("floatingBubble") private var bubbleOn = true
 
     private let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
 
@@ -26,6 +27,7 @@ struct SettingsView: View {
                     .foregroundColor(AKColor.muted)
             }
             Section("外观") {
+                Toggle("聊天悬浮球", isOn: $bubbleOn)
                 Picker("深色模式", selection: $schemeMode) {
                     Text("跟随系统").tag(0)
                     Text("浅色").tag(1)

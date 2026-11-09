@@ -79,12 +79,22 @@ struct AppVersionInfo: Decodable {
     let url: String
     let size: Int64
     let minSupported: Int
+    let iosLatestCode: Int
+    let iosLatestName: String
+    let iosForce: Int
+    let iosChangelog: String
+    let iosUrl: String
 
     enum CodingKeys: String, CodingKey {
         case force, changelog, url, size
         case latestCode = "latest_code"
         case latestName = "latest_name"
         case minSupported = "min_supported"
+        case iosLatestCode = "ios_latest_code"
+        case iosLatestName = "ios_latest_name"
+        case iosForce = "ios_force"
+        case iosChangelog = "ios_changelog"
+        case iosUrl = "ios_url"
     }
 
     init(from decoder: Decoder) throws {
@@ -96,5 +106,10 @@ struct AppVersionInfo: Decodable {
         url = (try? c.decode(String.self, forKey: .url)) ?? ""
         size = (try? c.decode(Int64.self, forKey: .size)) ?? 0
         minSupported = (try? c.decode(Int.self, forKey: .minSupported)) ?? 0
+        iosLatestCode = (try? c.decode(Int.self, forKey: .iosLatestCode)) ?? 0
+        iosLatestName = (try? c.decode(String.self, forKey: .iosLatestName)) ?? ""
+        iosForce = (try? c.decode(Int.self, forKey: .iosForce)) ?? 0
+        iosChangelog = (try? c.decode(String.self, forKey: .iosChangelog)) ?? ""
+        iosUrl = (try? c.decode(String.self, forKey: .iosUrl)) ?? ""
     }
 }

@@ -5,6 +5,8 @@ import SwiftUI
 struct MainTabView: View {
     @EnvironmentObject private var app: AppState
     @State private var tab = 0
+    @AppStorage("floatingBubble") private var bubbleOn = true
+    @State private var bubbleChat: BubbleChat?
 
     private let tabs: [(icon: String, title: String)] = [
         ("bubble.left.and.bubble.right.fill", "聊天"),
@@ -23,11 +25,26 @@ struct MainTabView: View {
             }
             .padding(.bottom, 54)
 
+            if bubbleOn {
+                FloatingBubble {
+                    if let conv = app.conversations.first {
+                        bubbleChat = BubbleChat(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
+                    } else {
+                        tab = 0
+                    }
+                }
+            }
+
             tabBar
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .fullScreenCover(item: $app.incomingCall) { call in
             CallScreen(incoming: call)
+        }
+        .fullScreenCover(item: $bubbleChat) { c in
+            NavigationStack {
+                ChatView(convType: c.convType, convId: c.convId, title: c.title)
+            }
         }
     }
 
@@ -72,4 +89,11 @@ struct MainTabView: View {
                 .ignoresSafeArea(edges: .bottom)
         )
     }
+}
+
+struct BubbleChat: Identifiable {
+    let id = UUID()
+    let convType: String
+    let convId: Int64
+    let title: String
 }
