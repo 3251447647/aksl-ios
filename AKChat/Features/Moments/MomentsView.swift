@@ -347,6 +347,10 @@ private struct PublishMomentView: View {
                     .padding(8)
                     .background(AKColor.fill)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text("\(text.count)/500")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.hint)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
 
                 PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
                     Label("添加图片", systemImage: "photo")
@@ -354,16 +358,29 @@ private struct PublishMomentView: View {
                 }
 
                 if !previews.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(previews.enumerated()), id: \.offset) { _, data in
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                        ForEach(Array(previews.enumerated()), id: \.offset) { idx, data in
+                            ZStack(alignment: .topTrailing) {
                                 if let image = UIImage(data: data) {
                                     Image(uiImage: image)
                                         .resizable().scaledToFill()
-                                        .frame(width: 72, height: 72)
+                                        .frame(maxWidth: .infinity)
+                                        .aspectRatio(1, contentMode: .fill)
                                         .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
                                 }
+                                Button {
+                                    previews.remove(at: idx)
+                                    if idx < items.count { items.remove(at: idx) }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .frame(width: 18, height: 18)
+                                        .background(Color.black.opacity(0.6))
+                                        .clipShape(Circle())
+                                }
+                                .padding(4)
                             }
                         }
                     }
