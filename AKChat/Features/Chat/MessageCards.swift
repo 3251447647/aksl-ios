@@ -78,7 +78,7 @@ struct MessageBody: View {
             systemRow
         case 2, 3, 20:
             noticeCard(title: "充值申请", detail: rawText, icon: "creditcard.fill",
-                       tint: Color(UIColor(hex: 0xB07A18)), bg: Color(0xFFF7E6))
+                       tint: AKColor.gold, bg: AKColor.goldSoft)
         case 7, 21:
             redPacket
         case 8, 22:
