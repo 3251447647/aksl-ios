@@ -113,6 +113,7 @@ struct UsdtView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .navigationTitle("USDT 充值")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

@@ -64,6 +64,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .alert("退出登录？", isPresented: $showLogout) {

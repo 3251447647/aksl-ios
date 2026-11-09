@@ -45,6 +45,7 @@ struct WalletView: View {
                 Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
             }
         }
+        .listStyle(.plain)
         .navigationTitle("钱包")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }

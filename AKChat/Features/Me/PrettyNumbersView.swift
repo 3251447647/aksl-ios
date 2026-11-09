@@ -54,6 +54,7 @@ struct PrettyNumbersView: View {
             }
         }
         .background(AKColor.bg)
+        .listStyle(.plain)
         .navigationTitle(kind == "group" ? "群靓号" : "个人靓号")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadAll() }

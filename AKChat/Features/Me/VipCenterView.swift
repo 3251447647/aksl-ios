@@ -25,6 +25,7 @@ struct VipView: View {
             .padding(12)
         }
         .background(AKColor.bg.ignoresSafeArea())
+        .listStyle(.plain)
         .navigationTitle("会员中心")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
