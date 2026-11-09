@@ -1,6 +1,5 @@
 import SwiftUI
 import LiveKit
-import ReplayKit
 import UIKit
 
 /// LiveKit 直播间：主播发布摄像头/麦克风，观众订阅渲染
@@ -16,8 +15,6 @@ struct LiveKitRoomView: View {
     @State private var error: String?
     @State private var micOn = true
     @State private var camOn = false
-    @State private var sharingScreen = false
-    @State private var bufferTrack: LocalVideoTrack?
 
     var body: some View {
         ZStack {
@@ -84,20 +81,6 @@ struct LiveKitRoomView: View {
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Circle())
                         }
-                        Button {
-                            if sharingScreen {
-                                stopScreenShare()
-                            } else {
-                                startScreenShare()
-                            }
-                        } label: {
-                            Image(systemName: sharingScreen ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle")
-                                .font(.system(size: 19))
-                                .foregroundColor(.white)
-                                .frame(width: 48, height: 48)
-                                .background(sharingScreen ? AKColor.red : Color.white.opacity(0.18))
-                                .clipShape(Circle())
-                        }
                     }
                     .padding(.bottom, 34)
                 }
@@ -105,7 +88,6 @@ struct LiveKitRoomView: View {
         }
         .task { await connect() }
         .onDisappear {
-            if sharingScreen { stopScreenShare() }
             Task { await room.disconnect() }
         }
     }
@@ -140,29 +122,6 @@ struct LiveKitRoomView: View {
             }
             .padding(12)
         }
-    }
-
-    /// 屏幕共享：ReplayKit 采集 → LiveKit BufferTrack 推流（App 切后台会停，系统限制）
-    private func startScreenShare() {
-        guard !sharingScreen, let track = LocalVideoTrack.createBufferTrack(name: "screen") else { return }
-        bufferTrack = track
-        Task {
-            try? await room.localParticipant.publish(videoTrack: track)
-            await MainActor.run { sharingScreen = true }
-        }
-        RPScreenRecorder.shared().startCapture { sample, type, _ in
-            guard type == .video, let pixel = CMSampleBufferGetImageBuffer(sample) else { return }
-            if let t = bufferTrack { t.push(frame: pixel) }
-        } completionHandler: { _ in }
-    }
-
-    private func stopScreenShare() {
-        RPScreenRecorder.shared().stopCapture { _ in }
-        if let t = bufferTrack {
-            Task { try? await room.localParticipant.unpublish(track: t) }
-        }
-        bufferTrack = nil
-        sharingScreen = false
     }
 
     private func connect() async {
