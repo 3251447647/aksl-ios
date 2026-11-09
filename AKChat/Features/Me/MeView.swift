@@ -22,6 +22,7 @@ struct MeView: View {
                     quickGrid
                     infoSection
                     serviceSection
+                    settingsSection
                     logoutButton
                 }
                 .padding(.bottom, 18)
@@ -239,17 +240,28 @@ struct MeView: View {
                 .foregroundColor(AKColor.muted)
                 .padding(.leading, 18)
             VStack(spacing: 0) {
-                NavigationLink {
-                    PosterView(name: displayName, avatar: app.user?.avatar, number: number, uid: app.user?.id ?? 0)
-                } label: { row("我的海报", "", "square.and.arrow.up", Color(hex: 0x5AB8F0)) }
-                divider
-                NavigationLink { SettingsView() } label: { row("设置", "", "gearshape.fill", Color(hex: 0x9AA0AC)) }
-                divider
-                NavigationLink { NoticesView() } label: { row("系统公告", "", "megaphone.fill", Color(hex: 0x8B7BF0)) }
+                NavigationLink { NoticesView() } label: { row("官方公告", "", "megaphone.fill", Color(hex: 0xFF9F43)) }
                 divider
                 Link(destination: URL(string: "https://www.aksliao.cn/service.php")!) {
-                    row("帮助与客服", "", "questionmark.circle.fill", Color(hex: 0x5B8DEF))
+                    row("联系客服", "", "headphones", Color(hex: 0x2FA84F))
                 }
+                divider
+                NavigationLink { InviteView() } label: { row("邀请好友", "", "giftcard.fill", Color(hex: 0xFF6B81)) }
+            }
+            .background(AKColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.horizontal, 12)
+        }
+    }
+
+    private var settingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("设置")
+                .font(.system(size: 12.5))
+                .foregroundColor(AKColor.muted)
+                .padding(.leading, 18)
+            NavigationLink { SettingsView() } label: {
+                row("设置", "通知 · 语音 · 缓存", "gearshape.fill", Color(hex: 0x6C8AE4))
             }
             .background(AKColor.card)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
