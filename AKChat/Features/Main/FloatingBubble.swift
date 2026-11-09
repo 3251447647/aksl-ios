@@ -13,8 +13,8 @@ struct FloatingBubble: View {
 
     var body: some View {
         GeometryReader { geo in
-            let x = (bx * 0.5 + 0.5) * geo.size.width + drag.width
-            let y = (by * 0.5 + 0.5) * geo.size.height + drag.height
+            let x = CGFloat(bx * 0.5 + 0.5) * geo.size.width + drag.width
+            let y = CGFloat(by * 0.5 + 0.5) * geo.size.height + drag.height
             ZStack(alignment: .topTrailing) {
                 Circle()
                     .fill(LinearGradient(colors: [AKColor.brand, AKColor.brandDark],
@@ -48,8 +48,10 @@ struct FloatingBubble: View {
                         let nx = (bx * 0.5 + 0.5) * geo.size.width + v.translation.width
                         let ny = (by * 0.5 + 0.5) * geo.size.height + v.translation.height
                         // 吸附到左右两侧，纵向夹在安全范围内
-                        bx = (nx < geo.size.width / 2 ? 0.06 : 0.94) * 2 - 1
-                        by = max(-0.82, min(0.86, (ny / geo.size.height) * 2 - 1))
+                        let left = nx < geo.size.width / 2
+                        bx = Double(left ? 0.06 : 0.94) * 2.0 - 1.0
+                        let ratio = Double(ny / geo.size.height)
+                        by = max(-0.82, min(0.86, ratio * 2.0 - 1.0))
                         drag = .zero
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { dragging = false }
                     }
