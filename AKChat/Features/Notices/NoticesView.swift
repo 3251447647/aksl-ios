@@ -103,14 +103,9 @@ struct NoticeDetailView: View {
             Text(detail.title ?? "公告")
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundColor(AKColor.text)
-            HStack(spacing: 8) {
-                if detail.isTop == 1 {
-                    BadgeView(text: "置顶", color: AKColor.red, background: AKColor.redSoft)
-                }
-                Text(TimeText.full(detail.createdAt))
-                    .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.muted)
-            }
+            Text(TimeText.full(detail.createdAt))
+                .font(.system(size: 11.5))
+                .foregroundColor(AKColor.muted)
             Rectangle().fill(AKColor.line).frame(height: 0.5)
             Text(detail.content ?? "")
                 .font(.system(size: 14.5))
