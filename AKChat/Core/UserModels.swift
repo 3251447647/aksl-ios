@@ -78,7 +78,7 @@ extension APIClient {
 }
 
 /// 资料页里的 TA 的动态（服务端 /user/profile 的 moments 字段）
-struct ProfileMoment: Decodable, Identifiable {
+struct ProfileMoment: Decodable, Identifiable, Equatable {
     let id: Int64
     let img: String
     let text: String
