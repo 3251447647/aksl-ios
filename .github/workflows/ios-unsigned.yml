@@ -19,17 +19,27 @@ jobs:
 
       - name: Build unsigned .app
         run: |
-          xcodebuild \
-            -project AKChat.xcodeproj \
-            -scheme AKChat \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_ENTITLEMENTS="" \
-            build
+          set -o pipefail
+          for i in 1 2 3; do
+            echo "=== build attempt $i ==="
+            if xcodebuild \
+              -project AKChat.xcodeproj \
+              -scheme AKChat \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_ENTITLEMENTS="" \
+              build; then
+              echo "build ok on attempt $i"
+              exit 0
+            fi
+            echo "attempt $i failed, retrying after 30s"
+            sleep 30
+          done
+          exit 1
 
       - name: Package unsigned IPA
         run: |
