@@ -9,11 +9,37 @@ struct GroupMembersView: View {
     @State private var actionTarget: GroupMember?
     @State private var showActions = false
     @State private var tipText: String?
+    @State private var requests: [GroupJoinRequest] = []
+    @State private var groupName: String = ""
+    @State private var showTransfer = false
+    @State private var confirmDissolve = false
+    @State private var dissolveName = ""
 
     private var canManage: Bool { myRole == 1 || myRole == 2 }
 
     var body: some View {
         List {
+            if canManage && !requests.isEmpty {
+                Section("入群申请（\(requests.count)）") {
+                    ForEach(requests) { r in
+                        HStack(spacing: 10) {
+                            AvatarView(url: r.avatar, name: r.nickname, size: 38)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.nickname).font(.system(size: 14)).foregroundColor(AKColor.text)
+                                if !r.reason.isEmpty {
+                                    Text(r.reason).font(.system(size: 11.5)).foregroundColor(AKColor.muted).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            Button("拒绝") { Task { await handle(r, agree: false) } }
+                                .font(.system(size: 13)).foregroundColor(AKColor.hint)
+                            Button("同意") { Task { await handle(r, agree: true) } }
+                                .font(.system(size: 13)).foregroundColor(AKColor.brand)
+                        }
+                    }
+                }
+            }
+
             ForEach(members) { m in
                 HStack(spacing: 12) {
                     AvatarView(url: m.avatar, name: m.name ?? "成员", size: 40)
@@ -53,6 +79,41 @@ struct GroupMembersView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+        .toolbar {
+            if myRole == 1 {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button("转让群主") { showTransfer = true }
+                        Button("解散群聊", role: .destructive) { confirmDissolve = true }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showTransfer) {
+            NavigationStack {
+                List(members.filter { $0.uid != myUid }) { m in
+                    Button {
+                        Task { await transfer(m) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            AvatarView(url: m.avatar, name: m.name ?? "成员", size: 36)
+                            Text(m.name ?? "成员").foregroundColor(AKColor.text)
+                        }
+                    }
+                }
+                .navigationTitle("转让群主")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .alert("解散群聊", isPresented: $confirmDissolve) {
+            TextField("输入群名称确认", text: $dissolveName)
+            Button("取消", role: .cancel) { dissolveName = "" }
+            Button("解散", role: .destructive) { Task { await dissolve() } }
+        } message: {
+            Text("解散后群聊与成员关系将全部删除，需输入群名称「\(groupName)」确认")
+        }
         .overlay(alignment: .bottom) {
             if let tipText {
                 Text(tipText)
@@ -68,6 +129,41 @@ struct GroupMembersView: View {
     private func load() async {
         if let info = try? await APIClient.shared.groupInfo(id: groupId) {
             members = info.members
+            groupName = info.name ?? ""
+        }
+        if canManage {
+            requests = (try? await APIClient.shared.groupJoinRequests(gid: groupId))?.list ?? []
+        }
+    }
+
+    private func handle(_ r: GroupJoinRequest, agree: Bool) async {
+        do {
+            try await APIClient.shared.handleGroupRequest(gid: groupId, requestId: r.rid, act: agree ? "agree" : "refuse")
+            tipText = agree ? "已同意 \(r.nickname) 入群" : "已拒绝 \(r.nickname)"
+            await load()
+        } catch {
+            tipText = error.localizedDescription
+        }
+    }
+
+    private func transfer(_ m: GroupMember) async {
+        do {
+            try await APIClient.shared.transferGroup(gid: groupId, toUid: m.uid)
+            tipText = "已转让群主给 \(m.name ?? "成员")"
+            showTransfer = false
+            await load()
+        } catch {
+            tipText = error.localizedDescription
+        }
+    }
+
+    private func dissolve() async {
+        do {
+            try await APIClient.shared.dissolveGroup(gid: groupId, name: dissolveName)
+            tipText = "群聊已解散"
+            dissolveName = ""
+        } catch {
+            tipText = error.localizedDescription
         }
     }
 
