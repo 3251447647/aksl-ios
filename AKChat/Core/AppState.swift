@@ -296,7 +296,7 @@ final class AppState: ObservableObject {
             else { return }
             incoming = message
             /* 本地通知兜底：不是自己发的、且不在该会话里时提醒 */
-            if message.fromUid != (user?.uid ?? 0), message.recalled != 1 {
+            if message.fromUid != (user?.id ?? 0), message.recalled != 1 {
                 LocalNotifier.shared.post(
                     convType: message.convType,
                     convId: message.convId,
