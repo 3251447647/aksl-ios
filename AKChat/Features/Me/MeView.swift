@@ -6,7 +6,6 @@ struct MeView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.colorScheme) private var colorScheme
     @State private var showLogout = false
-    @State private var showEdit = false
     @State private var copied = false
 
     private var displayName: String { app.user?.displayName ?? "未登录" }
@@ -49,9 +48,7 @@ struct MeView: View {
                     quickGrid
                         .padding(.top, 12)
                     menuSection("账号与安全") {
-                        Button {
-                            showEdit = true
-                        } label: {
+                        NavigationLink { EditProfileView() } label: {
                             menuCell("person.fill", Color(hex: 0x4C8DFF), "个人资料", trailing: "编辑")
                         }
                         .buttonStyle(.plain)
@@ -92,10 +89,6 @@ struct MeView: View {
             }
             .background(AKColor.bg.ignoresSafeArea())
             .navigationBarHidden(true)
-            .sheet(isPresented: $showEdit) {
-                NavigationStack { EditProfileView() }
-                    .environmentObject(app)
-            }
             .alert("退出登录？", isPresented: $showLogout) {
                 Button("取消", role: .cancel) {}
                 Button("退出", role: .destructive) { app.logout() }
@@ -108,8 +101,8 @@ struct MeView: View {
     private var header: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 0) {
-                Button {
-                    showEdit = true
+                NavigationLink {
+                    EditProfileView()
                 } label: {
                     AvatarView(url: app.user?.avatar, name: displayName, size: 82)
                         .clipShape(Circle())
@@ -160,8 +153,8 @@ struct MeView: View {
             .padding(.top, 8)
             .padding(.bottom, 20)
 
-            Button {
-                showEdit = true
+            NavigationLink {
+                EditProfileView()
             } label: {
                 HStack(spacing: 1) {
                     Text("编辑资料")

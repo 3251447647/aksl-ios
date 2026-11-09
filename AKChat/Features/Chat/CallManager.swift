@@ -1,6 +1,7 @@
 import Foundation
 import WebRTC
 import SwiftUI
+import AVFoundation
 
 enum CallPhase {
     case idle, calling, connected, ended
@@ -10,6 +11,13 @@ enum CallPhase {
 @MainActor
 final class CallManager: NSObject, ObservableObject {
     static let shared = CallManager()
+
+    /* 安卓 CallEngine 用的这组国内 STUN，避免只配 Google STUN 时收不到 candidate */
+    private static let iceServers = [
+        "stun:stun.l.google.com:19302",
+        "stun:stun.miwifi.com:3478",
+        "stun:stun.chat.bilibili.com:3478",
+    ]
 
     @Published var phase: CallPhase = .idle
     @Published var callId: Int64 = 0
@@ -28,12 +36,18 @@ final class CallManager: NSObject, ObservableObject {
     private var capturer: RTCCameraVideoCapturer?
     private var pollTask: Task<Void, Never>?
     private var pendingOffer: String?
+    /// 本地 SDP 只提交一次；ICE complete 事件与 3.5 秒兜底都会走到这里
+    private var sdpSent = false
+    private var sdpFallback: Task<Void, Never>?
 
     var isActive: Bool { phase == .calling || phase == .connected }
 
     func reset() {
         pollTask?.cancel()
         pollTask = nil
+        sdpFallback?.cancel()
+        sdpFallback = nil
+        sdpSent = false
         capturer?.stopCapture()
         capturer = nil
         pc?.close()
@@ -55,13 +69,16 @@ final class CallManager: NSObject, ObservableObject {
         peerName = name
         peerAvatar = avatar
         callType = type
+        /* 先把状态置为呼叫中，通话页立刻有反馈，不用等建连 */
+        phase = .calling
         do {
             let d = try await APIClient.shared.callCreate(toUid: peerUid, callType: type)
             callId = d.callId
+            await requestMediaAccess(video: type == 2)
             try buildPeer()
             addLocalTracks()
-            phase = .calling
             try await makeOffer()
+            scheduleSdpFlush()
             startPolling()
         } catch {
             self.error = error.localizedDescription
@@ -75,16 +92,18 @@ final class CallManager: NSObject, ObservableObject {
         peerName = name
         peerAvatar = avatar
         callType = type
+        phase = .calling
         do {
+            await requestMediaAccess(video: type == 2)
             try buildPeer()
             addLocalTracks()
             guard let info = try? await APIClient.shared.callInfo(callId: callId),
                   let offer = info.offer, !offer.isEmpty else {
                 throw NSError(domain: "call", code: 2, userInfo: [NSLocalizedDescriptionKey: "通话已取消"])
             }
-            try await setRemote(offer)
+            try await setRemote(offer, type: .offer)
             try await makeAnswer()
-            phase = .calling
+            scheduleSdpFlush()
             startPolling()
         } catch {
             self.error = error.localizedDescription
@@ -96,6 +115,8 @@ final class CallManager: NSObject, ObservableObject {
         let cid = callId
         pollTask?.cancel()
         pollTask = nil
+        sdpFallback?.cancel()
+        sdpFallback = nil
         capturer?.stopCapture()
         capturer = nil
         pc?.close()
@@ -125,7 +146,7 @@ final class CallManager: NSObject, ObservableObject {
         let f = RTCPeerConnectionFactory()
         factory = f
         let cfg = RTCConfiguration()
-        cfg.iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
+        cfg.iceServers = CallManager.iceServers.map { RTCIceServer(urlStrings: [$0]) }
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let p = f.peerConnection(with: cfg, constraints: constraints, delegate: self) else {
             throw NSError(domain: "call", code: 3, userInfo: [NSLocalizedDescriptionKey: "创建通话连接失败"])
@@ -135,6 +156,7 @@ final class CallManager: NSObject, ObservableObject {
 
     private func addLocalTracks() {
         guard let f = factory, let p = pc else { return }
+        configureAudioSession()
         let audioSource = f.audioSource(with: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
         let a = f.audioTrack(with: audioSource, trackId: "audio0")
         p.add(a, streamIds: ["stream0"])
@@ -182,11 +204,52 @@ final class CallManager: NSObject, ObservableObject {
         try await p.setLocalDescription(sdp)
     }
 
-    private func setRemote(_ sdp: String) async throws {
+    private func setRemote(_ sdp: String, type: RTCSdpType) async throws {
         guard let p = pc else { return }
-        let desc = RTCSessionDescription(type: .answer, sdp: sdp)
-        if pendingOffer != nil || p.remoteDescription == nil {
+        let desc = RTCSessionDescription(type: type, sdp: sdp)
+        if p.remoteDescription == nil {
             try await p.setRemoteDescription(desc)
+        }
+    }
+
+    /// 提交本地 SDP：优先等 ICE 收集到 complete，最多等 3.5 秒（安卓同口径）
+    private func scheduleSdpFlush() {
+        sdpFallback?.cancel()
+        sdpFallback = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.flushLocalSdp()
+        }
+    }
+
+    private func flushLocalSdp() async {
+        guard !sdpSent, callId > 0, let p = pc, let local = p.localDescription, !local.sdp.isEmpty else { return }
+        sdpSent = true
+        if local.type == .offer {
+            await APIClient.shared.callOffer(callId: callId, sdp: local.sdp)
+        } else if local.type == .answer {
+            await APIClient.shared.callAnswer(callId: callId, sdp: local.sdp)
+        }
+    }
+
+    private func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
+        try? session.setActive(true)
+    }
+
+    /// 系统权限：麦克风（语音/视频）、摄像头（视频）
+    private func requestMediaAccess(video: Bool) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                guard video else {
+                    cont.resume()
+                    return
+                }
+                AVCaptureDevice.requestAccess(for: .video) { _ in
+                    cont.resume()
+                }
+            }
         }
     }
 
@@ -211,7 +274,7 @@ final class CallManager: NSObject, ObservableObject {
         }
         guard let p = pc else { return }
         if p.remoteDescription == nil, let answer = info.answer, !answer.isEmpty {
-            try? await setRemote(answer)
+            try? await setRemote(answer, type: .answer)
         }
         if let offer = info.offer, !offer.isEmpty, phase == .calling {
             _ = offer
@@ -224,14 +287,9 @@ final class CallManager: NSObject, ObservableObject {
 
 extension CallManager: RTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
-        guard newState == .complete, let sdp = peerConnection.localDescription?.sdp else { return }
+        guard newState == .complete else { return }
         Task { @MainActor in
-            guard let p = self.pc, let local = p.localDescription else { return }
-            if local.type == .offer {
-                await APIClient.shared.callOffer(callId: self.callId, sdp: sdp)
-            } else if local.type == .answer {
-                await APIClient.shared.callAnswer(callId: self.callId, sdp: sdp)
-            }
+            await self.flushLocalSdp()
         }
     }
 

@@ -8,6 +8,8 @@ struct CallScreen: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject private var call = CallManager.shared
     @Environment(\.dismiss) private var dismiss
+    /// 来电已点「接听」：不再回退到来电卡片（MainTabView 的 cover 仍由 app.incomingCall 驱动）
+    @State private var acceptedIncoming = false
 
     var body: some View {
         ZStack {
@@ -61,6 +63,7 @@ struct CallScreen: View {
                     }
                     Button {
                         call.hangup()
+                        app.incomingCall = nil
                         dismiss()
                     } label: {
                         Image(systemName: "phone.down.fill")
@@ -75,12 +78,16 @@ struct CallScreen: View {
             }
         }
         .overlay {
-            if let incoming, !call.isActive {
+            if let incoming, !acceptedIncoming, !call.isActive {
                 incomingOverlay(incoming)
             }
         }
         .onChange(of: call.phase) { phase in
-            if phase == .ended { dismiss() }
+            /* 出错时保留界面显示原因，不要直接关掉；正常结束才自动返回 */
+            if phase == .ended, call.error == nil {
+                app.incomingCall = nil
+                dismiss()
+            }
         }
     }
 
@@ -119,8 +126,8 @@ struct CallScreen: View {
                             .clipShape(Circle())
                     }
                     Button {
+                        acceptedIncoming = true
                         Task {
-                            app.incomingCall = nil
                             await CallManager.shared.accept(
                                 callId: c.id,
                                 name: c.name,

@@ -29,4 +29,9 @@ extension APIClient {
     func appVersion() async throws -> AppVersionInfo {
         try await get("api/v1/app/version")
     }
+
+    /// iOS 最新版本（免登录）
+    func iosAppVersion() async throws -> IOSVersionInfo {
+        try await get("api/v1/app/version/ios")
+    }
 }

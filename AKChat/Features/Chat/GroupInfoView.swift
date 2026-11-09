@@ -59,6 +59,8 @@ struct GroupInfoView: View {
     @State private var extras: GroupInfoExtras?
     @State private var loading = true
     @State private var errorText: String?
+    /// /group 返回「你不在该群里」时，安卓会回退到群预览（/group/preview）
+    @State private var notMember = false
     @State private var confirmLeave = false
     @State private var confirmDeleteHistory = false
     @State private var showNick = false
@@ -115,10 +117,39 @@ struct GroupInfoView: View {
                 } else if loading {
                     ProgressView().padding(.top, 60)
                 } else if let errorText {
-                    Text(errorText)
-                        .font(.system(size: 13))
-                        .foregroundColor(AKColor.red)
-                        .padding(.top, 40)
+                    VStack(spacing: 12) {
+                        Text(errorText)
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.red)
+                            .multilineTextAlignment(.center)
+                        Button {
+                            Task { await load() }
+                        } label: {
+                            Text("重新加载")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(AKColor.link)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(AKColor.fill)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        if notMember {
+                            NavigationLink {
+                                GroupPreviewView(groupId: groupId).restoresSwipeBack()
+                            } label: {
+                                Text("查看群资料")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(AKColor.brand)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 40)
                 }
             }
             .padding(.horizontal, 10)
@@ -314,7 +345,7 @@ struct GroupInfoView: View {
                             memberCell(m)
                         } else {
                             NavigationLink {
-                                UserProfileView(uid: m.uid)
+                                UserProfileView(uid: m.uid, gid: groupId)
                             } label: {
                                 memberCell(m)
                             }
@@ -694,8 +725,10 @@ struct GroupInfoView: View {
             info = try await APIClient.shared.groupInfo(id: groupId)
             extras = try? await APIClient.shared.get("api/v1/group", query: ["id": "\(groupId)"])
             errorText = nil
+            notMember = false
         } catch {
             errorText = error.localizedDescription
+            notMember = error.localizedDescription.contains("不在该群")
         }
     }
 

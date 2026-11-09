@@ -52,7 +52,7 @@ struct SettingsView: View {
                     divider
 
                     NavigationLink {
-                        AboutUpdateView()
+                        AboutView()
                     } label: {
                         row("info.circle.fill", "关于", value: "v\(version)")
                     }
@@ -61,7 +61,7 @@ struct SettingsView: View {
                     divider
 
                     NavigationLink {
-                        AboutUpdateView()
+                        CheckUpdateView()
                     } label: {
                         row("arrow.triangle.2.circlepath", "检查更新")
                     }

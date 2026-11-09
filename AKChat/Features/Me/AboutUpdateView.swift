@@ -1,12 +1,8 @@
 import SwiftUI
+import UIKit
 
-/// 关于与版本更新：安卓 AboutScreen 的头部主卡 + 特性 / 简介 / 联系分组，末尾接检查更新
-struct AboutUpdateView: View {
-    @State private var info: AppVersionInfo?
-    @State private var checking = false
-    @State private var errorText: String?
-    @State private var checkedAt: Date?
-
+/// 关于：安卓 AboutScreen 的头部主卡 + 特性 / 简介 / 功能 / 承诺 / 联系 / 协议，不含版本检查
+struct AboutView: View {
     private let siteName = "AK商聊"
     private let officialSite = "https://www.aksliao.cn"
     private let features: [(String, UInt32, String, String)] = [
@@ -27,36 +23,6 @@ struct AboutUpdateView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
     }
 
-    private var currentVersion: String {
-        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        return "\(versionName) (\(b))"
-    }
-
-    private var hasUpdate: Bool {
-        guard let info, let cur = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else { return false }
-        return info.iosLatestCode > (Int(cur) ?? 0)
-    }
-
-    private var updateName: String {
-        let name = info?.iosLatestName ?? ""
-        return name.isEmpty ? "\(info?.iosLatestCode ?? 0)" : name
-    }
-
-    private var updateLog: String { info?.iosChangelog ?? "" }
-    private var updateUrl: String { info?.iosUrl ?? "" }
-    private var updateForce: Bool { (info?.iosForce ?? 0) == 1 }
-
-    private func sizeText(_ bytes: Int64) -> String {
-        if bytes <= 0 { return "" }
-        if bytes >= 1024 * 1024 * 1024 {
-            return String(format: "%.1fG", Double(bytes) / 1024 / 1024 / 1024)
-        }
-        if bytes >= 1024 * 1024 {
-            return String(format: "%.1fM", Double(bytes) / 1024 / 1024)
-        }
-        return "\(bytes / 1024)K"
-    }
-
     var body: some View {
         List {
             Group {
@@ -73,7 +39,6 @@ struct AboutUpdateView: View {
                 .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-
             }
 
             Group {
@@ -124,43 +89,16 @@ struct AboutUpdateView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-            }
 
-            Group {
-                sectionTitle("版本更新")
+                sectionTitle("协议与政策")
                     .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 8, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
 
-                versionCard
+                policyCard
                     .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-
-                if let errorText {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("检查失败：" + errorText)
-                            .font(.system(size: 12.5))
-                            .foregroundColor(AKColor.red)
-                        Button {
-                            Task { await check() }
-                        } label: {
-                            Text("重试")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 8)
-                                .background(AKColor.brand)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 14, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                }
 
                 footer
                     .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 24, trailing: 14))
@@ -174,122 +112,9 @@ struct AboutUpdateView: View {
         .reportsDetailPage()
         .navigationTitle("关于 \(siteName)")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            if info == nil { await check() }
-        }
     }
 
-    // MARK: - 版本更新卡
-
-    private var versionCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("当前版本")
-                    .font(.system(size: 15))
-                    .foregroundColor(AKColor.text)
-                Spacer(minLength: 8)
-                Text(currentVersion)
-                    .font(.system(size: 13.5))
-                    .foregroundColor(AKColor.muted)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 15)
-
-            divider
-
-            Button {
-                Task { await check() }
-            } label: {
-                HStack(spacing: 8) {
-                    Text("检查更新")
-                        .font(.system(size: 15))
-                        .foregroundColor(AKColor.text)
-                    Spacer(minLength: 8)
-                    if checking {
-                        ProgressView()
-                    } else if info != nil {
-                        Text(hasUpdate ? updateName : "已是最新")
-                            .font(.system(size: 13.5))
-                            .foregroundColor(AKColor.muted)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 15))
-                            .foregroundColor(AKColor.placeholder)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 15)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(checking)
-
-            if let info, hasUpdate {
-                divider
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("发现新版本 v" + updateName)
-                        .font(.system(size: 14.5, weight: .medium))
-                        .foregroundColor(AKColor.text)
-                    if updateLog.isEmpty {
-                        Text("修复问题并优化体验")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(AKColor.sub)
-                    } else {
-                        ForEach(Array(updateLog.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-                            let text = line.trimmingCharacters(in: .whitespaces)
-                            if !text.isEmpty {
-                                Text("· " + text)
-                                    .font(.system(size: 12.5))
-                                    .foregroundColor(AKColor.sub)
-                                    .lineSpacing(4)
-                            }
-                        }
-                    }
-                    if updateForce {
-                        Text("该版本为强制更新，需更新后才能继续使用")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(AKColor.red)
-                    }
-                    if info.size > 0 {
-                        Text("安装包 " + sizeText(info.size))
-                            .font(.system(size: 11.5))
-                            .foregroundColor(AKColor.hint)
-                    }
-                    if let u = URL(string: updateUrl), !updateUrl.isEmpty {
-                        Link(destination: u) {
-                            Text("立即更新")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 42)
-                                .background(AKColor.brand)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .padding(.top, 8)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else if checkedAt != nil {
-                divider
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("当前已是最新版本")
-                        .font(.system(size: 14.5, weight: .medium))
-                        .foregroundColor(AKColor.text)
-                    Text("当前版本 v\(versionName)")
-                        .font(.system(size: 12))
-                        .foregroundColor(AKColor.muted)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .akCardRow(top: true, bottom: true, radius: 16)
-    }
-
-    // MARK: - 核心功能 / 承诺 / 联系
+    // MARK: - 核心功能 / 承诺 / 联系 / 协议
 
     private var featuresCard: some View {
         VStack(spacing: 0) {
@@ -372,6 +197,19 @@ struct AboutUpdateView: View {
         .akCardRow(top: true, bottom: true, radius: 16)
     }
 
+    private var policyCard: some View {
+        VStack(spacing: 0) {
+            NavigationLink { PolicyDetailView(kind: .terms) } label: {
+                linkRow("📄", 0x2FBE6E, "用户协议", "使用前请阅读本协议", chevron: false)
+            }
+            divider64
+            NavigationLink { PolicyDetailView(kind: .privacy) } label: {
+                linkRow("🔒", 0x6C8AE4, "隐私政策", "我们如何收集与保护你的信息", chevron: false)
+            }
+        }
+        .akCardRow(top: true, bottom: true, radius: 16)
+    }
+
     private var footer: some View {
         VStack(spacing: 4) {
             Text("\(siteName) · v\(versionName)")
@@ -386,9 +224,11 @@ struct AboutUpdateView: View {
 
     private var hero: some View {
         VStack(spacing: 0) {
-            Text("易")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundColor(Color(hex: 0x2FBE6E))
+            Image("Logo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 66, height: 66)
+                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                 .frame(width: 74, height: 74)
                 .background(AKColor.card)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -462,7 +302,8 @@ struct AboutUpdateView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func linkRow(_ icon: String, _ color: UInt32, _ title: String, _ desc: String) -> some View {
+    private func linkRow(_ icon: String, _ color: UInt32, _ title: String, _ desc: String,
+                         chevron: Bool = true) -> some View {
         HStack(spacing: 12) {
             Text(icon)
                 .font(.system(size: 16))
@@ -479,9 +320,11 @@ struct AboutUpdateView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 15))
-                .foregroundColor(AKColor.placeholder)
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 15))
+                    .foregroundColor(AKColor.placeholder)
+            }
         }
         .padding(14)
         .contentShape(Rectangle())
@@ -500,29 +343,283 @@ struct AboutUpdateView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(AKColor.line)
-            .frame(height: 0.5)
-            .padding(.leading, 16)
-    }
-
     private var divider64: some View {
         Rectangle()
             .fill(AKColor.line)
             .frame(height: 0.5)
             .padding(.leading, 64)
     }
+}
+
+/// 用户协议 / 隐私政策：站点没有独立协议页，先在 App 内展示正文
+struct PolicyDetailView: View {
+    enum Kind { case terms, privacy }
+
+    let kind: Kind
+
+    private var title: String {
+        switch kind {
+        case .terms: return "用户协议"
+        case .privacy: return "隐私政策"
+        }
+    }
+    private var sections: [(String, String)] {
+        switch kind {
+        case .terms:
+            return [
+                ("一、协议范围", "本协议是你与 AK商聊 之间关于注册、登录和使用本应用及相关服务的约定。注册即视为已阅读并同意本协议全部内容。"),
+                ("二、账号", "你需要使用真实可用的邮箱完成注册。账号仅限本人使用，不得转让、出租或出借。请自行保管登录密码与支付密码，因保管不当造成的损失由你自行承担。"),
+                ("三、使用规范", "不得利用本应用发布违法、侵权、骚扰、欺诈或危害他人的内容，不得发送垃圾信息、批量注册账号或干扰服务正常运行。违反上述约定的账号可能被限制功能、禁言或封禁。"),
+                ("四、内容与财产", "你在本应用中发布的内容由你自行负责。K币、靓号、会员等虚拟权益按页面展示的规则提供，充值后不支持退款，请确认后再操作。"),
+                ("五、服务变更与终止", "我们可能根据运营需要调整功能或暂停部分服务，并尽量提前公告。你可以随时停止使用本应用并申请注销账号。"),
+                ("六、联系我们", "对本协议有疑问，可通过「我的 → 联系客服」与我们联系。")
+            ]
+        case .privacy:
+            return [
+                ("一、我们收集的信息", "注册与登录：邮箱地址、昵称、密码（加密存储）。个人资料：你主动填写的头像、简介等。使用过程：好友关系、群聊成员、聊天消息、充值记录。设备信息：设备型号、系统版本、推送标识，用于消息推送与故障排查。"),
+                ("二、权限用途", "相册：发送图片与表情。相机与麦克风：拍照、语音消息、音视频通话与直播。通知：接收新消息提醒。以上权限均在你授权后才会使用，可随时在系统设置中关闭。"),
+                ("三、信息的使用", "收集的信息仅用于提供聊天、群聊、朋友圈、支付与客服等功能，以及保障账号与平台安全。我们不会将你的个人信息出售给第三方。"),
+                ("四、信息的存储与保护", "数据存储于我们的服务器，密码采用不可逆加密保存，支付密码单独校验。聊天记录同时保存在你的设备上，卸载应用或清理数据会一并删除本地记录。"),
+                ("五、信息共享", "除法律法规要求或你明确授权外，我们不会向第三方提供你的个人信息。为完成支付、推送等功能，会按最小必要原则使用相应的第三方服务。"),
+                ("六、你的权利", "你可以随时在个人资料中查看与修改信息，在隐私设置中调整展示范围，或通过客服申请导出、更正与注销账号。"),
+                ("七、联系我们", "对隐私政策有疑问，可通过「我的 → 联系客服」与我们联系。")
+            ]
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(sections.indices, id: \.self) { index in
+                    let item = sections[index]
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(item.0)
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundColor(AKColor.text)
+                        Text(item.1)
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.sub)
+                            .lineSpacing(6)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(16)
+
+                    if index < sections.count - 1 {
+                        Rectangle()
+                            .fill(AKColor.line)
+                            .frame(height: 0.5)
+                            .padding(.leading, 16)
+                    }
+                }
+            }
+            .background(AKColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(14)
+        }
+        .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 检查更新：进入即查，用服务端 iOS 最新 version_code 与本地 CFBundleVersion 比较
+struct CheckUpdateView: View {
+    @State private var info: IOSVersionInfo?
+    @State private var checking = false
+    @State private var checked = false
+    @State private var errorText: String?
+
+    private var currentCode: Int {
+        Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0") ?? 0
+    }
+
+    private var versionName: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
+
+    private var latestCode: Int { info?.versionCode ?? 0 }
+    private var hasUpdate: Bool { latestCode > currentCode }
+
+    /// force_update=1 或本地低于 min_supported_code 都必须更新
+    private var forced: Bool {
+        guard let info, hasUpdate else { return false }
+        if info.forceUpdate == 1 { return true }
+        return info.minSupportedCode > 0 && currentCode < info.minSupportedCode
+    }
+
+    private var changelogLines: [String] {
+        (info?.changelog ?? "")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if checking || !checked {
+                    ProgressView()
+                        .padding(.top, 90)
+                    Text("正在检查更新…")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.sub)
+                        .padding(.top, 16)
+                } else if let errorText {
+                    Text("检查失败：" + errorText)
+                        .font(.system(size: 13.5))
+                        .foregroundColor(AKColor.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 70)
+                    Button {
+                        Task { await check() }
+                    } label: {
+                        Text("重试")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 26)
+                            .frame(height: 42)
+                            .background(AKColor.brand)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 18)
+                } else if hasUpdate {
+                    updateCard
+                } else {
+                    Text("当前已是最新版本")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .padding(.top, 66)
+                    Text("当前版本 v\(versionName)")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AKColor.muted)
+                        .padding(.top, 8)
+                    Button {
+                        Task { await check() }
+                    } label: {
+                        Text("重新检查")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 26)
+                            .frame(height: 42)
+                            .background(AKColor.brand)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 22)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity)
+        }
+        .background(AKColor.bg.ignoresSafeArea())
+        .reportsDetailPage()
+        .navigationTitle("检查更新")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if !checked { await check() }
+        }
+    }
+
+    private var updateCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("发现新版本 v" + (info?.versionName ?? ""))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AKColor.brand)
+                .padding(.bottom, 14)
+
+            if changelogLines.isEmpty {
+                Text("修复问题并优化体验")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.sub)
+                    .lineSpacing(6)
+            } else {
+                ForEach(changelogLines.indices, id: \.self) { i in
+                    Text("· " + changelogLines[i])
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.sub)
+                        .lineSpacing(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if forced {
+                Text("此版本为强制更新，需更新后才能继续使用")
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.red)
+                    .padding(.top, 12)
+            }
+
+            if let size = info?.fileSize, size > 0 {
+                Text("安装包 " + sizeText(size))
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.hint)
+                    .padding(.top, 6)
+            }
+
+            Button {
+                openUpdate()
+            } label: {
+                Text("立即更新")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(AKColor.brand)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 18)
+
+            Text("按钮会打开 App Store 或 IPA 安装地址；没有配置地址时打开官网下载页")
+                .font(.system(size: 11))
+                .foregroundColor(AKColor.hint)
+                .padding(.top, 10)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AKColor.brandSoft)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func sizeText(_ bytes: Int64) -> String {
+        if bytes >= 1024 * 1024 * 1024 {
+            return String(format: "%.1fG", Double(bytes) / 1024 / 1024 / 1024)
+        }
+        if bytes >= 1024 * 1024 {
+            return String(format: "%.1fM", Double(bytes) / 1024 / 1024)
+        }
+        return "\(bytes / 1024)K"
+    }
+
+    private func openUpdate() {
+        let raw = (info?.ipaUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = "https://www.aksliao.cn/download/"
+        guard let url = URL(string: raw.isEmpty ? fallback : raw) else { return }
+        UIApplication.shared.open(url)
+    }
 
     private func check() async {
+        guard !checking else { return }
         checking = true
-        defer { checking = false }
+        errorText = nil
+        defer {
+            checking = false
+            checked = true
+        }
         do {
-            info = try await APIClient.shared.appVersion()
-            errorText = nil
-            checkedAt = Date()
+            info = try await APIClient.shared.iosAppVersion()
         } catch {
-            errorText = error.localizedDescription
+            // 老服务端还没有 /app/version/ios，回落到安卓接口里的 ios_* 字段
+            do {
+                let legacy = try await APIClient.shared.appVersion()
+                info = IOSVersionInfo(legacy: legacy)
+            } catch {
+                errorText = error.localizedDescription
+                info = nil
+            }
         }
     }
 }

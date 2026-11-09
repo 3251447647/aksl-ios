@@ -1158,25 +1158,39 @@ struct LiveRoomView: View {
 
     private func connectSfu(_ create: Bool = false, title: String = "") async {
         connectError = nil
+        if room.connectionState == .connected { return }
         var query = ["id": "\(gid)"]
         if create {
             query["create"] = "1"
             query["title"] = title
         }
-        guard let data: LiveRoomData = try? await APIClient.shared.get("api/v1/group/live/room", query: query),
-              let sfu = data.sfu, sfu.enabled == 1,
+        guard let data: LiveRoomData = try? await APIClient.shared.get("api/v1/group/live/room", query: query) else {
+            connectError = "进入直播间失败，请稍后重试"
+            return
+        }
+        guard let sfu = data.sfu, sfu.enabled == 1,
               let url = sfu.url, let token = sfu.token, !url.isEmpty, !token.isEmpty,
               let u = URL(string: url) else {
-            connectError = "媒体服务未启用"
+            let msg = (data.msg ?? "").trimmingCharacters(in: .whitespaces)
+            connectError = msg.isEmpty ? "媒体服务未启用" : msg
             return
+        }
+        /* LiveKit 连接可能长时间停在 connecting：兜底提示，避免画面区永远显示「正在进入直播间」 */
+        let watchdog = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            if !Task.isCancelled, room.connectionState != .connected, connectError == nil {
+                connectError = "连接媒体服务器超时，请检查网络后重试"
+            }
         }
         do {
             try await room.connect(url: u.absoluteString, token: token)
+            watchdog.cancel()
             connectError = nil
             if isHost && micOn {
                 try? await room.localParticipant.setMicrophone(enabled: true)
             }
         } catch {
+            watchdog.cancel()
             connectError = error.localizedDescription
         }
     }

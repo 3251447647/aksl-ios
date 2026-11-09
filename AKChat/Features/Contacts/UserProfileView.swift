@@ -6,6 +6,8 @@ struct UserProfileView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     let uid: Int64
+    /// 群聊里打开时带上 gid：服务端据此返回群内身份/管理权限（安卓同参数）
+    var gid: Int64 = 0
     var presetName: String = ""
 
     @State private var profile: UserProfile?
@@ -434,16 +436,16 @@ struct UserProfileView: View {
             } else if p.isFriend == 1 {
                 HStack(spacing: 0) {
                     callButton("语音通话", "phone.fill") {
+                        showCall = true
                         Task {
                             await CallManager.shared.start(peerUid: p.id, name: p.displayName, avatar: p.avatar, type: 1)
-                            showCall = true
                         }
                     }
                     Rectangle().fill(AKColor.brand.opacity(0.2)).frame(width: 0.8, height: 16)
                     callButton("视频通话", "video.fill") {
+                        showCall = true
                         Task {
                             await CallManager.shared.start(peerUid: p.id, name: p.displayName, avatar: p.avatar, type: 2)
-                            showCall = true
                         }
                     }
                 }
@@ -972,7 +974,10 @@ struct UserProfileView: View {
         loading = true
         defer { loading = false }
         do {
-            profile = try await APIClient.shared.userProfile(id: uid)
+            profile = try await APIClient.shared.get(
+                "api/v1/user",
+                query: ["uid": "\(uid)", "gid": "\(gid)"]
+            )
             error = nil
         } catch {
             self.error = error.localizedDescription

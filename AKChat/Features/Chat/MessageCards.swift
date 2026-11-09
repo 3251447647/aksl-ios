@@ -607,6 +607,8 @@ struct MessageBody: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(AKColor.fill, lineWidth: 1)
         )
+        .contentShape(Rectangle())
+        .onTapGesture { onOpenPayCard(message) }
     }
 
     private var redPacketRid: Int64 {
@@ -1383,5 +1385,239 @@ final class LoopingVideoView: UIView {
 
     deinit {
         player?.pause()
+    }
+}
+
+/* ---------------- 充值申请详情 ---------------- */
+
+/// 充值申请卡（type 2/3/20）点击后的详情页：对齐安卓 RechargeCard 的详情弹层，
+/// 客服账号可直接同意/拒绝（POST /api/v1/recharge/handle，rid + pass + reason）。
+struct RechargeDetailSheet: View {
+    let message: Message
+    var myId: Int64 = 0
+    var onHandled: () -> Void = {}
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+    @State private var tip: String?
+    @State private var showReject = false
+    @State private var rejectReason = ""
+    /// 本页处理成功后立即反映最新状态（服务端卡片要等下一次刷新才更新）
+    @State private var handledStatus: Int?
+
+    private var raw: [String: Any] {
+        MessageBody.jsonObject(message.content)
+            ?? MessageBody.jsonObject(message.text)
+            ?? [:]
+    }
+
+    /* 服务端给 type 20 补过 extra（rid/amount/status/reject_reason），优先级高于正文 */
+    private var ex: [String: JSONValue] { message.extraMap }
+
+    private func rawInt(_ key: String) -> Int {
+        if let n = ex[key]?.intValue { return n }
+        if let n = raw[key] as? NSNumber { return n.intValue }
+        if let s = raw[key] as? String { return Int(s.trimmingCharacters(in: .whitespaces)) ?? 0 }
+        return 0
+    }
+
+    private func rawStr(_ key: String) -> String {
+        if let s = ex[key]?.stringValue, !s.isEmpty, s != "null" { return s }
+        if let s = raw[key] as? String { return s == "null" ? "" : s }
+        if let n = raw[key] as? NSNumber { return n.stringValue }
+        return ""
+    }
+
+    private var rid: Int64 { Int64(rawInt("rid")) }
+    private var amount: Int { rawInt("amount") }
+    private var status: Int { handledStatus ?? rawInt("status") }
+    private var rejectReasonText: String { rawStr("reject_reason") }
+    private var remark: String {
+        let r = rawStr("remark")
+        if !r.isEmpty { return r }
+        /* 网页端旧版 type=2 的正文就是备注 */
+        if message.type == 2, MessageBody.jsonObject(message.text) == nil {
+            return (message.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+    private var mine: Bool { myId > 0 && message.fromUid == myId }
+    private var canHandle: Bool { !mine && status == 0 && rid > 0 }
+
+    private var statusText: String {
+        switch status {
+        case 1: return "已完成"
+        case 2: return "已取消"
+        default: return "待处理"
+        }
+    }
+
+    private var statusColor: Color {
+        switch status {
+        case 1: return Color(hex: 0x0FB67A)
+        case 2: return AKColor.sub
+        default: return Color(hex: 0xE68600)
+        }
+    }
+
+    private var statusBg: Color {
+        switch status {
+        case 1: return AKColor.brandSoft
+        case 2: return AKColor.fill
+        default: return AKColor.goldSoft
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(AKColor.brandSoft)
+                                .frame(width: 28, height: 28)
+                            Text("¥")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(Color(hex: 0x0FB67A))
+                        }
+                        Text(message.type == 3 ? "提现申请" : "充值申请")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AKColor.text)
+                        Spacer(minLength: 0)
+                        Text(statusText)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(statusColor)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(statusBg)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    HStack(alignment: .lastTextBaseline, spacing: 4) {
+                        Text("\(amount)")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(AKColor.text)
+                        Text("K币")
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.sub)
+                            .padding(.bottom, 3)
+                    }
+                    .padding(.top, 12)
+
+                    divider.padding(.top, 12)
+                    infoRow("备注", remark.isEmpty ? "无" : remark)
+                    infoRow("提交时间", MessageBody.shortDateTime(message.createdAt))
+                    if status == 2 && !rejectReasonText.isEmpty {
+                        infoRow("拒绝理由", rejectReasonText, color: AKColor.red)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AKColor.card)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                if canHandle {
+                    HStack(spacing: 10) {
+                        Button {
+                            rejectReason = ""
+                            showReject = true
+                        } label: {
+                            Text("拒绝")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(AKColor.red)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(AKColor.redSoft)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+
+                        Button {
+                            Task { await handle(pass: true, reason: "") }
+                        } label: {
+                            Text(busy ? "处理中…" : "同意")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(Color(hex: 0x0FB67A))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                    }
+                    .padding(.top, 4)
+
+                    Text("同意后立即为对方到账 \(amount) K币")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AKColor.hint)
+                }
+
+                if let tip {
+                    Text(tip)
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.sub)
+                        .padding(.top, 4)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+        }
+        .background(AKColor.bg.ignoresSafeArea())
+        .navigationTitle("充值申请详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("关闭") { dismiss() }
+                    .foregroundColor(AKColor.link)
+            }
+        }
+        .alert("拒绝原因", isPresented: $showReject) {
+            TextField("选填，最多 50 字", text: $rejectReason)
+            Button("取消", role: .cancel) {}
+            Button("确认拒绝", role: .destructive) {
+                Task { await handle(pass: false, reason: rejectReason) }
+            }
+        } message: {
+            Text("填写原因会同步给对方。")
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(AKColor.fill).frame(height: 0.6)
+    }
+
+    private func infoRow(_ title: String, _ value: String, color: Color = AKColor.sub) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(title)
+                .font(.system(size: 12.5))
+                .foregroundColor(AKColor.muted)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12.5))
+                .foregroundColor(color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.top, 10)
+    }
+
+    private func handle(pass: Bool, reason: String) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let msg = try await APIClient.shared.postRaw("api/v1/recharge/handle", body: [
+                "rid": rid,
+                "pass": pass ? 1 : 0,
+                "reason": String(reason.prefix(50)),
+            ])
+            tip = msg.isEmpty ? (pass ? "已确认到账" : "已拒绝") : msg
+            handledStatus = pass ? 1 : 2
+            onHandled()
+        } catch {
+            tip = error.localizedDescription
+        }
     }
 }

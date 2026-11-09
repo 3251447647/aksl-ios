@@ -113,3 +113,46 @@ struct AppVersionInfo: Decodable {
         iosUrl = (try? c.decode(String.self, forKey: .iosUrl)) ?? ""
     }
 }
+
+/// 服务端 iOS 最新版本（GET /api/v1/app/version/ios，免登录）
+struct IOSVersionInfo: Decodable {
+    let versionCode: Int
+    let versionName: String
+    let ipaUrl: String
+    let fileSize: Int64
+    let forceUpdate: Int
+    let minSupportedCode: Int
+    let changelog: String
+
+    enum CodingKeys: String, CodingKey {
+        case changelog
+        case versionCode = "version_code"
+        case versionName = "version_name"
+        case ipaUrl = "ipa_url"
+        case fileSize = "file_size"
+        case forceUpdate = "force_update"
+        case minSupportedCode = "min_supported_code"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versionCode = (try? c.decode(Int.self, forKey: .versionCode)) ?? 0
+        versionName = (try? c.decode(String.self, forKey: .versionName)) ?? ""
+        ipaUrl = (try? c.decode(String.self, forKey: .ipaUrl)) ?? ""
+        fileSize = (try? c.decode(Int64.self, forKey: .fileSize)) ?? 0
+        forceUpdate = (try? c.decode(Int.self, forKey: .forceUpdate)) ?? 0
+        minSupportedCode = (try? c.decode(Int.self, forKey: .minSupportedCode)) ?? 0
+        changelog = (try? c.decode(String.self, forKey: .changelog)) ?? ""
+    }
+
+    /// 从安卓版本接口里的 ios_* 字段拼一份，供老服务端回落
+    init(legacy: AppVersionInfo) {
+        versionCode = legacy.iosLatestCode
+        versionName = legacy.iosLatestName
+        ipaUrl = legacy.iosUrl
+        fileSize = 0
+        forceUpdate = legacy.iosForce
+        minSupportedCode = 0
+        changelog = legacy.iosChangelog
+    }
+}

@@ -59,21 +59,17 @@ struct HomeView: View {
                 conversationList
             }
             .background(AKColor.bg)
-            .overlay(alignment: .topTrailing) {
-                if plusOpen {
-                    plusMenu
-                        .padding(.trailing, 8)
-                        .padding(.top, 52)
-                        .transition(.opacity)
-                        .zIndex(10)
-                }
-            }
             .overlay {
                 if plusOpen {
-                    Color.black.opacity(0.001)
-                        .ignoresSafeArea()
-                        .onTapGesture { plusOpen = false }
-                        .zIndex(9)
+                    ZStack(alignment: .topTrailing) {
+                        Color.black.opacity(0.001)
+                            .ignoresSafeArea()
+                            .onTapGesture { plusOpen = false }
+                        plusMenu
+                            .padding(.trailing, 8)
+                            .padding(.top, 52)
+                    }
+                    .transition(.opacity)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)

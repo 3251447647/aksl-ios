@@ -6,6 +6,7 @@ import AVKit
 
 struct ProfileTarget: Identifiable {
     let id: Int64
+    var gid: Int64 = 0
 }
 
 /// 长按菜单里需要二次确认的操作
@@ -116,6 +117,7 @@ struct ChatView: View {
     private var activeBar: some View {
         if let live = active?.live, live.liveId > 0 {
             Button {
+                liveGid = convId
                 showLive = true
             } label: {
                 barContent(icon: "dot.radiowaves.left.and.right",
@@ -353,7 +355,7 @@ struct ChatView: View {
         }
         .sheet(item: $profileTarget) { target in
             NavigationStack {
-                UserProfileView(uid: target.id)
+                UserProfileView(uid: target.id, gid: target.gid)
             }
         }
         .sheet(isPresented: $showForward) {
@@ -449,6 +451,10 @@ struct ChatView: View {
                         ) { Task { await reloadAfterPay() } }
                     } else if msg.type == 8 || msg.type == 22 {
                         TransferClaimSheet(message: msg, convType: convType, convId: convId, myId: myId) {
+                            Task { await reloadAfterPay() }
+                        }
+                    } else if msg.type == 2 || msg.type == 3 || msg.type == 20 {
+                        RechargeDetailSheet(message: msg, myId: myId) {
                             Task { await reloadAfterPay() }
                         }
                     } else {
@@ -1136,7 +1142,7 @@ struct ChatView: View {
             voicePlayed: playedVoice.contains(msg.listKey),
             mentionMap: mentionMap,
             onMention: { uid in
-                if uid > 0 { profileTarget = ProfileTarget(id: uid) }
+                if uid > 0 { profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0) }
             },
             onVoiceTap: {
                 playedVoice.insert(msg.listKey)
@@ -1146,7 +1152,7 @@ struct ChatView: View {
                 Task { await resend(msg) }
             },
             onAvatarTap: {
-                profileTarget = ProfileTarget(id: msg.fromUid)
+                profileTarget = ProfileTarget(id: msg.fromUid, gid: isGroup ? convId : 0)
             },
             onAvatarLongPress: {
                 guard isGroup, msg.fromUid != myId else { return }
@@ -1165,7 +1171,7 @@ struct ChatView: View {
                 showGroupPreview = true
             },
             onOpenProfile: { uid in
-                profileTarget = ProfileTarget(id: uid)
+                profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0)
             },
             onQuoteLocate: { qid in
                 jumpToQuote(qid)
@@ -1186,7 +1192,7 @@ struct ChatView: View {
                 }
             },
             onOpenMoment: { uid in
-                profileTarget = ProfileTarget(id: uid)
+                profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0)
             },
             onOpenRecord: { raw in
                 recordPayload = raw
@@ -1688,9 +1694,9 @@ struct ChatView: View {
 
     private func startCall(_ type: Int) {
         guard !isGroup else { return }
+        showCall = true
         Task {
             await CallManager.shared.start(peerUid: convId, name: title, avatar: nil, type: type)
-            showCall = true
         }
     }
 
