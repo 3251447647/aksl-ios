@@ -33,7 +33,7 @@ struct GroupQRData: Decodable {
     }
 }
 
-/// 群二维码名片：扫码可进群
+/// 群二维码名片：扫码可进群（对齐安卓 GroupQrScreen：卡片 + 保存/分享双按钮）
 struct GroupQRCodeView: View {
     let groupId: Int64
 
@@ -42,26 +42,42 @@ struct GroupQRCodeView: View {
     @State private var errorText: String?
     @State private var saved = false
 
+    private var displayNo: String {
+        guard let d = data else { return "" }
+        if d.isPretty == 1, !d.prettyNo.isEmpty { return d.prettyNo }
+        return d.groupNo
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: 0) {
                 if let errorText {
-                    Text(errorText).font(.system(size: 13)).foregroundColor(AKColor.red)
+                    Text(errorText)
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.red)
+                        .padding(.bottom, 12)
                 }
                 if let d = data {
                     VStack(spacing: 12) {
                         HStack(spacing: 12) {
-                            AvatarView(url: d.avatar, name: d.name, size: 52)
+                            AvatarView(url: d.avatar, name: d.name, size: 56)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
-                                    Text(d.name).font(.system(size: 16, weight: .semibold)).foregroundColor(AKColor.text)
-                                    if d.isPretty == 1, !d.prettyNo.isEmpty { BadgeView(text: "群靓 \(d.prettyNo)") }
+                                    Text(d.name)
+                                        .font(.system(size: 17, weight: .semibold))
+                                        .foregroundColor(d.isPretty == 1 ? AKColor.gold : AKColor.text)
+                                        .lineLimit(1)
+                                    if d.isPretty == 1 {
+                                        PrettyBadge(number: d.prettyNo, isGroup: true)
+                                    }
                                 }
-                                Text("群号：\(d.groupNo.isEmpty ? d.prettyNo : d.groupNo)　\(d.memberCount) 人")
-                                    .font(.system(size: 12)).foregroundColor(AKColor.muted)
+                                Text("群号 \(displayNo.isEmpty ? "\(d.gid)" : displayNo) · \(d.memberCount) 人")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AKColor.hint)
                             }
-                            Spacer()
+                            Spacer(minLength: 0)
                         }
+
                         if let qrImage {
                             Image(uiImage: qrImage)
                                 .interpolation(.none)
@@ -74,40 +90,63 @@ struct GroupQRCodeView: View {
                         } else {
                             ProgressView().frame(width: 220, height: 220)
                         }
+
                         Text("扫一扫上面的二维码，加入群聊")
-                            .font(.system(size: 12)).foregroundColor(AKColor.hint)
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.hint)
                     }
                     .padding(18)
                     .frame(maxWidth: .infinity)
                     .background(AKColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(.horizontal, 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .padding(.horizontal, 18)
 
-                    Button {
-                        if let qrImage {
-                            UIImageWriteToSavedPhotosAlbum(qrImage, nil, nil, nil)
-                            saved = true
+                    HStack(spacing: 14) {
+                        Button {
+                            if let qrImage {
+                                UIImageWriteToSavedPhotosAlbum(qrImage, nil, nil, nil)
+                                saved = true
+                            }
+                        } label: {
+                            actionLabel(saved ? "已保存" : "保存", icon: "arrow.down.to.line")
                         }
-                    } label: {
-                        Text(saved ? "已保存到相册" : "保存二维码")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(AKColor.brand)
-                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .buttonStyle(.plain)
+                        .disabled(qrImage == nil)
+
+                        if let qrImage {
+                            ShareLink(
+                                item: Image(uiImage: qrImage),
+                                preview: SharePreview("群二维码", image: Image(uiImage: qrImage))
+                            ) {
+                                actionLabel("分享", icon: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .padding(.horizontal, 16)
-                } else {
+                    .padding(.horizontal, 18)
+                    .padding(.top, 26)
+                } else if errorText == nil {
                     ProgressView().padding(.top, 40)
                 }
             }
-            .padding(.vertical, 14)
+            .padding(.vertical, 18)
         }
         .background(AKColor.bg.ignoresSafeArea())
         .navigationTitle("群二维码")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    private func actionLabel(_ text: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 16))
+            Text(text).font(.system(size: 14.5))
+        }
+        .foregroundColor(AKColor.text)
+        .frame(maxWidth: .infinity)
+        .frame(height: 46)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
     }
 
     private func load() async {

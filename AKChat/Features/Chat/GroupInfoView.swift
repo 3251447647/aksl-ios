@@ -43,6 +43,10 @@ struct GroupInfoView: View {
         .background(AKColor.bg.ignoresSafeArea())
         .navigationTitle("聊天信息")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) { BackButton() }
+        }
         .task { await load() }
         .refreshable { await load() }
         .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
@@ -80,24 +84,35 @@ struct GroupInfoView: View {
     // MARK: - 群成员
 
     private func memberCard(_ g: GroupInfo) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("群成员").font(.system(size: 14.5, weight: .medium)).foregroundColor(AKColor.text)
-                Spacer()
-                Text("\(g.memberCount) 人").font(.system(size: 12)).foregroundColor(AKColor.hint)
+        VStack(alignment: .leading, spacing: 14) {
+            NavigationLink {
+                GroupMembersView(groupId: groupId, myRole: g.myRole, myUid: app.user?.id ?? 0)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("群成员").font(.system(size: 14.5, weight: .medium)).foregroundColor(AKColor.text)
+                    Spacer(minLength: 4)
+                    Text(g.maxMember > 0 ? "\(g.memberCount)/\(g.maxMember)" : "\(g.memberCount) 人")
+                        .font(.system(size: 12)).foregroundColor(AKColor.hint)
+                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(AKColor.placeholder)
+                }
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 12) {
+            .buttonStyle(.plain)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 14) {
                 ForEach(g.members.prefix(15)) { m in
                     NavigationLink {
                         UserProfileView(uid: m.uid)
                     } label: {
-                        VStack(spacing: 4) {
-                            AvatarView(url: m.avatar, name: m.name ?? "成员", size: 44)
+                        VStack(spacing: 5) {
+                            AvatarView(url: m.avatar, name: m.name ?? "成员", size: 48)
                             Text(m.name ?? "成员")
-                                .font(.system(size: 10))
-                                .foregroundColor(AKColor.muted)
+                                .font(.system(size: 10.5))
+                                .foregroundColor(akNameColor(vipLevel: m.vipLevel, isPretty: m.isPretty, isGroup: false))
                                 .lineLimit(1)
                         }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.plain)
                 }
@@ -105,36 +120,45 @@ struct GroupInfoView: View {
                     NavigationLink {
                         InviteMembersView(groupId: groupId)
                     } label: {
-                        VStack(spacing: 4) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(AKColor.line, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                                    .frame(width: 44, height: 44)
-                                Image(systemName: "plus")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(AKColor.hint)
-                            }
-                            Text("邀请").font(.system(size: 10)).foregroundColor(AKColor.hint)
+                        VStack(spacing: 5) {
+                            inviteCell(enabled: true)
+                            Text("邀请").font(.system(size: 10.5)).foregroundColor(AKColor.hint)
                         }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.plain)
+                } else {
+                    VStack(spacing: 5) {
+                        inviteCell(enabled: false)
+                        Text("邀请").font(.system(size: 10.5)).foregroundColor(AKColor.placeholder)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
-            NavigationLink {
-                GroupMembersView(groupId: groupId, myRole: g.myRole, myUid: app.user?.id ?? 0)
-            } label: {
-                HStack {
-                    Text("查看全部群成员").font(.system(size: 13)).foregroundColor(AKColor.sub)
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(AKColor.hint)
-                }
+
+            if g.allowInvite != 1 {
+                Text("群主已关闭成员邀请，暂无邀请权限")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.hint)
+                    .padding(.leading, 4)
             }
-            .buttonStyle(.plain)
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func inviteCell(enabled: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(AKColor.fill)
+            RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(AKColor.line, lineWidth: 1)
+            Image(systemName: "plus")
+                .font(.system(size: 18))
+                .foregroundColor(enabled ? AKColor.muted : AKColor.placeholder)
+        }
+        .frame(width: 48, height: 48)
     }
 
     // MARK: - 群信息
@@ -283,11 +307,11 @@ struct GroupInfoView: View {
             confirmLeave = true
         } label: {
             Text("退出群聊")
-                .font(.system(size: 15))
+                .font(.system(size: 14.5))
                 .foregroundColor(AKColor.red)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)
-                .background(AKColor.card)
+                .background(AKColor.redSoft)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }

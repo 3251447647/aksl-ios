@@ -1,64 +1,57 @@
 import SwiftUI
 
-/// 朋友圈详情：大图、点赞、全部评论、删除自己的动态
+/// 朋友圈详情：与列表同一张动态卡片 + 底部评论条（对齐安卓 MomentDetailScreen）
 struct MomentDetailView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var composing: Bool
 
     let moment: Moment
 
-    @State private var comments: [MomentComment]
-    @State private var liked: Bool
-    @State private var likeCount: Int
     @State private var text = ""
     @State private var sending = false
     @State private var previewBox: URLBox?
-    @State private var error: String?
 
-    init(moment: Moment) {
-        self.moment = moment
-        _comments = State(initialValue: moment.comments)
-        _liked = State(initialValue: moment.liked == 1)
-        _likeCount = State(initialValue: moment.likeCount)
+    /// 点赞/评论后 AppState 会重新拉列表，这里始终渲染最新一条
+    private var current: Moment {
+        app.moments.first { $0.id == moment.id } ?? moment
     }
 
-    private var mine: Bool { moment.userId == (app.user?.id ?? 0) }
+    private var mine: Bool { current.userId == (app.user?.id ?? 0) }
+
+    private var canSend: Bool {
+        !sending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    header
-                    if let content = moment.content, !content.isEmpty {
-                        Text(content)
-                            .font(.system(size: 15))
-                            .foregroundColor(AKColor.text)
-                            .fixedSize(horizontal: false, vertical: true)
+                MomentCard(
+                    moment: current,
+                    onLike: { Task { await app.likeMoment(current) } },
+                    onComment: { composing = true },
+                    onPreview: { idx in
+                        guard idx < current.images.count,
+                              let u = APIClient.fullURL(current.images[idx]) else { return }
+                        previewBox = URLBox(url: u)
                     }
-                    if !moment.images.isEmpty {
-                        imageGrid
-                    }
-                    likeRow
-                    commentList
-                    if let error {
-                        Text(error).font(.system(size: 12)).foregroundColor(AKColor.red)
-                    }
-                }
-                .padding(14)
+                )
+                .padding(12)
             }
             .background(AKColor.bg)
             .navigationTitle("动态详情")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("关闭") { dismiss() }
+                    BackButton()
                 }
                 if mine {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Menu {
                             Button(role: .destructive) {
                                 Task {
-                                    await APIClient.shared.deleteMoment(id: moment.id)
+                                    await APIClient.shared.deleteMoment(id: current.id)
                                     await app.loadMoments()
                                     dismiss()
                                 }
@@ -78,144 +71,42 @@ struct MomentDetailView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            AsyncImage(url: APIClient.fullURL(moment.avatar)) { img in
-                img.resizable().scaledToFill()
-            } placeholder: {
-                AKColor.fill
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(moment.nickname ?? "用户")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(AKColor.text)
-                Text(Self.timeText(moment.createdAt))
-                    .font(.system(size: 11))
-                    .foregroundColor(AKColor.muted)
-            }
-            Spacer()
-        }
-    }
-
-    private var imageGrid: some View {
-        let cols = moment.images.count == 1 ? 1 : (moment.images.count == 2 ? 2 : 3)
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: cols), spacing: 4) {
-            ForEach(moment.images, id: \.self) { path in
-                AsyncImage(url: APIClient.fullURL(path)) { img in
-                    img.resizable().scaledToFill()
-                } placeholder: {
-                    AKColor.fill
-                }
-                .frame(height: cols == 1 ? 220 : 108)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .onTapGesture {
-                    if let u = APIClient.fullURL(path) { previewBox = URLBox(url: u) }
-                }
-            }
-        }
-    }
-
-    private var likeRow: some View {
-        HStack(spacing: 8) {
-            Button {
-                Task {
-                    await APIClient.shared.likeMoment(id: moment.id)
-                    liked.toggle()
-                    likeCount += liked ? 1 : -1
-                    await app.loadMoments()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: liked ? "heart.fill" : "heart")
-                    Text(likeCount > 0 ? "\(likeCount)" : "赞")
-                }
-                .font(.system(size: 12))
-                .foregroundColor(liked ? AKColor.red : AKColor.sub)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(AKColor.fill)
-                .clipShape(Capsule())
-            }
-            Spacer()
-        }
-    }
-
-    private var commentList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if comments.isEmpty {
-                Text("还没有评论").font(.system(size: 12)).foregroundColor(AKColor.muted)
-            }
-            ForEach(comments) { c in
-                HStack(alignment: .top, spacing: 4) {
-                    Text(c.name ?? "用户")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(AKColor.link)
-                    Text(c.content ?? "")
-                        .font(.system(size: 12))
-                        .foregroundColor(AKColor.text)
-                    Spacer()
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-
+    /// 底部评论条：输入框 + 绿色「发送」，与安卓 CommentBar 同一口径
     private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("评论…", text: $text)
+        HStack(spacing: 10) {
+            TextField("说点什么…", text: $text)
                 .font(.system(size: 14))
+                .focused($composing)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .background(AKColor.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-            Button {
-                let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !content.isEmpty, !sending else { return }
-                Task {
-                    sending = true
-                    defer { sending = false }
-                    await APIClient.shared.commentMoment(id: moment.id, content: content)
-                    text = ""
-                    await app.loadMoments()
-                    let now = Int64(Date().timeIntervalSince1970)
-                    comments.append(MomentComment(
-                        id: now,
-                        uid: app.user?.id ?? 0,
-                        name: app.user?.nickname,
-                        avatar: app.user?.avatar,
-                        content: content,
-                        replyName: nil,
-                        canDelete: 1,
-                        createdAt: now
-                    ))
-                }
-            } label: {
-                Text("发送")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AKColor.placeholder : AKColor.brand)
-                    .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Button(action: send) {
+                Text(sending ? "发送中…" : "发送")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(canSend ? AKColor.brand : AKColor.placeholder)
             }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(AKColor.card)
+        .overlay(alignment: .top) {
+            Rectangle().fill(AKColor.line).frame(height: 0.5)
+        }
     }
 
-    static func timeText(_ ts: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(ts))
-        let f = DateFormatter()
-        f.dateFormat = "MM-dd HH:mm"
-        return f.string(from: date)
+    private func send() {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, !sending else { return }
+        Task {
+            sending = true
+            defer { sending = false }
+            await app.commentMoment(current, content: content)
+            text = ""
+            composing = false
+        }
     }
 }
 

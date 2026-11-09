@@ -13,28 +13,54 @@ struct GroupNoticesView: View {
 
     var body: some View {
         List {
-            if notices.isEmpty && !loading {
-                Text("暂无群公告")
+            if loading && notices.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            } else if notices.isEmpty {
+                Text("还没有群公告")
                     .font(.system(size: 13))
-                    .foregroundColor(AKColor.muted)
-            }
-            ForEach(notices) { n in
-                NavigationLink {
-                    GroupNoticeDetailView(groupId: groupId, notice: n, canManage: canManage) {
-                        Task { await load() }
+                    .foregroundColor(AKColor.hint)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(notices) { n in
+                    NavigationLink {
+                        GroupNoticeDetailView(groupId: groupId, notice: n, canManage: canManage) {
+                            Task { await load() }
+                        }
+                    } label: {
+                        row(n)
                     }
-                } label: {
-                    row(n)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 10)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
+                Color.clear
+                    .frame(height: 10)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(AKColor.bg.ignoresSafeArea())
         .navigationTitle("群公告")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if canManage {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showEditor = true } label: { Image(systemName: "plus") }
+                    Button { showEditor = true } label: { Image(systemName: "square.and.pencil") }
                 }
             }
         }
@@ -47,44 +73,42 @@ struct GroupNoticesView: View {
 
     @ViewBuilder
     private func row(_ n: GroupNotice) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                if n.isTop == 1 { BadgeView(text: "置顶", color: AKColor.link, background: AKColor.blueSoft) }
-                if n.needAck == 1 { BadgeView(text: "需确认", color: AKColor.gold, background: AKColor.goldSoft) }
-                Spacer()
-            }
-            Text(n.content ?? "")
-                .font(.system(size: 14))
-                .foregroundColor(AKColor.text)
-                .lineLimit(3)
-            if !n.imageList.isEmpty {
+        VStack(alignment: .leading, spacing: 8) {
+            if n.isTop == 1 || n.needAck == 1 {
                 HStack(spacing: 6) {
-                    ForEach(n.imageList.prefix(4), id: \.self) { path in
-                        AsyncImage(url: APIClient.fullURL(path)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                AKColor.fill
-                            }
-                        }
-                        .frame(width: 68, height: 68)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    if n.isTop == 1 { BadgeView(text: "置顶", color: AKColor.link, background: AKColor.blueSoft) }
+                    if n.needAck == 1 { BadgeView(text: "需确认", color: AKColor.gold, background: AKColor.goldSoft) }
+                    Spacer(minLength: 0)
+                    if n.needAck == 1 && n.myAck != 1 {
+                        Circle().fill(AKColor.red).frame(width: 6, height: 6)
                     }
                 }
             }
-            HStack {
-                Text("\(n.publisherName ?? "群成员") · \(TimeText.short(n.createdAt))")
+            Text((n.content ?? "").isEmpty ? "（空公告）" : (n.content ?? ""))
+                .font(.system(size: 14))
+                .foregroundColor(AKColor.text)
+                .lineSpacing(3)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !n.imageList.isEmpty {
+                NoticeImageGrid(paths: n.imageList, size: 62, spacing: 5, corners: 8)
+            }
+            HStack(spacing: 6) {
+                Text("\((n.publisherName ?? "").isEmpty ? "群成员" : (n.publisherName ?? "")) · \(TimeText.full(n.createdAt))")
                     .font(.system(size: 11.5))
                     .foregroundColor(AKColor.hint)
                     .lineLimit(1)
-                Spacer()
+                Spacer(minLength: 6)
                 Text(n.needAck == 1 ? "\(n.ackCount) 人已确认" : "\(n.readCount) 人已读")
                     .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.hint)
+                    .foregroundColor(n.needAck == 1 && n.myAck != 1 ? AKColor.link : AKColor.hint)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func load() async {
@@ -93,6 +117,35 @@ struct GroupNoticesView: View {
         if let data = try? await APIClient.shared.groupNotices(gid: groupId) {
             notices = data.list
             canManage = data.canManage == 1
+        }
+    }
+}
+
+/// 公告图片缩略（4 列折行），列表卡片与详情共用
+private struct NoticeImageGrid: View {
+    let paths: [String]
+    var size: CGFloat
+    var spacing: CGFloat
+    var corners: CGFloat
+
+    var body: some View {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.fixed(size), spacing: spacing, alignment: .leading), count: 4),
+            alignment: .leading,
+            spacing: spacing
+        ) {
+            ForEach(paths, id: \.self) { path in
+                AsyncImage(url: APIClient.fullURL(path)) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        AKColor.fill
+                    }
+                }
+                .frame(width: size, height: size)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: corners, style: .continuous))
+            }
         }
     }
 }
@@ -112,85 +165,63 @@ struct GroupNoticeDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if notice.isTop == 1 || notice.needAck == 1 {
-                        HStack(spacing: 6) {
-                            if notice.isTop == 1 { BadgeView(text: "置顶", color: AKColor.link, background: AKColor.blueSoft) }
-                            if notice.needAck == 1 { BadgeView(text: "需确认", color: AKColor.gold, background: AKColor.goldSoft) }
-                            Spacer()
-                        }
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
+                    if notice.isTop == 1 {
+                        BadgeView(text: "置顶", color: AKColor.link, background: AKColor.blueSoft)
                     }
                     Text(notice.content ?? "")
-                        .font(.system(size: 14.5))
+                        .font(.system(size: 15))
                         .foregroundColor(AKColor.text)
+                        .lineSpacing(5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if !notice.imageList.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                            ForEach(notice.imageList, id: \.self) { path in
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.fill
-                                    }
-                                }
-                                .aspectRatio(1, contentMode: .fill)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
+                        NoticeImageGrid(paths: notice.imageList, size: 92, spacing: 6, corners: 8)
                     }
-                    Text("\(notice.publisherName ?? "群成员") · \(TimeText.short(notice.createdAt))　\(notice.needAck == 1 ? "\(notice.ackCount) 人已确认" : "\(notice.readCount) 人已读")")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(AKColor.hint)
+                    Rectangle().fill(AKColor.line).frame(height: 0.5)
+                    HStack(spacing: 8) {
+                        AvatarView(url: nil, name: notice.publisherName ?? "群成员", size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text((notice.publisherName ?? "").isEmpty ? "群成员" : (notice.publisherName ?? ""))
+                                .font(.system(size: 13))
+                                .foregroundColor(AKColor.text)
+                            Text(TimeText.full(notice.createdAt))
+                                .font(.system(size: 11))
+                                .foregroundColor(AKColor.hint)
+                        }
+                        Spacer(minLength: 6)
+                        Text(notice.needAck == 1 ? "\(notice.ackCount) 人已确认" : "\(notice.readCount) 人已读")
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.hint)
+                    }
                 }
-                .padding(14)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(AKColor.card)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 if let errorText {
-                    Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
-                }
-
-                if notice.needAck == 1 {
-                    Button {
-                        Task { await ack() }
-                    } label: {
-                        Text(notice.myAck == 1 ? "已确认" : "我已知晓")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(notice.myAck == 1 ? AKColor.muted : .white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 46)
-                            .background(notice.myAck == 1 ? AKColor.fill : AKColor.brand)
-                            .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
-                    }
-                    .disabled(notice.myAck == 1 || acking)
-                }
-
-                if canManage {
-                    Button {
-                        confirmDelete = true
-                    } label: {
-                        Text("删除公告")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(AKColor.red)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 46)
-                            .background(AKColor.redSoft)
-                            .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
-                    }
+                    Text(errorText)
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.red)
+                        .padding(.horizontal, 4)
                 }
             }
-            .padding(14)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
         }
         .background(AKColor.bg.ignoresSafeArea())
-        .navigationTitle("群公告")
+        .navigationTitle("公告详情")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) { ackBar }
         .toolbar {
             if canManage {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button { showEditor = true } label: { Image(systemName: "square.and.pencil") }
+                    HStack(spacing: 14) {
+                        Button { showEditor = true } label: { Image(systemName: "square.and.pencil") }
+                        Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                    }
                 }
             }
         }
@@ -204,6 +235,26 @@ struct GroupNoticeDetailView: View {
             Button("删除", role: .destructive) { Task { await remove() } }
             Button("取消", role: .cancel) {}
         }
+    }
+
+    private var ackBar: some View {
+        let acked = notice.myAck == 1 || notice.needAck != 1
+        return Button {
+            Task { await ack() }
+        } label: {
+            Text(notice.myAck == 1 ? "已确认" : "我已知晓")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(acked ? AKColor.hint : .white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(acked ? AKColor.fill : AKColor.brand)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(acked || acking)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(AKColor.card)
     }
 
     private func ack() async {
@@ -240,74 +291,107 @@ private struct GroupNoticeEditor: View {
     @State private var images: [String] = []
     @State private var items: [PhotosPickerItem] = []
     @State private var saving = false
+    @State private var uploading = false
     @State private var errorText: String?
+
+    private let cell: CGFloat = 74
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextEditor(text: $text)
-                        .frame(minHeight: 150)
-                        .padding(8)
-                        .background(AKColor.fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                    Text("\(text.count)/600")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(AKColor.hint)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-
-                    PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
-                        Label("添加照片", systemImage: "photo")
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextEditor(text: $text)
                             .font(.system(size: 14))
-                    }
+                            .foregroundColor(AKColor.text)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 150)
+                            .onChange(of: text) { value in
+                                if value.count > 600 { text = String(value.prefix(600)) }
+                            }
+                        Text("\(text.count)/600")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(AKColor.hint)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                        ForEach(images, id: \.self) { path in
-                            ZStack(alignment: .topTrailing) {
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.fill
+                        Text("添加照片")
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.sub)
+                            .padding(.top, 4)
+
+                        LazyVGrid(
+                            columns: Array(repeating: GridItem(.fixed(cell), spacing: 6, alignment: .leading), count: 4),
+                            alignment: .leading,
+                            spacing: 6
+                        ) {
+                            ForEach(images, id: \.self) { path in
+                                ZStack(alignment: .topTrailing) {
+                                    AsyncImage(url: APIClient.fullURL(path)) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            AKColor.fill
+                                        }
                                     }
+                                    .frame(width: cell, height: cell)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    Button {
+                                        images.removeAll { $0 == path }
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .frame(width: 18, height: 18)
+                                            .background(Color.black.opacity(0.6))
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .aspectRatio(1, contentMode: .fill)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                Button {
-                                    images.removeAll { $0 == path }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .frame(width: 18, height: 18)
-                                        .background(Color.black.opacity(0.6))
-                                        .clipShape(Circle())
+                            }
+                            if images.count < 9 {
+                                PhotosPicker(selection: $items, maxSelectionCount: 9, matching: .images) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous).fill(AKColor.fill)
+                                        if uploading {
+                                            Text("上传中").font(.system(size: 11)).foregroundColor(AKColor.hint)
+                                        } else {
+                                            Image(systemName: "plus")
+                                                .font(.system(size: 22))
+                                                .foregroundColor(AKColor.placeholder)
+                                        }
+                                    }
+                                    .frame(width: cell, height: cell)
                                 }
-                                .padding(3)
                             }
                         }
-                    }
 
-                    if let errorText {
-                        Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+                        if let errorText {
+                            Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+                        }
                     }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AKColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .padding(14)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
+            .background(AKColor.bg.ignoresSafeArea())
             .navigationTitle(initial == nil ? "发布群公告" : "编辑群公告")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(saving ? "发布中…" : "发布") { Task { await save() } }
+                    Button(saving ? "发布中" : "发布") { Task { await save() } }
                         .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onAppear {
                 if let initial {
                     text = initial.content ?? ""
-                    images = initial.imageList
+                    images = Array(initial.imageList.prefix(9))
                 }
             }
             .onChange(of: items) { _ in
@@ -318,6 +402,11 @@ private struct GroupNoticeEditor: View {
 
     private func appendPicked() async {
         guard !items.isEmpty else { return }
+        uploading = true
+        defer {
+            uploading = false
+            items = []
+        }
         for item in items {
             if images.count >= 9 { break }
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
@@ -332,7 +421,6 @@ private struct GroupNoticeEditor: View {
                 errorText = "图片上传失败：\(error.localizedDescription)"
             }
         }
-        items = []
     }
 
     private func save() async {

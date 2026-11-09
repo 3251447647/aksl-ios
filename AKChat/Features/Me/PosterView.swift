@@ -26,71 +26,28 @@ struct PosterView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            ScrollView {
-                VStack(spacing: 14) {
-                    if let qr = qrImage(link) {
-                        VStack(spacing: 12) {
-                            if let avatarImage {
-                                Image(uiImage: avatarImage)
-                                    .resizable().scaledToFill()
-                                    .frame(width: 62, height: 62)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            } else {
-                                AvatarView(url: avatar, name: name, size: 62)
-                            }
-                            Text(name)
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundColor(AKColor.text)
-                            Text("AK号：\(number)")
-                                .font(.system(size: 12.5))
-                                .foregroundColor(AKColor.muted)
-                            Image(uiImage: qr)
-                                .interpolation(.none)
-                                .resizable()
-                                .frame(width: 190, height: 190)
-                            Text("扫码加我，一起聊")
-                                .font(.system(size: 12))
-                                .foregroundColor(AKColor.hint)
-                        }
-                        .padding(22)
-                        .frame(maxWidth: .infinity)
-                        .background(AKColor.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
-                }
-                .padding(16)
-            }
+        VStack(spacing: 0) {
+            List {
+                posterCard
+                    .listRowInsets(EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
 
-            HStack(spacing: 10) {
-                Button {
-                    Task { await savePoster() }
-                } label: {
-                    Text(saved ? "已保存" : "保存海报")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                        .background(AKColor.brand)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                }
-                Button {
-                    showShare = true
-                } label: {
-                    Text("分享")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(AKColor.text)
-                        .frame(width: 96)
-                        .frame(height: 44)
-                        .background(AKColor.fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                }
+                Text("保存后可直接发到朋友圈、群聊或分享给好友")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.placeholder)
+                    .frame(maxWidth: .infinity)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+
+            actionBar
         }
         .background(AKColor.bg.ignoresSafeArea())
-        .navigationTitle("我的海报")
+        .navigationTitle("邀请海报")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadAvatar() }
         .sheet(isPresented: $showShare) {
@@ -98,6 +55,129 @@ struct PosterView: View {
                 ShareSheet(items: [img])
             }
         }
+    }
+
+    // MARK: - 海报
+
+    private var posterCard: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 4) {
+                Text("AK商聊")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.white)
+                Text("扫码加我，一起聊")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 22)
+            .background(
+                LinearGradient(colors: [Color(hex: 0x2FBE6E), Color(hex: 0x1FA45B)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+
+            VStack(spacing: 0) {
+                ZStack(alignment: .bottomTrailing) {
+                    if let avatarImage {
+                        Image(uiImage: avatarImage)
+                            .resizable().scaledToFill()
+                            .frame(width: 72, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    } else {
+                        AvatarView(url: avatar, name: name, size: 72)
+                    }
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(Color(hex: 0x2FBE6E))
+                        .background(Circle().fill(Color.white).frame(width: 17, height: 17))
+                }
+                .padding(3)
+                .background(AKColor.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+                .padding(.top, -40)
+
+                Text(name)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(AKColor.text)
+                    .padding(.top, 10)
+
+                Text("AK号：\(number)")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                    .padding(.top, 5)
+
+                if let qr = qrImage(link) {
+                    Image(uiImage: qr)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 190, height: 190)
+                        .padding(10)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(.top, 16)
+                }
+
+                Text("长按识别二维码，添加我为好友")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.hint)
+                    .padding(.top, 12)
+
+                Rectangle()
+                    .fill(AKColor.line)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 56)
+                    .padding(.top, 16)
+
+                Text("AK商聊 · 让沟通更有温度")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.placeholder)
+                    .padding(.top, 10)
+                    .padding(.bottom, 18)
+            }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+            .background(AKColor.card)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    // MARK: - 底部操作
+
+    private var actionBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                Task { await savePoster() }
+            } label: {
+                Text(saved ? "已保存到相册" : "↓  保存到相册")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(
+                        LinearGradient(colors: [Color(hex: 0x43C463), Color(hex: 0x2FA84F)],
+                                       startPoint: .leading, endPoint: .trailing)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showShare = true
+            } label: {
+                Text("分享")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                    .frame(width: 92)
+                    .frame(height: 50)
+                    .background(AKColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background(AKColor.bg)
     }
 
     private func loadAvatar() async {

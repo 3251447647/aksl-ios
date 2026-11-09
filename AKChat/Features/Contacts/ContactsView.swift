@@ -6,6 +6,7 @@ struct ContactsView: View {
     @State private var profileTarget: ProfileTarget?
     @State private var showAddFriend = false
     @State private var tab = 0
+    @State private var activeLetter: String?
 
     private var friends: [ContactFriend] { app.contacts?.friends ?? [] }
     private var groups: [ContactGroup] { app.contacts?.groups ?? [] }
@@ -13,20 +14,36 @@ struct ContactsView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: 10) {
-                            searchBar
-                            entries
-                            tabBar
-                            if tab == 0 { friendList } else { groupList }
+                searchBar
+                entries
+                Color.clear.frame(height: 10)
+                tabBar
+                if tab == 0 {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            friendList
+                                .padding(.bottom, 14)
                         }
-                        .padding(.bottom, 14)
+                        .overlay(alignment: .trailing) {
+                            if friendSections.count > 1 {
+                                indexBar(proxy)
+                            }
+                        }
+                        .overlay {
+                            if let letter = activeLetter {
+                                Text(letter)
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 56, height: 56)
+                                    .background(Color(hex: 0x1A1D26).opacity(0.8))
+                                    .clipShape(Circle())
+                                    .allowsHitTesting(false)
+                            }
+                        }
                     }
-                    .overlay(alignment: .trailing) {
-                        if tab == 0 && friendSections.count > 1 {
-                            indexBar(proxy)
-                        }
+                } else {
+                    ScrollView {
+                        groupList.padding(.bottom, 14)
                     }
                 }
             }
@@ -50,21 +67,22 @@ struct ContactsView: View {
         Button {
             showAddFriend = true
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14))
-                    .foregroundColor(AKColor.hint)
+                    .font(.system(size: 15))
+                    .foregroundColor(AKColor.muted)
                 Text("搜索 / 添加好友")
                     .font(.system(size: 14))
-                    .foregroundColor(AKColor.hint)
-                Spacer()
+                    .foregroundColor(AKColor.muted)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .frame(height: 38)
             .background(AKColor.fill)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(AKColor.card)
         }
         .buttonStyle(.plain)
     }
@@ -82,40 +100,39 @@ struct ContactsView: View {
             }
             divider
             NavigationLink { NoticesView() } label: {
-                entryRow("系统公告", "megaphone.fill", Color(hex: 0x5AA9F5), badge: 0)
+                entryRow("系统公告", "megaphone.fill", Color(hex: 0x57C7FF), badge: 0)
             }
         }
         .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 10)
     }
 
     private func entryRow(_ title: String, _ icon: String, _ color: Color, badge: Int) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 17))
+                .font(.system(size: 18))
                 .foregroundColor(.white)
                 .frame(width: 38, height: 38)
                 .background(color)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             Text(title).font(.system(size: 15)).foregroundColor(AKColor.text)
-            Spacer()
+            Spacer(minLength: 0)
             if badge > 0 {
-                Text("\(badge)")
-                    .font(.system(size: 12, weight: .semibold))
+                Text(badge > 99 ? "99+" : "\(badge)")
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(AKColor.red).clipShape(Capsule())
+                    .padding(.horizontal, badge > 9 ? 4 : 0)
+                    .frame(minWidth: 18, minHeight: 18)
+                    .background(AKColor.red)
+                    .clipShape(Capsule())
             }
-            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundColor(AKColor.hint)
         }
-        .padding(.horizontal, 13)
-        .frame(height: 54)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .contentShape(Rectangle())
     }
 
     private var divider: some View {
-        Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.leading, 63)
+        Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 66)
     }
 
     private var tabBar: some View {
@@ -125,28 +142,26 @@ struct ContactsView: View {
         }
         .background(
             VStack(spacing: 0) {
-                Spacer()
-                Rectangle().fill(AKColor.line).frame(height: 0.5)
+                Spacer(minLength: 0)
+                Rectangle().fill(AKColor.fill).frame(height: 0.6)
             }
         )
-        .padding(.top, 4)
     }
 
     private func tabItem(_ title: String, _ index: Int) -> some View {
         Button {
             tab = index
         } label: {
-            VStack(spacing: 7) {
+            VStack(spacing: 5) {
                 Text(title)
-                    .font(.system(size: 14.5, weight: tab == index ? .semibold : .regular))
+                    .font(.system(size: 14, weight: tab == index ? .semibold : .regular))
                     .foregroundColor(tab == index ? AKColor.text : AKColor.muted)
                 Rectangle()
                     .fill(tab == index ? AKColor.brand : Color.clear)
-                    .frame(width: 26, height: 2.5)
-                    .clipShape(Capsule())
+                    .frame(width: 22, height: 2)
             }
             .frame(maxWidth: .infinity)
-            .padding(.top, 8)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -157,65 +172,54 @@ struct ContactsView: View {
     private var friendList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("共 \(friends.count) 位好友")
-                .font(.system(size: 12.5))
+                .font(.system(size: 12))
                 .foregroundColor(AKColor.muted)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             ForEach(friendSections) { sec in
                 Text(sec.letter)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(AKColor.muted)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AKColor.sub)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .frame(height: 26)
-                    .background(AKColor.fill)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 5)
+                    .background(AKColor.bg)
                     .id("sec-" + sec.letter)
                 VStack(spacing: 0) {
-                    ForEach(sec.items) { f in
-                        NavigationLink {
-                            ChatView(convType: "private", convId: f.id, title: f.displayName)
+                    ForEach(Array(sec.items.enumerated()), id: \.element.id) { idx, f in
+                        Button {
+                            profileTarget = ProfileTarget(id: f.id)
                         } label: {
                             friendRow(f)
                         }
                         .buttonStyle(.plain)
-                        .contextMenu {
-                            Button {
-                                profileTarget = ProfileTarget(id: f.id)
-                            } label: {
-                                Label("查看资料", systemImage: "person.crop.circle")
-                            }
+                        if idx < sec.items.count - 1 {
+                            Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 72)
                         }
                     }
                 }
                 .background(AKColor.card)
             }
             if friendSections.isEmpty {
-                Text("还没有好友，点上方搜索添加")
-                    .font(.system(size: 13))
-                    .foregroundColor(AKColor.hint)
+                Text("还没有好友，点上面「新朋友」添加")
+                    .font(.system(size: 12.5))
+                    .foregroundColor(AKColor.placeholder)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
+                    .padding(.vertical, 60)
             }
         }
     }
 
     private func friendRow(_ f: ContactFriend) -> some View {
         HStack(spacing: 12) {
-            ZStack(alignment: .bottomLeading) {
-                AvatarView(url: f.avatar, name: f.displayName, size: 46)
-                if f.isPretty == 1, let no = f.prettyNo, !no.isEmpty {
-                    Text(no)
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Color(hex: 0xF3D27C))
-                        .padding(.horizontal, 3)
-                        .frame(height: 13)
-                        .background(Color(hex: 0x1A1A1A).opacity(0.92))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        .offset(x: -2, y: 3)
+            AvatarView(url: f.avatar, name: f.displayName, size: 44)
+                .overlay(alignment: .bottomTrailing) {
+                    if f.online == 1 {
+                        Circle().fill(AKColor.brand).frame(width: 11, height: 11)
+                    }
                 }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
                     Text(f.displayName)
                         .font(.system(size: 15))
                         .foregroundColor(akNameColor(vipLevel: f.vipLevel, isPretty: f.isPretty, isGroup: false))
@@ -233,32 +237,36 @@ struct ContactsView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
-                Text("AK号 \(f.yxId ?? "")")
-                    .font(.system(size: 12))
-                    .foregroundColor(f.isPretty == 1 ? Color(hex: 0xC9A44C) : AKColor.muted)
+                Text("AK号 " + akSubtitleNumber(f))
+                    .font(.system(size: f.isPretty == 1 ? 12.5 : 11.5,
+                                  weight: f.isPretty == 1 ? .semibold : .regular))
+                    .foregroundColor(f.isPretty == 1 ? AKColor.gold : AKColor.muted)
+                    .lineLimit(1)
             }
             Spacer(minLength: 0)
-            if f.online == 1 {
-                Circle().fill(AKColor.brand).frame(width: 8, height: 8)
-            }
         }
         .padding(.horizontal, 13)
         .frame(height: 66)
         .contentShape(Rectangle())
     }
 
+    private func akSubtitleNumber(_ f: ContactFriend) -> String {
+        if f.isPretty == 1, let no = f.prettyNo, !no.isEmpty { return no }
+        return f.yxId ?? ""
+    }
+
     // MARK: - 群列表
 
     private var groupList: some View {
         VStack(spacing: 0) {
-            ForEach(groups) { g in
+            ForEach(Array(groups.enumerated()), id: \.element.id) { idx, g in
                 NavigationLink {
                     ChatView(convType: "group", convId: g.id, title: g.name ?? "群聊")
                 } label: {
                     HStack(spacing: 12) {
-                        AvatarView(url: g.avatar, name: g.name ?? "群聊", size: 46)
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 5) {
+                        AvatarView(url: g.avatar, name: g.name ?? "群聊", size: 44)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
                                 Text(g.name ?? "群聊")
                                     .font(.system(size: 15))
                                     .foregroundColor(akNameColor(vipLevel: 0, isPretty: g.isPretty, isGroup: true))
@@ -273,7 +281,7 @@ struct ContactsView: View {
                                 }
                             }
                             Text("\(g.memberCount) 人")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11.5))
                                 .foregroundColor(AKColor.muted)
                         }
                         Spacer(minLength: 0)
@@ -283,13 +291,16 @@ struct ContactsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                if idx < groups.count - 1 {
+                    Rectangle().fill(AKColor.fill).frame(height: 0.6).padding(.leading, 72)
+                }
             }
             if groups.isEmpty {
-                Text("还没有群聊")
-                    .font(.system(size: 13))
-                    .foregroundColor(AKColor.hint)
+                Text("还没有加入任何群聊")
+                    .font(.system(size: 12.5))
+                    .foregroundColor(AKColor.placeholder)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
+                    .padding(.vertical, 60)
             }
         }
         .background(AKColor.card)
@@ -298,19 +309,34 @@ struct ContactsView: View {
     // MARK: - 索引
 
     private func indexBar(_ proxy: ScrollViewProxy) -> some View {
-        VStack(spacing: 0) {
+        let rowHeight: CGFloat = 17
+        return VStack(spacing: 0) {
             ForEach(friendSections) { sec in
                 Text(sec.letter)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: 9.5, weight: .medium))
                     .foregroundColor(AKColor.sub)
-                    .frame(width: 15, height: 13)
-                    .contentShape(Rectangle())
-                    .onTapGesture { proxy.scrollTo("sec-" + sec.letter, anchor: .top) }
+                    .frame(width: 18, height: rowHeight)
             }
         }
         .padding(.vertical, 6)
-        .padding(.horizontal, 1)
-        .background(.ultraThinMaterial, in: Capsule())
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in
+                    let count = friendSections.count
+                    guard count > 0 else { return }
+                    let idx = min(max(Int((value.location.y - 6) / rowHeight), 0), count - 1)
+                    let letter = friendSections[idx].letter
+                    guard letter != activeLetter else { return }
+                    activeLetter = letter
+                    proxy.scrollTo("sec-" + letter, anchor: .top)
+                }
+                .onEnded { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        activeLetter = nil
+                    }
+                }
+        )
         .padding(.trailing, 2)
     }
 

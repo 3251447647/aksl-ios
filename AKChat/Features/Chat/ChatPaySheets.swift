@@ -271,3 +271,455 @@ struct GiftSheet: View {
         }
     }
 }
+
+/* ---------------- 领取类卡片：红包详情 / 转账收款 / 礼物领取 ---------------- */
+
+struct RedPacketInfo: Decodable {
+    let id: Int64
+    let fromUid: Int64
+    let totalCoin: Int
+    let count: Int
+    let leftCount: Int
+    let blessing: String
+    let grabbed: Int
+    let mine: Int
+    let logs: [RedPacketLog]
+
+    enum CodingKeys: String, CodingKey {
+        case id, count, blessing, grabbed, mine, logs
+        case fromUid = "from_uid"
+        case totalCoin = "total_coin"
+        case leftCount = "left_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(Int64.self, forKey: .id)) ?? 0
+        fromUid = (try? c.decode(Int64.self, forKey: .fromUid)) ?? 0
+        totalCoin = (try? c.decode(Int.self, forKey: .totalCoin)) ?? 0
+        count = (try? c.decode(Int.self, forKey: .count)) ?? 0
+        leftCount = (try? c.decode(Int.self, forKey: .leftCount)) ?? 0
+        blessing = (try? c.decode(String.self, forKey: .blessing)) ?? ""
+        grabbed = (try? c.decode(Int.self, forKey: .grabbed)) ?? 0
+        mine = (try? c.decode(Int.self, forKey: .mine)) ?? 0
+        logs = (try? c.decode([RedPacketLog].self, forKey: .logs)) ?? []
+    }
+}
+
+struct RedPacketLog: Decodable, Identifiable {
+    let uid: Int64
+    let name: String
+    let avatar: String
+    let coin: Int
+    let createdAt: Int64
+
+    var id: Int64 { uid }
+
+    enum CodingKeys: String, CodingKey {
+        case uid, name, avatar, coin
+        case createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        uid = (try? c.decode(Int64.self, forKey: .uid)) ?? 0
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        avatar = (try? c.decode(String.self, forKey: .avatar)) ?? ""
+        coin = (try? c.decode(Int.self, forKey: .coin)) ?? 0
+        createdAt = (try? c.decode(Int64.self, forKey: .createdAt)) ?? 0
+    }
+}
+
+extension APIClient {
+    func redPacketInfo(id: Int64, convType: String, convId: Int64) async throws -> RedPacketInfo {
+        try await get("api/v1/redpacket/info", query: [
+            "id": String(id),
+            "conv_type": convType,
+            "conv_id": String(convId)
+        ])
+    }
+
+    func grabRedPacket(id: Int64, convType: String, convId: Int64) async throws -> Int {
+        struct GrabResp: Decodable { let coin: Int }
+        let r: GrabResp = try await post("api/v1/redpacket/grab", body: [
+            "id": id, "conv_type": convType, "conv_id": convId
+        ])
+        return r.coin
+    }
+
+    func receiveTransfer(id: Int64) async throws {
+        _ = try await postRaw("api/v1/transfer/receive", body: ["id": id])
+    }
+
+    func claimGift(id: Int64) async throws {
+        _ = try await postRaw("api/v1/gift/claim", body: ["id": id])
+    }
+}
+
+/// 从卡片消息里取字段：extra 优先，缺字段回落到 content/text 的 JSON
+private func payCardStr(_ m: Message, _ key: String) -> String {
+    if let v = m.extraMap[key]?.stringValue, !v.isEmpty, v != "null" { return v }
+    if let o = MessageBody.jsonObject(m.content) ?? MessageBody.jsonObject(m.text) {
+        if let s = o[key] as? String, !s.isEmpty { return s }
+        if let n = o[key] as? NSNumber { return n.stringValue }
+    }
+    return ""
+}
+
+private func payCardInt(_ m: Message, _ key: String) -> Int {
+    if let v = m.extraMap[key]?.intValue { return v }
+    if let o = MessageBody.jsonObject(m.content) ?? MessageBody.jsonObject(m.text) {
+        if let n = o[key] as? NSNumber { return n.intValue }
+        if let s = o[key] as? String { return Int(s) ?? 0 }
+    }
+    return 0
+}
+
+/// 红包详情：总额/祝福语/领取记录 + 开红包
+struct RedPacketDetailSheet: View {
+    let infoId: Int64
+    let convType: String
+    let convId: Int64
+    let myId: Int64
+    var onDone: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var info: RedPacketInfo?
+    @State private var busy = false
+    @State private var errorText: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if let info {
+                    header(info)
+                    logsCard(info)
+                } else if let errorText {
+                    Text(errorText)
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.red)
+                        .padding(.top, 40)
+                } else {
+                    ProgressView().padding(.top, 40)
+                }
+            }
+            .padding(16)
+        }
+        .background(AKColor.bg)
+        .navigationTitle("红包")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("关闭") { dismiss() }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let info { actionBar(info) }
+        }
+        .task { await load() }
+    }
+
+    private func header(_ info: RedPacketInfo) -> some View {
+        let mineGrabbed = info.mine
+        let amount = mineGrabbed > 0 ? mineGrabbed : info.totalCoin
+        let title = info.fromUid == myId ? "我发的红包" : "收到的红包"
+        let subline = mineGrabbed > 0
+            ? "你抢到 \(mineGrabbed) K币"
+            : "共 \(info.count) 个 · 剩 \(info.leftCount) 个"
+        return VStack(spacing: 6) {
+            Text("🧧").font(.system(size: 34))
+            Text(title).font(.system(size: 14, weight: .medium)).foregroundColor(.white)
+            Text(info.blessing.isEmpty ? "恭喜发财，大吉大利" : info.blessing)
+                .font(.system(size: 12.5))
+                .foregroundColor(.white.opacity(0.8))
+                .lineLimit(2)
+            Text("\(amount)")
+                .font(.system(size: 36, weight: .bold))
+                .foregroundColor(.white)
+            Text("K币").font(.system(size: 11.5)).foregroundColor(.white.opacity(0.8))
+            Text(subline).font(.system(size: 11.5)).foregroundColor(Color(hex: 0xFFE9C7))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .background(LinearGradient(colors: [AKColor.red, AKColor.red],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func logsCard(_ info: RedPacketInfo) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("领取记录").font(.system(size: 13, weight: .medium)).foregroundColor(AKColor.text)
+                Spacer()
+                Text("\(info.logs.count)/\(info.count)")
+                    .font(.system(size: 11.5)).foregroundColor(AKColor.muted)
+            }
+            if info.logs.isEmpty {
+                Text("还没有人领取")
+                    .font(.system(size: 12))
+                    .foregroundColor(AKColor.placeholder)
+                    .frame(maxWidth: .infinity).padding(.vertical, 16)
+            } else {
+                ForEach(info.logs) { log in
+                    HStack(spacing: 8) {
+                        AvatarView(url: log.avatar, name: log.name, size: 26)
+                        Text(log.name.isEmpty ? "成员" : log.name)
+                            .font(.system(size: 13))
+                            .foregroundColor(log.uid == myId ? AKColor.gold : AKColor.text)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(log.coin) K币")
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.sub)
+                    }
+                }
+            }
+            if let errorText {
+                Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func actionBar(_ info: RedPacketInfo) -> some View {
+        let isSelf = info.fromUid == myId
+        let canGrab = !isSelf && info.grabbed == 0 && info.leftCount > 0 && info.mine == 0
+        Button {
+            Task { await grab() }
+        } label: {
+            Text(canGrab ? (busy ? "领取中…" : "开") : (info.mine > 0 ? "已领取 \(info.mine) K币" : (info.leftCount <= 0 ? "红包已领完" : "已领取")))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 46)
+                .background(canGrab ? AKColor.red : AKColor.placeholder)
+                .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+        }
+        .disabled(!canGrab || busy)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .padding(.top, 6)
+        .background(AKColor.bg)
+    }
+
+    private func load() async {
+        do {
+            info = try await APIClient.shared.redPacketInfo(id: infoId, convType: convType, convId: convId)
+        } catch {
+            errorText = "红包加载失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func grab() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await APIClient.shared.grabRedPacket(id: infoId, convType: convType, convId: convId)
+            await load()
+            onDone()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+}
+
+/// 转账收款
+struct TransferClaimSheet: View {
+    let message: Message
+    let convType: String
+    let convId: Int64
+    let myId: Int64
+    var onDone: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+    @State private var done = false
+    @State private var errorText: String?
+
+    private var tid: Int64 {
+        let v = payCardInt(message, "tid")
+        return v > 0 ? Int64(v) : message.id
+    }
+    private var coin: Int {
+        payCardInt(message, "coin") > 0 ? payCardInt(message, "coin") : payCardInt(message, "amount")
+    }
+    private var remark: String { payCardStr(message, "remark") }
+    private var toUid: Int64 {
+        payCardInt(message, "to_uid") > 0 ? Int64(payCardInt(message, "to_uid")) : message.toUid
+    }
+    private var isRcv: Bool { myId > 0 && toUid == myId }
+    private var finished: Bool { done || payCardInt(message, "status") != 0 }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 6) {
+                Text("转账")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.85))
+                Text("\(coin) K币")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundColor(.white)
+                if !remark.isEmpty {
+                    Text(remark).font(.system(size: 12)).foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+            .background(LinearGradient(colors: [Color(hex: 0x5B6BFF), Color(hex: 0x7C4DF5)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if let errorText {
+                Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+            }
+
+            Spacer(minLength: 0)
+
+            if isRcv && !finished {
+                Button {
+                    Task { await receive() }
+                } label: {
+                    Text(busy ? "收款中…" : "确认收款")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(AKColor.brand)
+                        .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+                }
+                .disabled(busy)
+            } else {
+                Text(isRcv || !finished ? "等待对方领取" : "已被领取")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+            }
+        }
+        .padding(16)
+        .background(AKColor.bg)
+        .navigationTitle("转账")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("关闭") { dismiss() }
+            }
+        }
+    }
+
+    private func receive() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            try await APIClient.shared.receiveTransfer(id: tid)
+            done = true
+            onDone()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+}
+
+/// 礼物领取
+struct GiftClaimSheet: View {
+    let message: Message
+    let convType: String
+    let convId: Int64
+    let myId: Int64
+    var onDone: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var busy = false
+    @State private var done = false
+    @State private var errorText: String?
+
+    private var giftLogId: Int64 {
+        let v = payCardInt(message, "gift_log_id")
+        return v > 0 ? Int64(v) : message.id
+    }
+    private var name: String { payCardStr(message, "name") }
+    private var coin: Int { payCardInt(message, "coin") }
+    private var toUid: Int64 {
+        payCardInt(message, "to_uid") > 0 ? Int64(payCardInt(message, "to_uid")) : message.toUid
+    }
+    private var isRcv: Bool { myId > 0 && toUid == myId }
+    private var finished: Bool { done || payCardInt(message, "status") != 0 }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 8) {
+                Text("🎁").font(.system(size: 40))
+                Text(name.isEmpty ? "礼物" : name)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                if coin > 0 {
+                    Text("\(coin) K币").font(.system(size: 13)).foregroundColor(.white.opacity(0.85))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 26)
+            .background(LinearGradient(colors: [AKColor.gold, Color(hex: 0xF09A17)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if let errorText {
+                Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+            }
+
+            Spacer(minLength: 0)
+
+            if isRcv && !finished {
+                Button {
+                    Task { await claim() }
+                } label: {
+                    Text(busy ? "领取中…" : "领取礼物")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(AKColor.brand)
+                        .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+                }
+                .disabled(busy)
+            } else {
+                Text(finished ? "已领取" : "等待对方领取")
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
+            }
+        }
+        .padding(16)
+        .background(AKColor.bg)
+        .navigationTitle("礼物")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("关闭") { dismiss() }
+            }
+        }
+    }
+
+    private func claim() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            try await APIClient.shared.claimGift(id: giftLogId)
+            done = true
+            onDone()
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+}

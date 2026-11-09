@@ -8,72 +8,74 @@ struct DiscoverView: View {
     @State private var scanUid: Int64 = 0
     @State private var showScanProfile = false
 
+    private var momentUnread: Int {
+        app.conversations.first { $0.convType == "moment" }?.unread ?? 0
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    NavigationLink {
-                        MomentsView()
-                    } label: {
-                        HStack(spacing: 12) {
-                            icon("photo.on.rectangle.angled", AKColor.brand)
-                            Text("朋友圈").foregroundColor(AKColor.text)
-                            Spacer()
-                            if let avatar = app.user?.avatar, let u = APIClient.fullURL(avatar) {
-                                AsyncImage(url: u) { phase in
-                                    if let img = phase.image { img.resizable().scaledToFill() } else { AKColor.fill }
-                                }
-                                .frame(width: 30, height: 30)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            }
-                            if app.conversations.contains(where: { $0.convType == "moment" && $0.unread > 0 }) {
-                                Circle().fill(AKColor.red).frame(width: 8, height: 8)
-                            }
+            ScrollView {
+                VStack(spacing: 10) {
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            MomentsView()
+                        } label: {
+                            row("朋友圈", icon: "photo.on.rectangle.angled", tint: AKColor.brand,
+                                trailing: AnyView(HStack(spacing: 8) {
+                                    if momentUnread > 0 {
+                                        Text("\(min(momentUnread, 99))")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 4)
+                                            .frame(minWidth: 18, minHeight: 18)
+                                            .background(AKColor.red)
+                                            .clipShape(Capsule())
+                                    }
+                                    AvatarView(url: app.user?.avatar,
+                                               name: app.user?.displayName ?? "我",
+                                               size: 26)
+                                }))
                         }
-                    }
-                    Button {
-                        showScanner = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            icon("qrcode.viewfinder", AKColor.link)
-                            Text("扫一扫").foregroundColor(AKColor.text)
-                            Spacer()
+                        .buttonStyle(.plain)
+                        divider
+                        Button {
+                            showScanner = true
+                        } label: {
+                            row("扫一扫", icon: "qrcode.viewfinder", tint: Color(hex: 0x57C7FF))
                         }
-                    }
-                    Button {
-                        showInvite = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            icon("gift.fill", Color(hex: 0xFF8A5C))
-                            Text("邀请有礼").foregroundColor(AKColor.text)
-                            Spacer()
+                        .buttonStyle(.plain)
+                        divider
+                        Button {
+                            showInvite = true
+                        } label: {
+                            row("邀请有礼", icon: "gift.fill", tint: Color(hex: 0xFF8A65))
                         }
+                        .buttonStyle(.plain)
                     }
-                }
+                    .background(AKColor.card)
 
-                Section {
-                    NavigationLink {
-                        FavoritesView()
-                    } label: {
-                        HStack(spacing: 12) {
-                            icon("star.circle.fill", AKColor.gold)
-                            Text("我的收藏").foregroundColor(AKColor.text)
-                            Spacer()
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            FavoritesView()
+                        } label: {
+                            row("我的收藏", icon: "star.circle.fill", tint: AKColor.gold)
                         }
-                    }
-                    NavigationLink {
-                        NoticesView()
-                    } label: {
-                        HStack(spacing: 12) {
-                            icon("megaphone.fill", Color(hex: 0x8B7BF0))
-                            Text("系统公告").foregroundColor(AKColor.text)
-                            Spacer()
+                        .buttonStyle(.plain)
+                        divider
+                        NavigationLink {
+                            NoticesView()
+                        } label: {
+                            row("系统公告", icon: "megaphone.fill", tint: Color(hex: 0x8B7CF6))
                         }
+                        .buttonStyle(.plain)
                     }
+                    .background(AKColor.card)
                 }
+                .padding(.top, 10)
             }
-            .listStyle(.insetGrouped)
+            .background(AKColor.bg)
             .navigationTitle("广场")
+            .navigationBarTitleDisplayMode(.inline)
             .fullScreenCover(isPresented: $showScanner) {
                 ScannerView { code in
                     showScanner = false
@@ -106,13 +108,37 @@ struct DiscoverView: View {
         }
     }
 
-    private func icon(_ name: String, _ color: Color) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 17))
-            .foregroundColor(.white)
-            .frame(width: 38, height: 38)
-            .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    /// 广场行：图标 38 圆角 10、行高 54、右侧箭头
+    private func row(_ title: String, icon: String, tint: Color, trailing: AnyView? = nil) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.white)
+                .frame(width: 38, height: 38)
+                .background(tint)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Text(title)
+                .font(.system(size: 15.5))
+                .foregroundColor(AKColor.text)
+            Spacer(minLength: 0)
+            if let trailing {
+                trailing
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(AKColor.placeholder)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 54)
+        .contentShape(Rectangle())
+    }
+
+    /// 分组内分隔线：与安卓同样从图标右侧开始
+    private var divider: some View {
+        Rectangle()
+            .fill(AKColor.fill)
+            .frame(height: 0.5)
+            .padding(.leading, 66)
     }
 }
 

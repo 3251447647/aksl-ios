@@ -1,32 +1,64 @@
 import SwiftUI
 
-/// 聊天「+」面板：安卓式四宫格（相册/红包/转账/礼物）
+/// 聊天「+」面板：安卓式图标网格（相册/拍摄/通话/直播间/红包/礼物/转账）
 struct MorePanel: View {
+    var isGroup: Bool
     var onPhoto: () -> Void
+    var onCamera: () -> Void
     var onRedPacket: () -> Void
     var onTransfer: () -> Void
     var onGift: () -> Void
+    var onVoiceCall: () -> Void = {}
+    var onVideoCall: () -> Void = {}
+    var onGroupCall: (Int) -> Void = { _ in }
+    var onGroupLive: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
 
-    private let items: [(title: String, icon: String, color: Color)] = [
-        ("相册", "photo.on.rectangle", Color(hex: 0x4C8DFF)),
-        ("红包", "envelope.fill", Color(hex: 0xE8603C)),
-        ("转账", "arrow.left.arrow.right.circle.fill", Color(hex: 0xF0B429)),
-        ("礼物", "gift.fill", Color(hex: 0x8B7BF6))
-    ]
+    private struct Item {
+        let title: String
+        let icon: String
+        let color: Color
+        let action: () -> Void
+    }
+
+    private var items: [Item] {
+        var list: [Item] = [
+            Item(title: "相册", icon: "photo.on.rectangle", color: Color(hex: 0x4C8DFF), action: onPhoto),
+            Item(title: "拍摄", icon: "camera.fill", color: Color(hex: 0x34C759), action: onCamera)
+        ]
+        if isGroup {
+            list.append(Item(title: "群通话", icon: "phone.fill", color: AKColor.brand, action: { onGroupCall(2) }))
+            list.append(Item(title: "直播间", icon: "video.fill", color: Color(hex: 0xFF4D6D), action: onGroupLive))
+            list.append(Item(title: "语音通话", icon: "phone.fill", color: AKColor.brand, action: { onGroupCall(1) }))
+        } else {
+            list.append(Item(title: "语音通话", icon: "phone.fill", color: AKColor.brand, action: onVoiceCall))
+            list.append(Item(title: "视频通话", icon: "video.fill", color: AKColor.brand, action: onVideoCall))
+        }
+        list.append(Item(title: "红包", icon: "envelope.fill", color: Color(hex: 0xE8603C), action: onRedPacket))
+        list.append(Item(title: "礼物", icon: "gift.fill", color: Color(hex: 0x8B7BF6), action: onGift))
+        list.append(Item(title: "转账", icon: "arrow.left.arrow.right", color: Color(hex: 0xF0B429), action: onTransfer))
+        return list
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                grid(title: items[0].title, icon: items[0].icon, color: items[0].color, action: onPhoto)
-                grid(title: items[1].title, icon: items[1].icon, color: items[1].color, action: onRedPacket)
-                grid(title: items[2].title, icon: items[2].icon, color: items[2].color, action: onTransfer)
-                grid(title: items[3].title, icon: items[3].icon, color: items[3].color, action: onGift)
+            let rows = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
+            ForEach(rows.indices, id: \.self) { i in
+                HStack(spacing: 0) {
+                    ForEach(0..<4, id: \.self) { j in
+                        if j < rows[i].count {
+                            let item = rows[i][j]
+                            grid(title: item.title, icon: item.icon, color: item.color, action: item.action)
+                        } else {
+                            Spacer().frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+                .padding(.top, i == 0 ? 16 : 12)
             }
-            .padding(.top, 22)
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Button {
                 dismiss()
@@ -35,19 +67,21 @@ struct MorePanel: View {
                     .font(.system(size: 15))
                     .foregroundColor(AKColor.text)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 48)
+                    .frame(height: 46)
                     .background(AKColor.fill)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 16)
+            .padding(.bottom, 12)
         }
         .background(AKColor.bg)
         .presentationDragIndicator(.visible)
     }
 
     private func grid(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            action()
+        } label: {
             VStack(spacing: 7) {
                 Image(systemName: icon)
                     .font(.system(size: 21))
@@ -58,6 +92,7 @@ struct MorePanel: View {
                 Text(title)
                     .font(.system(size: 11.5))
                     .foregroundColor(AKColor.sub)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
         }

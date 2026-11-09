@@ -14,7 +14,7 @@ struct MomentsView: View {
     @State private var tab = 0
     @State private var coverItem: PhotosPickerItem?
 
-    /// 顶部封面：自己的朋友圈封面 + 右下角相机（对齐安卓）
+    /// 顶部封面：自己的朋友圈封面 + 右上角相机 + 右下角署名（对齐安卓）
     private var coverHeader: some View {
         ZStack(alignment: .topTrailing) {
             Group {
@@ -27,25 +27,45 @@ struct MomentsView: View {
                         }
                     }
                 } else {
-                    LinearGradient(colors: [Color(hex: 0x2F6FD0), Color(hex: 0x9CC6F5)],
+                    LinearGradient(colors: [AKColor.brand, Color(hex: 0x06AD56)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
             }
-            .frame(height: 160)
+            .frame(height: 200)
             .frame(maxWidth: .infinity)
             .clipped()
+
+            LinearGradient(stops: [
+                .init(color: Color.black.opacity(0.08), location: 0),
+                .init(color: .clear, location: 0.55),
+                .init(color: Color.black.opacity(0.55), location: 1)
+            ], startPoint: .top, endPoint: .bottom)
+            .frame(height: 200)
+            .allowsHitTesting(false)
 
             PhotosPicker(selection: $coverItem, matching: .images) {
                 Image(systemName: "camera.fill")
                     .font(.system(size: 15))
                     .foregroundColor(.white)
                     .frame(width: 34, height: 34)
-                    .background(Color.black.opacity(0.35))
+                    .background(Color.black.opacity(0.32))
                     .clipShape(Circle())
             }
-            .padding(.top, 10)
-            .padding(.trailing, 12)
+            .padding(6)
+
+            HStack(spacing: 8) {
+                Text(app.user?.displayName ?? "我")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                AvatarView(url: app.user?.avatar, name: app.user?.displayName ?? "我", size: 54)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
+        .frame(height: 200)
+        .clipped()
     }
 
     private func uploadCover(_ item: PhotosPickerItem) async {
@@ -72,285 +92,330 @@ struct MomentsView: View {
                     tab = i
                 } label: {
                     Text(title)
-                        .font(.system(size: 14, weight: tab == i ? .semibold : .regular))
-                        .foregroundColor(tab == i ? AKColor.brand : AKColor.muted)
+                        .font(.system(size: 13, weight: tab == i ? .semibold : .regular))
+                        .foregroundColor(tab == i ? AKColor.brand : AKColor.sub)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 36)
+                        .padding(.vertical, 7)
                         .background(tab == i ? AKColor.card : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(3)
         .background(AKColor.fill)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
+            LazyVStack(spacing: 12) {
                 coverHeader
                 tabBar
-                LazyVStack(spacing: 10) {
-                    if tab == 1 && shownMoments.isEmpty {
-                        Text("你还没有发过动态")
-                            .font(.system(size: 13))
+                if shownMoments.isEmpty {
+                    VStack(spacing: 6) {
+                        Text(tab == 1 ? "你还没有发过动态" : "还没有好友动态")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AKColor.sub)
+                        Text(tab == 1 ? "点右上角发布，发第一条动态吧～" : "点右上角发布，发一条自己的动态")
+                            .font(.system(size: 12.5))
                             .foregroundColor(AKColor.muted)
-                            .padding(.top, 60)
                     }
-                    ForEach(shownMoments) { moment in
-                        MomentCard(
-                            moment: moment,
-                            onLike: { Task { await app.likeMoment(moment) } },
-                            onComment: {
-                                commentTarget = moment
-                                commentText = ""
-                            }
-                        )
-                        .onTapGesture { detailMoment = moment }
-                        .contextMenu {
-                            if moment.userId == (app.user?.id ?? 0) {
-                                Button(role: .destructive) {
-                                    Task {
-                                        await APIClient.shared.deleteMoment(id: moment.id)
-                                        await app.loadMoments()
-                                    }
-                                } label: {
-                                    Label("删除动态", systemImage: "trash")
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 300)
+                }
+                ForEach(shownMoments) { moment in
+                    MomentCard(
+                        moment: moment,
+                        onLike: { Task { await app.likeMoment(moment) } },
+                        onComment: {
+                            commentTarget = moment
+                            commentText = ""
+                        }
+                    )
+                    .padding(.horizontal, 12)
+                    .onTapGesture { detailMoment = moment }
+                    .contextMenu {
+                        if moment.userId == (app.user?.id ?? 0) {
+                            Button(role: .destructive) {
+                                Task {
+                                    await APIClient.shared.deleteMoment(id: moment.id)
+                                    await app.loadMoments()
                                 }
+                            } label: {
+                                Label("删除动态", systemImage: "trash")
                             }
                         }
                     }
                 }
-                .padding(12)
             }
-            .background(AKColor.bg)
-            .navigationTitle("广场")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+            .padding(.bottom, 16)
+        }
+        .background(AKColor.bg)
+        .navigationTitle("朋友圈")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 18) {
                     NavigationLink {
                         MomentNoticesView()
                     } label: {
                         Image(systemName: "bell").foregroundColor(AKColor.text)
                     }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showPublish = true } label: {
                         Image(systemName: "square.and.pencil").foregroundColor(AKColor.text)
                     }
                 }
             }
-            .refreshable { await app.loadMoments() }
-            .onChange(of: coverItem) { item in
-                guard let item else { return }
-                Task { await uploadCover(item) }
+        }
+        .refreshable { await app.loadMoments() }
+        .onChange(of: coverItem) { item in
+            guard let item else { return }
+            Task { await uploadCover(item) }
+        }
+        .task { await app.loadMoments() }
+        .sheet(item: $detailMoment) { m in
+            MomentDetailView(moment: m)
+        }
+        .sheet(isPresented: $showPublish) {
+            PublishMomentView { content, images, videoUrl, duration, cover in
+                await app.publishMoment(content: content, images: images,
+                                        videoUrl: videoUrl, duration: duration, cover: cover)
             }
-            .task { await app.loadMoments() }
-            .sheet(item: $detailMoment) { m in
-                MomentDetailView(moment: m)
-            }
-            .sheet(isPresented: $showPublish) {
-                PublishMomentView { content, images, videoUrl, duration, cover in
-                    await app.publishMoment(content: content, images: images,
-                                            videoUrl: videoUrl, duration: duration, cover: cover)
+        }
+        .alert("评论", isPresented: Binding(
+            get: { commentTarget != nil },
+            set: { if !$0 { commentTarget = nil } }
+        )) {
+            TextField("说点什么…", text: $commentText)
+            Button("取消", role: .cancel) { commentTarget = nil }
+            Button("发送") {
+                if let target = commentTarget {
+                    Task { await app.commentMoment(target, content: commentText) }
                 }
-            }
-            .alert("评论", isPresented: Binding(
-                get: { commentTarget != nil },
-                set: { if !$0 { commentTarget = nil } }
-            )) {
-                TextField("说点什么…", text: $commentText)
-                Button("取消", role: .cancel) { commentTarget = nil }
-                Button("发送") {
-                    if let target = commentTarget {
-                        Task { await app.commentMoment(target, content: commentText) }
-                    }
-                    commentTarget = nil
-                }
+                commentTarget = nil
             }
         }
     }
 }
 
-private struct MomentCard: View {
+/// 一条动态：头像 40 + 右侧整列（名字、时间、正文、三列方图、操作行、互动块），与安卓 MomentItem 同构
+struct MomentCard: View {
     let moment: Moment
     let onLike: () -> Void
     let onComment: () -> Void
+    /// 详情页点图放大；列表里点整卡进详情，不传
+    var onPreview: ((Int) -> Void)? = nil
+
     @State private var expanded = false
     @State private var playVideo = false
 
+    private var images: [String] { Array(moment.images.prefix(9)) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                AvatarView(url: moment.avatar, name: moment.nickname ?? "用户", size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(moment.nickname ?? "用户")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(AKColor.text)
-                        if moment.vipLevel > 0 {
-                            BadgeView(text: moment.vipLevel >= 2 ? "SVIP" : "VIP")
-                        }
-                        if let no = moment.prettyYxid, !no.isEmpty {
-                            BadgeView(text: no, color: AKColor.link, background: AKColor.blueSoft)
-                        }
-                    }
-                    Text(Self.relative(moment.createdAt))
-                        .font(.system(size: 11))
-                        .foregroundColor(AKColor.muted)
-                }
-                Spacer()
-            }
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(url: moment.avatar, name: moment.nickname ?? "用户", size: 40)
 
-            if let content = moment.content, !content.isEmpty {
-                Text(content)
-                    .font(.system(size: 14))
-                    .foregroundColor(AKColor.text)
-                    .lineLimit(expanded ? nil : 4)
-                if !expanded && content.count > 60 {
-                    Button {
-                        expanded = true
-                    } label: {
-                        Text("全文")
-                            .font(.system(size: 13))
-                            .foregroundColor(AKColor.link)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(moment.nickname ?? "用户")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .lineLimit(1)
+                    if let no = moment.prettyYxid, !no.isEmpty {
+                        BadgeView(text: no, color: AKColor.gold, background: AKColor.goldSoft)
                     }
-                    .buttonStyle(.plain)
+                    if moment.vipLevel > 0 {
+                        BadgeView(text: moment.vipLevel >= 2 ? "SVIP" : "VIP")
+                    }
+                    Spacer(minLength: 0)
                 }
-            }
 
-            if !moment.images.isEmpty {
-                let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
-                LazyVGrid(columns: cols, spacing: 6) {
-                    ForEach(moment.images.prefix(9), id: \.self) { path in
-                        AsyncImage(url: APIClient.fullURL(path)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                AKColor.fill
-                            }
+                Text(Self.relative(moment.createdAt))
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.hint)
+                    .padding(.top, 3)
+
+                if let content = moment.content, !content.isEmpty {
+                    Text(content)
+                        .font(.system(size: 14))
+                        .foregroundColor(AKColor.text)
+                        .lineSpacing(5)
+                        .lineLimit(expanded ? nil : 6)
+                        .padding(.top, 6)
+                    if content.count > 120 {
+                        Button {
+                            expanded.toggle()
+                        } label: {
+                            Text(expanded ? "收起" : "全文")
+                                .font(.system(size: 13))
+                                .foregroundColor(AKColor.link)
                         }
-                        .aspectRatio(1, contentMode: .fill)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .buttonStyle(.plain)
+                        .padding(.top, 3)
                     }
                 }
-            }
 
-            if !moment.videoUrl.isEmpty {
-                ZStack {
-                    if let u = APIClient.fullURL(moment.videoCover) {
-                        AsyncImage(url: u) { phase in
-                            if let img = phase.image {
-                                img.resizable().scaledToFill()
-                            } else {
-                                Color.black.opacity(0.85)
-                            }
-                        }
-                    } else {
-                        Color.black.opacity(0.85)
-                    }
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.white.opacity(0.92))
-                }
-                .frame(height: 200)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .contentShape(Rectangle())
-                .onTapGesture { playVideo = true }
-                .fullScreenCover(isPresented: $playVideo) {
-                    MomentVideoPlayer(url: APIClient.fullURL(moment.videoUrl))
-                }
-            }
-
-            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.top, 2)
-
-            HStack(spacing: 20) {
-                Spacer()
-                Text("转发")
-                    .font(.system(size: 13))
-                    .foregroundColor(AKColor.link)
-                Button(action: onComment) {
-                    HStack(spacing: 4) {
-                        Text("\(moment.commentCount)")
-                        Image(systemName: "text.bubble")
-                    }
-                    .font(.system(size: 13))
-                    .foregroundColor(moment.commentCount > 0 ? AKColor.link : AKColor.muted)
-                }
-                Button(action: onLike) {
-                    HStack(spacing: 4) {
-                        Image(systemName: moment.liked == 1 ? "heart.fill" : "heart")
-                        Text("\(moment.likeCount)")
-                    }
-                    .font(.system(size: 13))
-                    .foregroundColor(moment.liked == 1 ? AKColor.red : AKColor.muted)
-                }
-            }
-
-            if !moment.likes.isEmpty || !moment.comments.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    if !moment.likes.isEmpty {
-                        HStack(spacing: 5) {
-                            Image(systemName: "heart.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(AKColor.red)
-                            Text(moment.likes.compactMap { $0.name }.joined(separator: "、"))
-                                .font(.system(size: 12.5))
-                                .foregroundColor(AKColor.text)
-                                .lineLimit(2)
-                        }
-                    }
-                    if !moment.comments.isEmpty {
-                        if !moment.likes.isEmpty {
-                            Rectangle().fill(AKColor.line).frame(height: 0.5)
-                        }
-                        ForEach(moment.comments.prefix(6)) { c in
-                            HStack(alignment: .top, spacing: 4) {
-                                if let reply = c.replyName, !reply.isEmpty {
-                                    Text("\(c.name ?? "成员") 回复 \(reply)：")
-                                        .font(.system(size: 12.5))
-                                        .foregroundColor(AKColor.link)
+                if !images.isEmpty {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
+                            AsyncImage(url: APIClient.fullURL(path)) { phase in
+                                if let image = phase.image {
+                                    image.resizable().scaledToFill()
                                 } else {
-                                    Text("\(c.name ?? "成员")：")
-                                        .font(.system(size: 12.5))
-                                        .foregroundColor(AKColor.link)
+                                    AKColor.fill
                                 }
-                                Text(c.content ?? "")
-                                    .font(.system(size: 12.5))
-                                    .foregroundColor(AKColor.text)
-                                    .lineLimit(3)
                             }
+                            .aspectRatio(1, contentMode: .fill)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .simultaneousGesture(TapGesture().onEnded { onPreview?(idx) })
                         }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AKColor.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            if !moment.comments.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(moment.comments.prefix(6)) { c in
-                        Text("\(c.name ?? "用户")：\(c.content ?? "")")
-                            .font(.system(size: 12))
-                            .foregroundColor(AKColor.sub)
-                    }
+
+                if !moment.videoUrl.isEmpty {
+                    videoCell.padding(.top, 8)
                 }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AKColor.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.top, 6)
+
+                actionRow
+
+                if !moment.likes.isEmpty || !moment.comments.isEmpty {
+                    interactions.padding(.top, 8)
+                }
             }
         }
         .padding(12)
         .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var videoCell: some View {
+        ZStack {
+            if let u = APIClient.fullURL(moment.videoCover) {
+                AsyncImage(url: u) { phase in
+                    if let img = phase.image {
+                        img.resizable().scaledToFill()
+                    } else {
+                        Color.black.opacity(0.85)
+                    }
+                }
+            } else {
+                Color.black.opacity(0.85)
+            }
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.white.opacity(0.92))
+        }
+        .frame(height: 200)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { playVideo = true }
+        .fullScreenCover(isPresented: $playVideo) {
+            MomentVideoPlayer(url: APIClient.fullURL(moment.videoUrl))
+        }
+    }
+
+    /// 操作行：转发 / 评论 / 点赞，右对齐
+    private var actionRow: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Text("转发")
+                .font(.system(size: 12))
+                .foregroundColor(AKColor.link)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+            Button(action: onComment) {
+                HStack(spacing: 3) {
+                    Image(systemName: "bubble.left")
+                        .font(.system(size: 18, weight: .regular))
+                    if moment.commentCount > 0 {
+                        Text("\(moment.commentCount)").font(.system(size: 12))
+                    }
+                }
+                .foregroundColor(AKColor.muted)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+            }
+            .buttonStyle(.plain)
+            Button(action: onLike) {
+                HStack(spacing: 3) {
+                    Image(systemName: moment.liked == 1 ? "heart.fill" : "heart")
+                        .font(.system(size: 18, weight: .regular))
+                    if moment.likeCount > 0 {
+                        Text("\(moment.likeCount)").font(.system(size: 12))
+                    }
+                }
+                .foregroundColor(moment.liked == 1 ? AKColor.red : AKColor.muted)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// 灰底点赞+评论块
+    private var interactions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !moment.likes.isEmpty {
+                HStack(alignment: .top, spacing: 5) {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.red)
+                        .padding(.top, 2)
+                    Text(moment.likes.compactMap { $0.name }.joined(separator: "、"))
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.link)
+                        .lineSpacing(3)
+                }
+            }
+            if !moment.comments.isEmpty {
+                if !moment.likes.isEmpty {
+                    Rectangle().fill(AKColor.line).frame(height: 0.6).padding(.vertical, 6)
+                }
+                ForEach(moment.comments) { c in
+                    commentRow(c)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func commentRow(_ c: MomentComment) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            AvatarView(url: c.avatar, name: c.name ?? "用户", size: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(c.name ?? "用户")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(AKColor.link)
+                if let reply = c.replyName, !reply.isEmpty {
+                    Text("回复 \(reply)")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AKColor.hint)
+                }
+                if let content = c.content, !content.isEmpty {
+                    Text(content)
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.text)
+                        .lineSpacing(3)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
     }
 
     /// 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期
