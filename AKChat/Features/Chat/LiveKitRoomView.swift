@@ -1,5 +1,6 @@
 import SwiftUI
 import LiveKit
+import ReplayKit
 import UIKit
 
 /// LiveKit 直播间：主播发布摄像头/麦克风，观众订阅渲染
@@ -15,6 +16,9 @@ struct LiveKitRoomView: View {
     @State private var error: String?
     @State private var micOn = true
     @State private var camOn = false
+    @State private var sharingScreen = false
+    @State private var screenTrack: LocalVideoTrack?
+    @State private var screenPublication: LocalTrackPublication?
 
     var body: some View {
         ZStack {
@@ -81,6 +85,18 @@ struct LiveKitRoomView: View {
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Circle())
                         }
+                        Button {
+                            Task {
+                                if sharingScreen { await stopScreenShare() } else { await startScreenShare() }
+                            }
+                        } label: {
+                            Image(systemName: sharingScreen ? "rectangle.on.rectangle.fill" : "rectangle.on.rectangle")
+                                .font(.system(size: 19))
+                                .foregroundColor(.white)
+                                .frame(width: 48, height: 48)
+                                .background(sharingScreen ? AKColor.red : Color.white.opacity(0.18))
+                                .clipShape(Circle())
+                        }
                     }
                     .padding(.bottom, 34)
                 }
@@ -88,6 +104,7 @@ struct LiveKitRoomView: View {
         }
         .task { await connect() }
         .onDisappear {
+            if sharingScreen { RPScreenRecorder.shared().stopCapture { _ in } }
             Task { await room.disconnect() }
         }
     }
@@ -122,6 +139,43 @@ struct LiveKitRoomView: View {
             }
             .padding(12)
         }
+    }
+
+    /// 屏幕共享：ReplayKit 采集 → LiveKit BufferCapturer 推帧（App 切后台会停）
+    private func startScreenShare() async {
+        guard !sharingScreen else { return }
+        let track = LocalVideoTrack.createBufferTrack(name: "screen")
+        guard let capturer = track.capturer as? BufferCapturer else {
+            error = "当前设备不支持屏幕共享"
+            return
+        }
+        screenTrack = track
+        RPScreenRecorder.shared().startCapture { sample, type, _ in
+            if type == .video { capturer.capture(sample) }
+        } completionHandler: { err in
+            if err != nil {
+                Task { @MainActor in self.error = "屏幕采集失败：\(err?.localizedDescription ?? "")" }
+            }
+        }
+        do {
+            let pub = try await room.localParticipant.publish(videoTrack: track)
+            screenPublication = pub
+            sharingScreen = true
+        } catch {
+            RPScreenRecorder.shared().stopCapture { _ in }
+            screenTrack = nil
+            self.error = "共享失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func stopScreenShare() async {
+        RPScreenRecorder.shared().stopCapture { _ in }
+        if let pub = screenPublication {
+            try? await room.localParticipant.unpublish(publication: pub)
+        }
+        screenPublication = nil
+        screenTrack = nil
+        sharingScreen = false
     }
 
     private func connect() async {
