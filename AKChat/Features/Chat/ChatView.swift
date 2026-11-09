@@ -47,6 +47,11 @@ struct ChatView: View {
     @State private var liveGid: Int64 = 0
     @State private var active: GroupActiveData?
     @State private var showGroupCall = false
+    @State private var showMore = false
+    @State private var showPhotoPicker = false
+    @State private var showRedPacket = false
+    @State private var showTransfer = false
+    @State private var showGift = false
     @State private var callType = 1
     @State private var previewGroupId: Int64 = 0
     @State private var showGroupPreview = false
@@ -293,6 +298,16 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showGroupCall) {
             NavigationStack { GroupCallView(gid: convId, callType: callType) }
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .sheet(isPresented: $showRedPacket) {
+            RedPacketSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
+        }
+        .sheet(isPresented: $showTransfer) {
+            TransferSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
+        }
+        .sheet(isPresented: $showGift) {
+            GiftSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
         }
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
@@ -549,11 +564,20 @@ struct ChatView: View {
                     .frame(width: 30, height: 30)
             }
 
-            PhotosPicker(selection: $photoItem, matching: .images) {
+            Button {
+                showMore = true
+            } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 22))
                     .foregroundColor(AKColor.sub)
                     .frame(width: 30, height: 30)
+            }
+            .confirmationDialog("更多", isPresented: $showMore, titleVisibility: .hidden) {
+                Button("相册") { showPhotoPicker = true }
+                Button("红包") { showRedPacket = true }
+                Button("转账") { showTransfer = true }
+                Button("礼物") { showGift = true }
+                Button("取消", role: .cancel) {}
             }
 
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -706,6 +730,11 @@ struct ChatView: View {
             messages[idx].status = 2
         }
         errorText = why
+    }
+
+    /// 支付类消息发送后重新拉一次，确保卡片立刻出现
+    private func reloadAfterPay() async {
+        await load()
     }
 
     private func startCall(_ type: Int) {
