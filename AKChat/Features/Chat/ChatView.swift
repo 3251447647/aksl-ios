@@ -1302,7 +1302,7 @@ struct ChatView: View {
         messages.append(local)
         do {
             let saved = try await app.sendText(convType: convType, convId: convId, text: content, atUids: at)
-            replaceLocal(local, with: saved.message)
+            replaceLocal(local, with: saved)
         } catch {
             failLocal(local, "发送失败：\(error.localizedDescription)")
         }
@@ -1348,7 +1348,7 @@ struct ChatView: View {
             messages.append(local)
             let uploaded = try await app.uploadImage(data)
             let saved = try await app.sendImage(convType: convType, convId: convId, url: uploaded.url)
-            replaceLocal(local, with: saved.message)
+            replaceLocal(local, with: saved)
         } catch {
             errorText = "图片发送失败：\(error.localizedDescription)"
         }
@@ -1382,7 +1382,7 @@ struct ChatView: View {
                 messages.append(local)
                 let uploaded = try await app.uploadVoice(fileURL: url)
                 let saved = try await app.sendVoice(convType: convType, convId: convId, url: uploaded.url, seconds: seconds)
-                replaceLocal(local, with: saved.message)
+                replaceLocal(local, with: saved)
             } catch {
                 errorText = "语音发送失败：\(error.localizedDescription)"
             }
