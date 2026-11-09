@@ -53,13 +53,6 @@ struct GroupQRCodeView: View {
         return d.groupNo.isEmpty ? "\(d.gid)" : d.groupNo
     }
 
-    private var site: String {
-        guard let d = data, let u = URL(string: d.content), let host = u.host, !host.isEmpty else {
-            return "aksliao.cn"
-        }
-        return host
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -75,8 +68,7 @@ struct GroupQRCodeView: View {
                         groupNo: displayNo,
                         isPretty: d.isPretty == 1 && !d.prettyNo.isEmpty,
                         avatar: d.avatar,
-                        qr: qrImage,
-                        site: site
+                        qr: qrImage
                     )
                     .padding(.horizontal, 18)
 
@@ -136,8 +128,7 @@ struct GroupQRCodeView: View {
             groupNo: displayNo,
             isPretty: d.isPretty == 1 && !d.prettyNo.isEmpty,
             avatar: d.avatar,
-            qr: qrImage,
-            site: site
+            qr: qrImage
         )
         .frame(width: width)
         let renderer = ImageRenderer(content: view)
@@ -172,7 +163,6 @@ struct GroupQrCardView: View {
     let isPretty: Bool
     let avatar: String
     let qr: UIImage?
-    let site: String
 
     var body: some View {
         VStack(spacing: 0) {
@@ -234,11 +224,7 @@ struct GroupQrCardView: View {
                 .font(.system(size: 13))
                 .foregroundColor(Color(hex: 0x5B5B5B))
                 .padding(.top, 16)
-            Text(site)
-                .font(.system(size: 10))
-                .foregroundColor(Color(hex: 0xA8ADB6))
-                .padding(.top, 4)
-                .padding(.bottom, 18)
+                .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity)
         .background(Color.white)

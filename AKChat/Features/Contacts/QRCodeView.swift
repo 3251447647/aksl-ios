@@ -151,11 +151,7 @@ struct QRCodeView: View {
                 .font(.system(size: 13))
                 .foregroundColor(Color(hex: 0x5B5B5B))
                 .padding(.top, 16)
-            Text("aksliao.cn")
-                .font(.system(size: 10))
-                .foregroundColor(Color(hex: 0xA8ADB6))
-                .padding(.top, 4)
-                .padding(.bottom, 18)
+                .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity)
         .background(Color.white)
