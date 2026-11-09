@@ -280,9 +280,15 @@ private struct MomentCard: View {
                         }
                         ForEach(moment.comments.prefix(6)) { c in
                             HStack(alignment: .top, spacing: 4) {
-                                Text(c.name ?? "成员")
-                                    .font(.system(size: 12.5))
-                                    .foregroundColor(AKColor.link)
+                                if let reply = c.replyName, !reply.isEmpty {
+                                    Text("\(c.name ?? "成员") 回复 \(reply)：")
+                                        .font(.system(size: 12.5))
+                                        .foregroundColor(AKColor.link)
+                                } else {
+                                    Text("\(c.name ?? "成员")：")
+                                        .font(.system(size: 12.5))
+                                        .foregroundColor(AKColor.link)
+                                }
                                 Text(c.content ?? "")
                                     .font(.system(size: 12.5))
                                     .foregroundColor(AKColor.text)

@@ -35,6 +35,7 @@ struct SettingsView: View {
             Section("账号") {
                 NavigationLink("隐私与安全") { PrivacySettingsView() }
                 NavigationLink("我的收藏") { FavoritesView() }
+                NavigationLink("我的表情") { EmojiManagerView() }
                 NavigationLink("黑名单") { BlacklistView() }
             }
             Section("关于") {
