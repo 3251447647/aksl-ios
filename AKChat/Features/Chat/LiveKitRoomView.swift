@@ -306,6 +306,7 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
         var out: [VideoTarget] = []
         for participant in room.remoteParticipants.values {
             for publication in participant.videoTracks {
+                guard let publication = publication as? RemoteTrackPublication else { continue }
                 let isScreen = publication.source == .screenShareVideo
                     || publication.name == Track.screenShareVideoName
                     || publication.name == "screen"

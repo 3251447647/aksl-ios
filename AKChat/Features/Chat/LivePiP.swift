@@ -186,7 +186,7 @@ final class LivePiPController: NSObject, ObservableObject {
             sampleBufferDisplayLayer: renderer.displayLayer,
             playbackDelegate: self
         )
-        guard let controller = AVPictureInPictureController(contentSource: source) else { return nil }
+        let controller = AVPictureInPictureController(contentSource: source)
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = true
         self.controller = controller
