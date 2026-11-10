@@ -6,12 +6,12 @@ import AVKit
 
 struct MomentsView: View {
     /// 他人朋友圈：>0 且不是本人时只拉该用户的动态（对齐安卓 MomentsScreen 的 otherUid）
-    let uid: Int64 = 0
-    let ownerName: String = ""
-    let ownerAvatar: String? = nil
-    let ownerVip: Int = 0
-    let ownerIsPretty: Int = 0
-    let ownerPrettyNo: String = ""
+    var uid: Int64 = 0
+    var ownerName: String = ""
+    var ownerAvatar: String? = nil
+    var ownerVip: Int = 0
+    var ownerIsPretty: Int = 0
+    var ownerPrettyNo: String = ""
 
     @EnvironmentObject private var app: AppState
     @State private var showPublish = false
