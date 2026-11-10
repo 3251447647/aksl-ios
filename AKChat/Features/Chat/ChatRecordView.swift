@@ -83,6 +83,9 @@ struct ChatRecordView: View {
         }
         .background(AKColor.bg)
         .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(item: $preview) { item in
+            MediaPagerView(items: item.items, index: item.index)
+        }
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
@@ -161,9 +164,6 @@ struct ChatRecordView: View {
             .padding(.vertical, 7)
             Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.leading, 57)
         }
-        .fullScreenCover(item: $preview) { item in
-            MediaPagerView(items: item.items, index: item.index)
-        }
     }
 
     private func imageRow(_ path: String) -> some View {
@@ -186,16 +186,6 @@ struct ChatRecordView: View {
                 }
             }
         }
-    }
-
-    private func saveImage(_ url: URL) async {
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
-              let image = UIImage(data: data) else {
-            showToast("保存失败，请稍后重试")
-            return
-        }
-        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        showToast("已保存到相册")
     }
 
     private func showToast(_ text: String) {

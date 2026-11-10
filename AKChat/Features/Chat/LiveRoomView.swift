@@ -2040,7 +2040,12 @@ struct LiveRoomView: View {
             }
             sheetRow(icon: "photo.on.rectangle", label: "共享内容",
                      detail: "相册图片/视频、群聊或朋友圈画面") {
-                sheet = .content
+                // 先收起当前面板再弹选择器：同一个 .sheet(item:) 直接换 item 时，
+                // 内容不一定刷新，偶发停在旧面板上
+                sheet = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    sheet = .content
+                }
             }
             sheetRow(icon: nil, label: "取消", detail: nil) { sheet = nil }
             Color.clear.frame(height: 14)
