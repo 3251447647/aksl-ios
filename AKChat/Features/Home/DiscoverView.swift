@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 广场：朋友圈 / 扫一扫 / 邀请有礼 / 我的收藏 / 系统公告（对齐安卓 DiscoverScreen）
+/// 广场：朋友圈 / 扫一扫 / 邀请有礼 / 每日免费抽奖（对齐安卓 DiscoverScreen）
 struct DiscoverView: View {
     @EnvironmentObject private var app: AppState
     @State private var showScanner = false
@@ -56,16 +56,16 @@ struct DiscoverView: View {
 
                         card {
                             NavigationLink {
-                                FavoritesView()
+                                LotteryView()
                             } label: {
-                                row("我的收藏", icon: "giftcard.fill", tint: AKColor.gold)
-                            }
-                            .buttonStyle(.plain)
-                            divider
-                            NavigationLink {
-                                NoticesView()
-                            } label: {
-                                row("系统公告", icon: "megaphone.fill", tint: Color(hex: 0x8B7CF6))
+                                row("每日免费抽奖", icon: "die.face.5.fill", tint: AKColor.gold,
+                                    trailing: AnyView(Text("免费")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundColor(AKColor.gold)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(AKColor.goldSoft)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))))
                             }
                             .buttonStyle(.plain)
                         }
