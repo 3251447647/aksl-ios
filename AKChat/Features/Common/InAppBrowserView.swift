@@ -20,11 +20,16 @@ enum AppLinkRouter {
     static func shouldOpenExternally(_ url: URL) -> Bool {
         guard isWebURL(url) else { return true }
         let path = url.path.lowercased()
-        if path == "/download" || path.hasPrefix("/download/") { return true }
-        if path == "/dl" || path.hasPrefix("/dl/") { return true }
-        let lower = url.absoluteString.lowercased()
-        if lower.contains(".apk?") || lower.contains(".ipa?") { return true }
-        return downloadExtensions.contains(url.pathExtension.lowercased())
+        if path == "/download" || path.hasPrefix("/download/") || path.hasSuffix("/download") { return true }
+        if path == "/dl" || path.hasPrefix("/dl/") || path.hasSuffix("/dl") { return true }
+        // 服务端安装包端点：/api/v1/app/dl?code=N（302 到 .apk，不能先塞进 WebView）
+        if path.hasPrefix("/api/v1/app/dl") { return true }
+        if downloadExtensions.contains(url.pathExtension.lowercased()) { return true }
+        // 下载中转页：/download.php?file=xxx.apk 这类安装包不在路径后缀里
+        let name = (path as NSString).lastPathComponent
+        if name.hasPrefix("download.") || name.hasPrefix("dl.") { return true }
+        let query = (url.query ?? "").lowercased()
+        return ["apk", "ipa", "plist", "mobileconfig"].contains { query.contains("." + $0) }
     }
 
     static func open(_ url: URL) {
@@ -100,15 +105,12 @@ final class InAppBrowserCenter {
 /// 系统浏览器打开、深色模式、进度条、失败重试、target=_blank 与 JS 弹窗。
 /// SFSafariViewController 拿不到进度/失败事件，也无法接管 target=_blank 与 JS 弹窗，故用 WKWebView。
 struct InAppBrowserView: View {
-    let url: URL
-
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var systemScheme
     @AppStorage("colorSchemeMode") private var schemeMode = 0
     @StateObject private var state: BrowserState
 
     init(url: URL) {
-        self.url = url
         _state = StateObject(wrappedValue: BrowserState(url: url))
     }
 

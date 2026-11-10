@@ -14,6 +14,15 @@ struct UpdateGate: ViewModifier {
         return info.iosForce == 1 && info.iosLatestCode > currentCode
     }
 
+    /// 更新地址可能是 https 的 IPA 直链，也可能是 itms-services:// 的 OTA 清单
+    private var updateURL: URL? {
+        let raw = (info?.iosUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = raw.lowercased()
+        guard lower.hasPrefix("http") || lower.hasPrefix("itms-services://") || lower.hasPrefix("itms-apps://"),
+              let url = URL(string: raw) else { return nil }
+        return url
+    }
+
     func body(content: Content) -> some View {
         content
             .task { await check() }
@@ -37,7 +46,7 @@ struct UpdateGate: ViewModifier {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxHeight: 220)
-                    if let u = URL(string: info?.iosUrl ?? ""), (info?.iosUrl ?? "").hasPrefix("http") {
+                    if let u = updateURL {
                         Button {
                             UIApplication.shared.open(u)
                         } label: {

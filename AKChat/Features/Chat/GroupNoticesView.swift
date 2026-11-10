@@ -601,14 +601,23 @@ struct GroupNoticeDetailView: View {
     }
 
     private func ack() async {
+        guard !acking else { return }
         acking = true
         defer { acking = false }
+        errorText = nil
         await APIClient.shared.ackGroupNotice(id: notice.id)
-        /* 对齐安卓 ackGroupNotice：先本地 myAck=1、人数+1，再拉服务端纠正 */
-        notice.myAck = 1
-        notice.ackCount += 1
+        /* 以服务端列表为准：my_ack 还是 0 就是没写进去（ack 接口失败不抛错） */
+        let synced = await reload()
+        if synced && notice.myAck != 1 {
+            errorText = "确认失败，请重试"
+            return
+        }
+        if !synced {
+            /* 网络抖动拿不到列表：先按成功处理，聊天页会用 pending 再校验一次 */
+            notice.myAck = 1
+            notice.ackCount += 1
+        }
         onAcked?(notice.id)
-        await reload()
         await onChanged()
     }
 
@@ -618,14 +627,16 @@ struct GroupNoticeDetailView: View {
         dismiss()
     }
 
-    /// 确认/编辑后重新拉一次列表，刷新本条数据
-    private func reload() async {
+    /// 确认/编辑后重新拉一次列表，刷新本条数据；拿不到回包返回 false
+    @discardableResult
+    private func reload() async -> Bool {
         guard let data: GroupNoticeListResp = try? await APIClient.shared.get(
             "api/v1/group/notices", query: ["gid": "\(groupId)"]
-        ) else { return }
+        ) else { return false }
         if let fresh = data.list.first(where: { $0.id == notice.id }) {
             notice = fresh
         }
+        return true
     }
 }
 

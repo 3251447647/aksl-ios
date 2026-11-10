@@ -46,7 +46,11 @@ struct AboutView: View {
     private static func normalizedSite(_ raw: String?) -> String {
         var value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty { return defaultSite }
-        if !value.lowercased().hasPrefix("http://") && !value.lowercased().hasPrefix("https://") {
+        let lower = value.lowercased()
+        if lower.hasPrefix("http://") {
+            // 工程未开 ATS 任意加载，http 页面在内置浏览器里会直接白屏，统一升级为 https
+            value = "https://" + String(value.dropFirst("http://".count))
+        } else if !lower.hasPrefix("https://") {
             value = "https://" + value
         }
         guard let url = URL(string: value), let host = url.host, host.contains(".") else { return defaultSite }

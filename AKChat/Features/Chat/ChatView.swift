@@ -530,8 +530,10 @@ struct ChatView: View {
             }
         }
         .navigationDestination(isPresented: $showNotices) {
-            GroupNoticesView(groupId: convId)
-                .restoresSwipeBack()
+            GroupNoticesView(groupId: convId) {
+                clearPendingNotice()
+            }
+            .restoresSwipeBack()
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(onImage: { image in
@@ -672,12 +674,7 @@ struct ChatView: View {
                 if sysText.contains("已领取红包") || sysText.contains("已收款")
                     || sysText.contains("已领取礼物") || sysText.contains("领取了红包")
                     || sysText.contains("领取了转账") || sysText.contains("领取了礼物") {
-                    Task { @MainActor in
-                        if let pending = messages.last(where: { isPendingCard($0) }) {
-                            await refreshCard(id: pending.id)
-                        }
-                        await refreshCardStates(force: true)
-                    }
+                    Task { @MainActor in await refreshCardStates(force: true) }
                 }
             }
             Task { await app.markRead(convType: convType, convId: convId, lastId: msg.id) }
@@ -1090,7 +1087,8 @@ struct ChatView: View {
     /// 安卓聊天页没有常驻公告条，公告只在未确认时弹层提示；iOS 用这条横幅表示同一件事，
     /// 确认后 pendingNotice 置空、横幅立即消失。置顶公告本身仍留在群公告列表里显示。
     private var noticeBarText: String? {
-        guard isGroup, let notice = pendingNotice else { return nil }
+        /* 与安卓一致：只有「需要确认且我还没确认」的公告才提示，置顶标记与已读无关 */
+        guard isGroup, let notice = pendingNotice, notice.needAck == 1, notice.myAck != 1 else { return nil }
         let text = (notice.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "群公告待确认" }
         return text.split(whereSeparator: { $0.isNewline }).first.map { String($0) }
@@ -2040,16 +2038,28 @@ struct ChatView: View {
         "\(notice.id)|\(notice.content ?? "")"
     }
 
-    /// 进群弹窗「我已知晓」：写本机指纹 → 服务端确认（ack 同时写已读）→ 清横幅
+    /// 进群弹窗「我已知晓」：先收起横幅/弹层，服务端确认成功后才落本机指纹。
+    /// 确认失败时 loadPendingNotice 会把横幅重新挂回来，用户点横幅可以重试。
     private func confirmGroupNotice(_ notice: GroupNotice?) {
         guard let notice else { return }
-        UserDefaults.standard.set(noticeFingerprint(notice), forKey: groupNoticeAckKey)
         pendingNotice = nil
+        showNotice = false
         Task {
             await APIClient.shared.ackGroupNotice(id: notice.id)
-            /* ack 失败时会重新拿到这条公告，横幅保留但不再自动弹，提醒用户还没确认成功 */
             await loadPendingNotice(showPopup: false)
+            if pendingNotice?.id == notice.id {
+                flash("公告确认失败，请重试")
+            } else {
+                UserDefaults.standard.set(noticeFingerprint(notice), forKey: groupNoticeAckKey)
+            }
         }
+    }
+
+    /// 公告列表里确认成功：立刻收起顶部公告条，再问一次服务端是否还有别的待确认公告
+    private func clearPendingNotice() {
+        pendingNotice = nil
+        showNotice = false
+        Task { await loadPendingNotice(showPopup: false) }
     }
 
     /* ---------------- 发送 ---------------- */
@@ -2342,13 +2352,23 @@ struct ChatView: View {
             if isGroup && ev.convId == convId { Task { await loadPin() } }
         case "group_notice":
             if isGroup && ev.convId == convId {
-                Task { await loadPendingNotice() }
+                /* 发布/编辑公告（编辑会重置确认状态）：重拉待确认公告；
+                   正在看公告列表/群资料时不弹层，避免盖住当前页面 */
+                Task { await loadPendingNotice(showPopup: !showNotices && !showGroupInfo) }
             }
         case "redpacket_grab", "redpacket_receive", "transfer_receive", "gift_claim", "card_update":
-            /* 群红包领取事件目前只带 group_id/msg_id，ChatEvent 未映射这两个字段，
-               convId 会是 0；当前在群里就先刷新本会话，其他群的事件由详情页/轮询兜底。 */
+            /* 服务端事件里只有 group_id/msg_id，AppState 已映射进 ChatEvent。
+               能定位到本地这张卡片就按消息 id 精确重拉，否则退回整会话卡片状态刷新。 */
             guard ev.convId == 0 || ev.convId == convId else { return }
-            Task { @MainActor in await refreshCardStates(force: true) }
+            let target = ev.msgId
+            let hasTarget = target > 0 && messages.contains { $0.id == target }
+            Task { @MainActor in
+                if hasTarget {
+                    await refreshCard(id: target)
+                } else {
+                    await refreshCardStates(force: true)
+                }
+            }
         default:
             break
         }
@@ -2400,6 +2420,14 @@ struct ChatView: View {
         cardRefreshing = true
         lastCardRefresh = now
         defer { cardRefreshing = false }
+        /* 未完成的卡片按消息 id 精确拉：群刷屏时卡片掉出最近 40 条也不会漏刷 */
+        let pendingIds = messages.filter { isPendingCard($0) }.map(\.id)
+        if pendingIds.count <= 6 {
+            for id in pendingIds {
+                await refreshCard(id: id)
+            }
+            return
+        }
         guard let data = try? await APIClient.shared.history(
             convType: convType, convId: convId, limit: 40
         ) else { return }

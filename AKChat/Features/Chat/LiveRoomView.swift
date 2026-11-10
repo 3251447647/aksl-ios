@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import LiveKit
 import ReplayKit
 import UIKit
@@ -293,7 +294,7 @@ struct LiveRoomView: View {
         }
         .onChange(of: phase) { value in
             // 直播结束/被踢出：画中画也要一起收掉
-            if value != "room" { pip.stop() }
+            if value != "room" { pip.invalidate() }
         }
         .onDisappear {
             pollTask?.cancel()
@@ -540,20 +541,21 @@ struct LiveRoomView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Spacer()
-                    if !isHost, displayTrack != nil, pip.isSupported {
+                    if !isHost, displayTrack != nil {
                         Button {
-                            if pip.isActive {
-                                pip.stop()
-                            } else if !pip.start() {
-                                showTip("画中画暂不可用，请稍后再试")
-                            }
+                            togglePiP()
                         } label: {
-                            Image(systemName: pip.isActive ? "pip.exit" : "pip.enter")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(white90)
-                                .frame(width: 28, height: 22)
-                                .background(Color.black.opacity(0.6))
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            HStack(spacing: 3) {
+                                Image(systemName: pip.isActive ? "pip.exit" : "pip.enter")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text(pip.isActive ? "退出小窗" : "小窗")
+                                    .font(.system(size: 10.5, weight: .medium))
+                            }
+                            .foregroundColor(white90)
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -625,18 +627,45 @@ struct LiveRoomView: View {
         .padding(.top, 10)
         .onAppear {
             guard !isHost else { return }
-            pip.prepare()
             syncPiP()
+            // 画中画要求 displayLayer 已在视图层级里，拿到轨道后再建控制器
+            if displayTrack != nil { pip.prepare() }
         }
         .onChange(of: kitObserver.revision) { _ in
             guard !isHost else { return }
             syncPiP()
+        }
+        .onChange(of: displayTrack != nil) { hasVideo in
+            guard !isHost, hasVideo else { return }
+            pip.prepare()
+            syncPiP()
+        }
+        .onChange(of: pip.isActive) { active in
+            guard !isHost, !active else { return }
+            // 收起小窗后重挂渲染器，避免回到直播画面停在最后一帧
+            renderNonce &+= 1
+            kitObserver.refresh()
+            if !inBackground, phase == "room", !left, !closing, kitObserver.remoteVideo == nil {
+                Task { await manualReconnect() }
+            }
         }
     }
 
     /// 观众端把远端画面同步给画中画渲染器（主播不需要）
     private func syncPiP() {
         pip.sync(track: isHost ? nil : displayTrack)
+    }
+
+    /// 小窗按钮：启动结果由控制器异步回调，失败时把具体原因提示出来
+    private func togglePiP() {
+        if pip.isActive {
+            pip.stop()
+            return
+        }
+        pip.start { ok in
+            guard !ok else { return }
+            showTip(pip.lastError ?? "画中画暂不可用，请稍后再试")
+        }
     }
 
     /// 回前台时屏幕共享已经被系统停掉：提示并提供一键重开
@@ -1578,6 +1607,13 @@ struct LiveRoomView: View {
     private func handleForeground() async {
         inBackground = false
         guard phase == "room", !left, !closing else { return }
+        // 画中画还在播放：保留当前媒体连接，重连会打断悬浮窗
+        if pip.isActive {
+            backgroundAt = nil
+            hadVideoBeforeBackground = false
+            startFrameWatchdog()
+            return
+        }
         let away = backgroundAt.map { Date().timeIntervalSince($0) } ?? 0
         backgroundAt = nil
         var expectVideo = hadVideoBeforeBackground
@@ -1834,7 +1870,7 @@ struct LiveRoomView: View {
             blockedMsg = "你已被主播移出该直播间"
             phase = "blocked"
             pollTask?.cancel()
-            pip.stop()
+            pip.invalidate()
             await room.disconnect()
             return
         }
@@ -1842,7 +1878,7 @@ struct LiveRoomView: View {
             blockedMsg = "直播已结束"
             phase = "blocked"
             pollTask?.cancel()
-            pip.stop()
+            pip.invalidate()
             await stopSharingForEndedLive()
             await room.disconnect()
             return
@@ -2275,7 +2311,7 @@ struct LiveRoomView: View {
         recovering = false
         streamInterrupted = false
         kitObserver.detach()
-        pip.stop()
+        pip.invalidate()
         if sharing {
             if shareMode == .screen {
                 RPScreenRecorder.shared().stopCapture { _ in }

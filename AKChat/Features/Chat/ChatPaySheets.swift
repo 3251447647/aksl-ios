@@ -1277,7 +1277,20 @@ struct RedPacketDetailSheet: View {
         .safeAreaInset(edge: .bottom) {
             if let info { actionBar(info) }
         }
-        .task { await load() }
+        .task {
+            await load()
+            /* 详情开着时别人领取也要看到：3 秒拉一次，领完即停 */
+            while !Task.isCancelled, info?.finished != 1 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                if busy || info?.finished == 1 { continue }
+                if let fresh = try? await APIClient.shared.redPacketInfo(
+                    id: infoId, convType: convType, convId: convId
+                ) {
+                    info = fresh
+                }
+            }
+        }
     }
 
     private func header(_ info: RedPacketInfo) -> some View {

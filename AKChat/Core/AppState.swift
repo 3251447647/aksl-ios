@@ -308,10 +308,15 @@ final class AppState: ObservableObject {
             return
         }
 
-        let eventConvType = str("conv_type").isEmpty ? (type.hasPrefix("group") ? "group" : "private") : str("conv_type")
+        let eventConvType = str("conv_type").isEmpty
+            ? ((type.hasPrefix("group") || type == "redpacket_grab") ? "group" : "private")
+            : str("conv_type")
         var convId = i64("conv_id")
-        if convId == 0 && type == "group_top" { convId = i64("gid") }
-        if convId == 0 && type == "group_read" { convId = i64("group_id") }
+        if convId == 0 && (type == "group_top" || type == "group_notice") { convId = i64("gid") }
+        if convId == 0 && (type == "group_read" || type == "redpacket_grab") { convId = i64("group_id") }
+        /* 红包领取事件带的是 msg_id，不是 id：映射后聊天页才能按消息精确刷新卡片 */
+        var msgId = i64("id")
+        if msgId == 0 { msgId = i64("msg_id") }
 
         if type == "call" {
             let status = Int(i64("status"))
@@ -332,7 +337,7 @@ final class AppState: ObservableObject {
             kind: type,
             convType: eventConvType,
             convId: convId,
-            msgId: i64("id"),
+            msgId: msgId,
             text: str("text"),
             fromUid: i64("from_uid"),
             name: str("from_name"),

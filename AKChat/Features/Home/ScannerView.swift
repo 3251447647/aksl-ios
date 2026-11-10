@@ -28,7 +28,8 @@ enum QrTarget {
             return .url(text)
         }
         if lower.hasPrefix("www.") {
-            return .url("http://" + text)
+            // 无协议链接补 https：内置浏览器受 ATS 限制，http 会白屏
+            return .url("https://" + text)
         }
         return .text(text)
     }

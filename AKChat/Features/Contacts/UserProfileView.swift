@@ -319,6 +319,11 @@ struct UserProfileView: View {
                 .foregroundColor(AKColor.text)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // 签名里的链接统一走内置浏览器，tel: 等交给系统
+                .environment(\.openURL, OpenURLAction { url in
+                    AppLinkRouter.open(url)
+                    return .handled
+                })
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
@@ -337,7 +342,9 @@ struct UserProfileView: View {
             guard let result else { return }
             let target: String?
             if let url = result.url {
-                target = url.absoluteString
+                // 裸域名被 NSDataDetector 补成 http，内置浏览器会白屏，改补 https
+                let raw = full.substring(with: result.range)
+                target = raw.lowercased().hasPrefix("http") ? url.absoluteString : "https://" + raw
             } else if let phone = result.phoneNumber {
                 target = "tel:" + phone
             } else {

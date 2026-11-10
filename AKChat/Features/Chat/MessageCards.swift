@@ -1319,7 +1319,9 @@ struct AKLinkText: View {
             detector.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
                 guard let match, let found = match.url else { return }
                 var url = found
-                if url.scheme == nil, let fixed = URL(string: "http://" + ns.substring(with: match.range)) {
+                // 裸域名被 NSDataDetector 补成 http，内置浏览器受 ATS 限制会白屏，改补 https
+                let raw = ns.substring(with: match.range)
+                if !raw.lowercased().hasPrefix("http"), let fixed = URL(string: "https://" + raw) {
                     url = fixed
                 }
                 out.append(Hit(range: match.range, kind: .url(url)))

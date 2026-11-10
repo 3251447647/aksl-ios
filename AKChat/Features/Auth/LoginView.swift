@@ -8,6 +8,8 @@ struct LoginView: View {
     @State private var showPassword = false
     @State private var showRegister = false
     @State private var showForgot = false
+    @State private var showPolicy = false
+    @State private var policyKind: PolicyDetailView.Kind = .terms
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,11 +105,22 @@ struct LoginView: View {
                     .font(.system(size: 11))
                     .foregroundColor(AKColor.hint)
                 Button {
-                    if let url = URL(string: "https://www.aksliao.cn/register.php") {
-                        AppLinkRouter.open(url)
-                    }
+                    policyKind = .terms
+                    showPolicy = true
                 } label: {
-                    Text("《用户协议与隐私政策》")
+                    Text("《用户协议》")
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.link)
+                }
+                .buttonStyle(.plain)
+                Text("与")
+                    .font(.system(size: 11))
+                    .foregroundColor(AKColor.hint)
+                Button {
+                    policyKind = .privacy
+                    showPolicy = true
+                } label: {
+                    Text("《隐私政策》")
                         .font(.system(size: 11))
                         .foregroundColor(AKColor.link)
                 }
@@ -121,6 +134,11 @@ struct LoginView: View {
         }
         .sheet(isPresented: $showForgot) {
             ForgotPasswordView()
+        }
+        .sheet(isPresented: $showPolicy) {
+            NavigationStack {
+                PolicyDetailView(kind: policyKind)
+            }
         }
     }
 }
