@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 添加好友：按 AK号 / 邮箱 / 群号 / 群名 精确搜索，结果分「联系人」「群聊」两组（对齐安卓 AddFriendScreen）
+/// 添加好友：只认 AK号 / 靓号 / 群号 / 群靓号的完全相等，结果分「联系人」「群聊」两组（对齐安卓 AddFriendScreen）
 struct AddFriendView: View {
     /// 预填搜索词（数字串「添加好友」入口），不自动搜索
     var initialKeyword: String = ""
@@ -27,7 +27,7 @@ struct AddFriendView: View {
             if hasResult {
                 resultList
             } else {
-                Text("输入 AK号 / 邮箱 / 群号 / 群名，精确搜索")
+                Text("输入 AK号 / 靓号 / 群号 / 群靓号，完全匹配")
                     .font(.system(size: 12.5))
                     .foregroundColor(AKColor.muted)
                     .multilineTextAlignment(.center)
@@ -66,7 +66,7 @@ struct AddFriendView: View {
 
     private var searchBar: some View {
         HStack(spacing: 8) {
-            TextField("AK号 / 邮箱 / 群号 / 群名", text: $keyword)
+            TextField("AK号 / 靓号 / 群号 / 群靓号", text: $keyword)
                 .font(.system(size: 13.5))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

@@ -135,7 +135,7 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15))
                     .foregroundColor(AKColor.muted)
-                TextField("搜索用户、群聊、聊天记录", text: $keyword)
+                TextField("搜 AK号 / 靓号 / 群号 / 群靓号 / 聊天记录", text: $keyword)
                     .font(.system(size: 14))
                     .focused($focused)
                     .textInputAutocapitalization(.never)

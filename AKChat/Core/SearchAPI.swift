@@ -87,7 +87,8 @@ struct SearchMessagesData: Decodable {
 
 extension APIClient {
     func search(keyword: String) async throws -> SearchResult {
-        try await get("api/v1/search", query: ["keyword": keyword])
+        let data: SearchResult = try await get("api/v1/search", query: ["keyword": keyword])
+        return data.exactNumberMatches(keyword: keyword)
     }
 
     func searchMessages(keyword: String, convType: String = "", convId: Int64 = 0,

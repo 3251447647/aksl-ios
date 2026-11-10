@@ -45,43 +45,10 @@ struct MeView: View {
                         .padding(.top, 12)
                     statsCard
                         .padding(.top, 12)
-                    quickGrid
+                    MeQuickGrid()
                         .padding(.top, 12)
-                    menuSection("账号与安全") {
-                        NavigationLink { EditProfileView() } label: {
-                            menuCell("person.fill", Color(hex: 0x4C8DFF), "个人资料", trailing: "编辑")
-                        }
-                        .buttonStyle(.plain)
-                        menuDivider
-                        NavigationLink { PrivacySettingsView() } label: {
-                            menuCell("lock.fill", Color(hex: 0x8B7CF6), "隐私设置")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.top, 18)
-                    menuSection("我的服务") {
-                        NavigationLink { NoticesView() } label: {
-                            menuCell("megaphone.fill", Color(hex: 0xFF9F43), "官方公告")
-                        }
-                        .buttonStyle(.plain)
-                        menuDivider
-                        NavigationLink { CustomerServiceView() } label: {
-                            menuCell("headphones", Color(hex: 0x2FA84F), "联系客服")
-                        }
-                        menuDivider
-                        NavigationLink { InviteRewardView() } label: {
-                            menuCell("giftcard.fill", Color(hex: 0xFF6B81), "邀请好友")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.top, 14)
-                    menuSection("设置") {
-                        NavigationLink { SettingsView() } label: {
-                            menuCell("gearshape.fill", Color(hex: 0x6C8AE4), "设置", trailing: "通知 · 缓存")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.top, 14)
+                    MeMenuSections()
+                        .padding(.top, 18)
                     logoutButton
                         .padding(.top, 18)
                     Spacer().frame(height: 96)
@@ -287,89 +254,133 @@ struct MeView: View {
 
     // MARK: - 四宫格
 
-    private var quickGrid: some View {
-        HStack(spacing: 0) {
-            quickLink("靓号商城", "rosette", Color(hex: 0x3B82F6)) { PrettyNumbersView() }
-            quickLink("VIP 会员", "star.fill", AKColor.gold) { VipView() }
-            quickLink("K币钱包", "creditcard.fill", Color(hex: 0x4BB8FF)) { WalletView() }
-            quickLink("我的收藏", "gift.fill", Color(hex: 0xFF8A65)) { FavoritesView() }
-        }
-        .padding(.vertical, 16)
-        .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.horizontal, 14)
-    }
-
-    private func quickLink<D: View>(_ title: String, _ icon: String, _ color: Color,
-                                    @ViewBuilder destination: () -> D) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 24))
-                    .foregroundColor(.white)
-                    .frame(width: 48, height: 48)
-                    .background(
-                        LinearGradient(colors: [color.opacity(0.82), color],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                Text(title)
-                    .font(.system(size: 12))
-                    .foregroundColor(AKColor.sub)
+    /// 无输入子视图：AppState 发布触发外层 body 重算时，SwiftUI 发现入参未变会跳过这整块
+    private struct MeQuickGrid: View {
+        var body: some View {
+            HStack(spacing: 0) {
+                quickLink("靓号商城", "rosette", Color(hex: 0x3B82F6)) { PrettyNumbersView() }
+                quickLink("VIP 会员", "star.fill", AKColor.gold) { VipView() }
+                quickLink("K币钱包", "creditcard.fill", Color(hex: 0x4BB8FF)) { WalletView() }
+                quickLink("我的收藏", "gift.fill", Color(hex: 0xFF8A65)) { FavoritesView() }
             }
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(AKColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 14)
         }
-        .buttonStyle(.plain)
+
+        private func quickLink<D: View>(_ title: String, _ icon: String, _ color: Color,
+                                        @ViewBuilder destination: () -> D) -> some View {
+            NavigationLink {
+                destination()
+            } label: {
+                VStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 24))
+                        .foregroundColor(.white)
+                        .frame(width: 48, height: 48)
+                        .background(
+                            LinearGradient(colors: [color.opacity(0.82), color],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    Text(title)
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.sub)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     // MARK: - 分组
 
-    private func menuSection<Content: View>(_ title: String,
-                                            @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13))
-                .foregroundColor(AKColor.muted)
-                .padding(.leading, 20)
-            VStack(spacing: 0) { content() }
-                .background(AKColor.card)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.horizontal, 14)
-        }
-    }
-
-    private var menuDivider: some View {
-        Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.leading, 62)
-    }
-
-    private func menuCell(_ icon: String, _ tint: Color, _ title: String,
-                          trailing: String = "") -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 19))
-                .foregroundColor(tint)
-                .frame(width: 36, height: 36)
-                .background(tint.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            Text(title)
-                .font(.system(size: 15))
-                .foregroundColor(AKColor.text)
-            Spacer(minLength: 4)
-            if !trailing.isEmpty {
-                Text(trailing)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(AKColor.muted)
-                    .padding(.trailing, 4)
+    private struct MeMenuSections: View {
+        var body: some View {
+            VStack(spacing: 0) {
+                menuSection("账号与安全") {
+                    NavigationLink { EditProfileView() } label: {
+                        menuCell("person.fill", Color(hex: 0x4C8DFF), "个人资料", trailing: "编辑")
+                    }
+                    .buttonStyle(.plain)
+                    menuDivider
+                    NavigationLink { PrivacySettingsView() } label: {
+                        menuCell("lock.fill", Color(hex: 0x8B7CF6), "隐私设置")
+                    }
+                    .buttonStyle(.plain)
+                }
+                menuSection("我的服务") {
+                    NavigationLink { NoticesView() } label: {
+                        menuCell("megaphone.fill", Color(hex: 0xFF9F43), "官方公告")
+                    }
+                    .buttonStyle(.plain)
+                    menuDivider
+                    NavigationLink { CustomerServiceView() } label: {
+                        menuCell("headphones", Color(hex: 0x2FA84F), "联系客服")
+                    }
+                    menuDivider
+                    NavigationLink { InviteRewardView() } label: {
+                        menuCell("giftcard.fill", Color(hex: 0xFF6B81), "邀请好友")
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 14)
+                menuSection("设置") {
+                    NavigationLink { SettingsView() } label: {
+                        menuCell("gearshape.fill", Color(hex: 0x6C8AE4), "设置", trailing: "通知 · 缓存")
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 14)
             }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 15))
-                .foregroundColor(AKColor.placeholder)
         }
-        .padding(.horizontal, 14)
-        .frame(height: 52)
-        .contentShape(Rectangle())
+
+        private func menuSection<Content: View>(_ title: String,
+                                                @ViewBuilder content: () -> Content) -> some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundColor(AKColor.muted)
+                    .padding(.leading, 20)
+                VStack(spacing: 0) { content() }
+                    .background(AKColor.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(.horizontal, 14)
+            }
+        }
+
+        private var menuDivider: some View {
+            Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.leading, 62)
+        }
+
+        private func menuCell(_ icon: String, _ tint: Color, _ title: String,
+                              trailing: String = "") -> some View {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 19))
+                    .foregroundColor(tint)
+                    .frame(width: 36, height: 36)
+                    .background(tint.opacity(0.16))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text(title)
+                    .font(.system(size: 15))
+                    .foregroundColor(AKColor.text)
+                Spacer(minLength: 4)
+                if !trailing.isEmpty {
+                    Text(trailing)
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AKColor.muted)
+                        .padding(.trailing, 4)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 15))
+                    .foregroundColor(AKColor.placeholder)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .contentShape(Rectangle())
+        }
     }
 
     private var logoutButton: some View {

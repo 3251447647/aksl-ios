@@ -42,6 +42,8 @@ struct MessageBody: View {
     var onMention: (Int64) -> Void = { _ in }
     /// 语音是否已播放过：对方发来的语音没播过显示红点
     var voicePlayed: Bool = true
+    /// 本机视频上传百分比：气泡上显示「视频 N%」
+    var uploadProgress: Double? = nil
 
     private var ex: [String: JSONValue] { message.extraMap }
     private var rawText: String { message.text ?? message.content ?? "" }
@@ -113,6 +115,8 @@ struct MessageBody: View {
             // 15 正常是视频；内容是带 items 的聊天记录 JSON 时按记录卡片渲染
             if isForwardedRecord {
                 chatRecordCard
+            } else if message.localId < 0 && message.status != 1 {
+                pendingVideoBubble
             } else {
                 videoBubble
             }
@@ -1062,17 +1066,23 @@ struct MessageBody: View {
         .onTapGesture { onCallBack(video ? 2 : 1) }
     }
 
+    /// 视频 content 是 url|#|{duration,cover,w,h}，extra 里没有这些字段时回落到这里
+    private var videoJSON: [String: Any] {
+        let parts = (message.content ?? "").components(separatedBy: "|#|")
+        if parts.count > 1,
+           let o = MessageBody.jsonObject(parts.dropFirst().joined(separator: "|#|")) {
+            return o
+        }
+        return cardJSON
+    }
+
     private var videoBubble: some View {
-        let cover = cStr("cover")
-        let duration = cInt("duration")
+        let cover = (videoJSON["cover"] as? String) ?? cStr("cover")
+        let duration = (videoJSON["duration"] as? NSNumber)?.intValue ?? cInt("duration")
         let ratio: CGFloat = {
-            let parts = (message.content ?? "").components(separatedBy: "|#|")
-            let json = parts.count > 1 ? parts.dropFirst().joined(separator: "|#|") : ""
-            if let o = MessageBody.jsonObject(json) {
-                let w = (o["w"] as? NSNumber)?.doubleValue ?? 0
-                let h = (o["h"] as? NSNumber)?.doubleValue ?? 0
-                if w > 0, h > 0 { return CGFloat(min(max(w / h, 0.4), 2.4)) }
-            }
+            let w = (videoJSON["w"] as? NSNumber)?.doubleValue ?? 0
+            let h = (videoJSON["h"] as? NSNumber)?.doubleValue ?? 0
+            if w > 0, h > 0 { return CGFloat(min(max(w / h, 0.4), 2.4)) }
             return 3.0 / 4.0
         }()
         let boxW: CGFloat = ratio >= 1 ? 210 : 300 * ratio
@@ -1114,6 +1124,29 @@ struct MessageBody: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { onOpenMedia(message.text ?? message.content ?? "", true) }
+    }
+
+    /// 本机待发视频：上传中显示百分比 + 底部进度条（对齐安卓 PendingMediaBubble）
+    private var pendingVideoBubble: some View {
+        let pct = min(max(uploadProgress ?? 0, 0), 1)
+        return ZStack(alignment: .bottom) {
+            Color(hex: 0x202329)
+            Text(message.status == 2 ? "点击重发" : "视频 \(Int(pct * 100))%")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.8))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Color.white.opacity(0.2)
+                    Rectangle()
+                        .fill(AKColor.brand)
+                        .frame(width: geo.size.width * CGFloat(message.status == 2 ? 1.0 : pct))
+                }
+            }
+            .frame(height: 2)
+        }
+        .frame(width: 225, height: 300)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var momentCard: some View {

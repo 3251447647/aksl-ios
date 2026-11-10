@@ -24,6 +24,16 @@ final class AppState: ObservableObject {
     private let ws = WSClient()
     private var wsStarted = false
 
+    /// 会话列表刷新的合并状态：WS 每来一条消息、每次已读都会触发刷新，
+    /// 逐个直发会让 4 个常驻 tab 的 body 反复重算，也会打满接口。
+    /// 单飞 + 1 秒节流 + 尾随补刷：突发消息只发一次请求，最后一条消息仍会落到列表。
+    private var convRefreshTask: Task<Void, Never>?
+    private var convRefreshTail: Task<Void, Never>?
+    private var convRefreshedAt: CFAbsoluteTime = 0
+    private static let convRefreshInterval: CFAbsoluteTime = 1.0
+    /// 已上报过的已读游标：同一游标重复 markRead 不再发请求
+    private var readCursor: [String: Int64] = [:]
+
     init() {
         isLoggedIn = SessionStore.shared.isLoggedIn
         user = SessionStore.shared.user
@@ -94,6 +104,10 @@ final class AppState: ObservableObject {
     func logout() {
         ws.stop()
         wsStarted = false
+        convRefreshTail?.cancel()
+        convRefreshTail = nil
+        convRefreshedAt = 0
+        readCursor.removeAll()
         SessionStore.shared.clear()
         user = nil
         conversations = []
@@ -101,14 +115,71 @@ final class AppState: ObservableObject {
         isLoggedIn = false
     }
 
-    func refreshConversations() async {
+    /// force=true：用户主动操作（下拉刷新、置顶/免打扰/删除/一键已读）需要立刻拿到最新列表
+    func refreshConversations(force: Bool = false) async {
+        if let running = convRefreshTask {
+            await running.value
+            if !force {
+                /* 这次请求可能没包含等待期间到达的消息：补一次尾随刷新（共享同一个任务，不会叠请求） */
+                await scheduleConvRefresh(after: Self.convRefreshInterval)
+                return
+            }
+        }
+        if !force {
+            let elapsed = CFAbsoluteTimeGetCurrent() - convRefreshedAt
+            if elapsed < Self.convRefreshInterval {
+                /* 1 秒内刚刷过：突发消息交给尾随补刷，调用方等那一次的结果 */
+                await scheduleConvRefresh(after: Self.convRefreshInterval - elapsed)
+                return
+            }
+        } else {
+            /* 用户主动刷新马上发请求，排着的尾随补刷就多余了 */
+            convRefreshTail?.cancel()
+            convRefreshTail = nil
+        }
+        let task = Task { await self.fetchConversations() }
+        convRefreshTask = task
+        await task.value
+        convRefreshTask = nil
+        convRefreshedAt = CFAbsoluteTimeGetCurrent()
+    }
+
+    private func fetchConversations() async {
+        let started = AKPerf.start()
         do {
             let data = try await api.conversations()
-            conversations = data.list
-            unreadTotal = data.unreadTotal
+            applyConversations(data)
+            AKPerf.log("app.conversations", since: started, "\(data.list.count) 个会话 · \(data.unreadTotal) 未读")
         } catch {
-            errorText = error.localizedDescription
+            setError(error)
         }
+    }
+
+    /// @Published 赋值不看新旧值，值没变也会让所有观察者重算 body
+    private func applyConversations(_ data: ConversationList) {
+        if conversations != data.list { conversations = data.list }
+        if unreadTotal != data.unreadTotal { unreadTotal = data.unreadTotal }
+    }
+
+    private func scheduleConvRefresh(after delay: TimeInterval) async {
+        let tail: Task<Void, Never>
+        if let existing = convRefreshTail {
+            tail = existing
+        } else {
+            tail = Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(delay, 0.05) * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                convRefreshTail = nil
+                await refreshConversations(force: true)
+            }
+            convRefreshTail = tail
+        }
+        await tail.value
+    }
+
+    private func setError(_ error: Error) {
+        let text = error.localizedDescription
+        if errorText != text { errorText = text }
     }
 
     func loadContacts() async {
@@ -122,7 +193,8 @@ final class AppState: ObservableObject {
     func sendText(convType: String, convId: Int64, text: String, atUids: String = "") async throws -> Message {
         let clientId = "ios_" + UUID().uuidString
         let data = try await api.sendText(convType: convType, convId: convId, text: text, clientId: clientId, atUids: atUids)
-        await refreshConversations()
+        /* 会话列表刷新不阻塞发送：输入区要在消息返回后立刻解锁 */
+        Task { await refreshConversations() }
         return data.message
     }
 
@@ -133,34 +205,39 @@ final class AppState: ObservableObject {
 
     func markRead(convType: String, convId: Int64, lastId: Int64) async {
         guard lastId > 0 else { return }
-        _ = try? await api.read(convType: convType, convId: convId, lastId: lastId)
-        await refreshConversations()
+        let key = "\(convType)_\(convId)"
+        if readCursor[key, default: 0] >= lastId { return }
+        if (try? await api.read(convType: convType, convId: convId, lastId: lastId)) != nil {
+            readCursor[key] = lastId
+        }
+        /* 打开会话时不该为了刷列表而卡住消息渲染 */
+        Task { await refreshConversations() }
     }
 
     func togglePin(_ conv: Conversation) async {
         await api.convSet(convType: conv.convType, convId: conv.convId, key: "top", value: conv.isTop == 1 ? 0 : 1)
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     func toggleMute(_ conv: Conversation) async {
         await api.convSet(convType: conv.convType, convId: conv.convId, key: "mute", value: conv.isMute == 1 ? 0 : 1)
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     func deleteConversation(_ conv: Conversation) async {
         await api.convDelete(convType: conv.convType, convId: conv.convId)
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     func clearConversation(_ conv: Conversation) async {
         await APIClient.shared.clearConversation(convType: conv.convType, convId: conv.convId)
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     /// 一键已读（首页加号菜单）
     func markAllRead() async {
         await api.readAll()
-        await refreshConversations()
+        await refreshConversations(force: true)
     }
 
     func uploadImage(_ data: Data) async throws -> UploadData {
@@ -170,7 +247,7 @@ final class AppState: ObservableObject {
     func sendImage(convType: String, convId: Int64, url: String) async throws -> Message {
         let clientId = "ios_" + UUID().uuidString
         let data = try await APIClient.shared.sendImage(convType: convType, convId: convId, url: url, clientId: clientId)
-        await refreshConversations()
+        Task { await refreshConversations() }
         return data.message
     }
 
@@ -182,14 +259,14 @@ final class AppState: ObservableObject {
     func sendVoice(convType: String, convId: Int64, url: String, seconds: Int) async throws -> Message {
         let clientId = "ios_" + UUID().uuidString
         let data = try await APIClient.shared.sendVoice(convType: convType, convId: convId, url: url, seconds: seconds, clientId: clientId)
-        await refreshConversations()
+        Task { await refreshConversations() }
         return data.message
     }
 
     func sendSticker(convType: String, convId: Int64, url: String) async throws -> Message {
         let clientId = "sticker_" + UUID().uuidString
         let data = try await APIClient.shared.sendImage(convType: convType, convId: convId, url: url, clientId: clientId)
-        await refreshConversations()
+        Task { await refreshConversations() }
         return data.message
     }
 

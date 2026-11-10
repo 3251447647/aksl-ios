@@ -1,18 +1,16 @@
 import SwiftUI
 
-/// 聊天「+」面板：安卓式 4 列图标网格（相册/拍摄/通话/直播间/红包/礼物/转账/背景）
+/// 聊天「+」面板：安卓式 4 列图标网格（相册/视频/通话/直播间/红包/礼物/转账）
 struct MorePanel: View {
     var isGroup: Bool
     var onPhoto: () -> Void
-    var onCamera: () -> Void
+    var onVideo: () -> Void
     var onRedPacket: () -> Void
     var onTransfer: () -> Void
     var onGift: () -> Void
-    var onVoiceCall: () -> Void = {}
     var onVideoCall: () -> Void = {}
     var onGroupCall: (Int) -> Void = { _ in }
     var onGroupLive: () -> Void = {}
-    var onChatBg: () -> Void = {}
 
     private struct Item: Identifiable {
         let id = UUID()
@@ -24,20 +22,17 @@ struct MorePanel: View {
     private var items: [Item] {
         var list: [Item] = [
             Item(title: "相册", icon: "photo", action: onPhoto),
-            Item(title: "拍摄", icon: "camera", action: onCamera)
+            Item(title: "视频", icon: "film", action: onVideo)
         ]
         if isGroup {
             list.append(Item(title: "群通话", icon: "phone", action: { onGroupCall(2) }))
             list.append(Item(title: "直播间", icon: "dot.radiowaves.left.and.right", action: onGroupLive))
-            list.append(Item(title: "语音通话", icon: "phone", action: { onGroupCall(1) }))
         } else {
-            list.append(Item(title: "语音通话", icon: "phone", action: onVoiceCall))
             list.append(Item(title: "视频通话", icon: "video", action: onVideoCall))
         }
         list.append(Item(title: "红包", icon: "gift", action: onRedPacket))
         list.append(Item(title: "礼物", icon: "gift.fill", action: onGift))
         list.append(Item(title: "转账", icon: "arrow.left.arrow.right", action: onTransfer))
-        list.append(Item(title: "背景", icon: "photo.on.rectangle", action: onChatBg))
         return list
     }
 

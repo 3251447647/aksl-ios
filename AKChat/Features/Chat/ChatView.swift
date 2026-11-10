@@ -3,6 +3,8 @@ import PhotosUI
 import Combine
 import UIKit
 import AVKit
+import AVFoundation
+import UniformTypeIdentifiers
 
 struct ProfileTarget: Identifiable {
     let id: Int64
@@ -34,6 +36,15 @@ private struct ChatBottomEdgeKey: PreferenceKey {
     }
 }
 
+/// 已落到临时文件的待发视频：发送失败后重试直接重传，不用再选一次相册
+private struct PendingVideo {
+    let fileURL: URL
+    let duration: Int
+    var cover: String
+    let width: Double
+    let height: Double
+}
+
 /// 长按菜单里需要二次确认的操作
 private enum ChatConfirm: Identifiable {
     case recall(Message)
@@ -51,6 +62,7 @@ struct ChatView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.tabIsActive) private var tabIsActive
 
     let convType: String
     let convId: Int64
@@ -73,6 +85,9 @@ struct ChatView: View {
     /// 卡片状态轮询：别人领取红包/转账/礼物后服务端会更新原消息或推送领取事件，
     /// WS 漏帧时靠它兜底；3 秒一次，只在会话可见且还有未完成卡片时执行。
     @State private var cardPollTask: Task<Void, Never>?
+    /// 开页时发起的并行拉取；页面退场时统一取消，避免关掉会话后请求还在跑
+    @State private var pageTasks: [Task<Void, Never>] = []
+    @StateObject private var derivedCache = ChatDerivedCache()
     @State private var cardRefreshing = false
     @State private var lastCardRefresh: TimeInterval = 0
     @State private var recordPayload: String?
@@ -80,7 +95,6 @@ struct ChatView: View {
     @State private var videoURL: URL?
     @State private var showVideo = false
     @State private var showNotices = false
-    @State private var showCamera = false
     @State private var lastTypingSent: TimeInterval = 0
     @FocusState private var inputFocused: Bool
     @State private var previewImage: PreviewImage?
@@ -110,6 +124,15 @@ struct ChatView: View {
     @State private var showGroupCall = false
     @State private var showMore = false
     @State private var showPhotoPicker = false
+    @State private var showVideoPicker = false
+    @State private var videoItem: PhotosPickerItem?
+    /// 视频上传百分比（键为消息 listKey），气泡上显示「视频 N%」
+    @State private var uploadProgress: [String: Double] = [:]
+    @State private var pendingVideos: [String: PendingVideo] = [:]
+    /// 首次加载完成信号：进会话无条件贴底一次
+    @State private var initialScrollTick = 0
+    /// 首次贴底完成：此前的消息变化不触发带动画的跟随，避免进会话先飘一下
+    @State private var initialScrollDone = false
     @State private var showRedPacket = false
     @State private var showTransfer = false
     @State private var showGift = false
@@ -128,8 +151,6 @@ struct ChatView: View {
     @State private var recordBusy = false
     @State private var recordReleased = false
     @State private var playedVoice: Set<String> = []
-    @State private var showBgPicker = false
-    @State private var bgItem: PhotosPickerItem?
     @State private var showEmojiPicker = false
     @State private var emojiItems: [PhotosPickerItem] = []
     @State private var forwardTitle = "聊天记录"
@@ -283,11 +304,10 @@ struct ChatView: View {
                     MorePanel(
                         isGroup: isGroup,
                         onPhoto: { showMore = false; showPhotoPicker = true },
-                        onCamera: { showMore = false; showCamera = true },
+                        onVideo: { showMore = false; showVideoPicker = true },
                         onRedPacket: { showMore = false; showRedPacket = true },
                         onTransfer: { showMore = false; showTransfer = true },
                         onGift: { showMore = false; showGift = true },
-                        onVoiceCall: { showMore = false; startCall(1) },
                         onVideoCall: { showMore = false; startCall(2) },
                         onGroupCall: { type in
                             showMore = false
@@ -298,8 +318,7 @@ struct ChatView: View {
                             showMore = false
                             liveGid = convId
                             showLive = true
-                        },
-                        onChatBg: { showMore = false; showBgPicker = true }
+                        }
                     )
                 }
             }
@@ -535,15 +554,6 @@ struct ChatView: View {
             }
             .restoresSwipeBack()
         }
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraPicker(onImage: { image in
-                showCamera = false
-                guard let data = image.jpegData(compressionQuality: 0.85) else { return }
-                Task { await sendPhotoData(data) }
-            }, onCancel: {
-                showCamera = false
-            })
-        }
         .fullScreenCover(isPresented: $showLive) {
             NavigationStack { LiveRoomView(gid: liveGid) }
         }
@@ -564,7 +574,7 @@ struct ChatView: View {
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
                       maxSelectionCount: 9, matching: .images)
-        .photosPicker(isPresented: $showBgPicker, selection: $bgItem, matching: .images)
+        .photosPicker(isPresented: $showVideoPicker, selection: $videoItem, matching: .videos)
         .photosPicker(isPresented: $showEmojiPicker, selection: $emojiItems,
                       maxSelectionCount: 9, matching: .images)
         .sheet(isPresented: $showRedPacket) {
@@ -577,15 +587,15 @@ struct ChatView: View {
             GiftSheet(convType: convType, convId: convId) { Task { await reloadAfterPay() } }
         }
         .onAppear {
-            /* 正在看的会话不弹本地通知 */
-            LocalNotifier.shared.activeKey = LocalNotifier.shared.key(convType, convId)
-            syncPeerConv()
-            startCardPolling()
+            activatePage()
         }
         .onDisappear {
-            LocalNotifier.shared.activeKey = nil
-            cardPollTask?.cancel()
-            cardPollTask = nil
+            pausePage()
+            pageTasks.forEach { $0.cancel() }
+            pageTasks.removeAll()
+        }
+        .onChange(of: tabIsActive) { active in
+            if active { activatePage() } else { pausePage() }
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
@@ -613,25 +623,31 @@ struct ChatView: View {
             syncPeerConv()
             /* 先把消息拉下来渲染，其余数据并行补齐，避免打开会话卡顿 */
             await load()
+            guard !Task.isCancelled else { return }
+            /* 首次加载完成：通知列表无条件贴底一次，之后才按「已在底部」跟随 */
+            initialScrollTick += 1
 
-            Task {
-                if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
-                    chatBg = r.bg
-                    storeBg(r.bg)
-                }
-            }
-            Task {
-                async let emojis: Void = app.loadEmojis()
-                async let pin: Void = loadPin()
-                _ = await (emojis, pin)
-            }
-            if isGroup {
+            pageTasks.forEach { $0.cancel() }
+            pageTasks = [
                 Task {
+                    if let r = try? await APIClient.shared.chatBg(convType: convType, convId: convId) {
+                        chatBg = r.bg
+                        storeBg(r.bg)
+                    }
+                },
+                Task {
+                    async let emojis: Void = app.loadEmojis()
+                    async let pin: Void = loadPin()
+                    _ = await (emojis, pin)
+                }
+            ]
+            if isGroup {
+                pageTasks.append(Task {
                     async let members: Void = loadMembers()
                     async let notice: Void = loadPendingNotice()
                     _ = await (members, notice)
-                }
-                Task {
+                })
+                pageTasks.append(Task {
                     async let activeReq = APIClient.shared.groupActive(gid: convId)
                     async let infoReq = APIClient.shared.groupInfo(id: convId)
                     let a = try? await activeReq
@@ -644,7 +660,7 @@ struct ChatView: View {
                         groupInfo = i
                         groupExtras = e
                     }
-                }
+                })
             }
         }
         .onReceive(app.$incoming.compactMap { $0 }) { msg in
@@ -702,25 +718,10 @@ struct ChatView: View {
                 }
             }
         }
-        .onChange(of: bgItem) { item in
+        .onChange(of: videoItem) { item in
             guard let item else { return }
-            Task {
-                guard let data = try? await item.loadTransferable(type: Data.self),
-                      let up = try? await app.uploadImage(data) else {
-                    await MainActor.run { bgItem = nil; flash("背景设置失败") }
-                    return
-                }
-                if let r = try? await APIClient.shared.setChatBg(convType: convType, convId: convId, url: up.url) {
-                    await MainActor.run {
-                        chatBg = r.bg
-                        storeBg(r.bg)
-                        bgItem = nil
-                        flash("背景已更新")
-                    }
-                } else {
-                    await MainActor.run { bgItem = nil; flash("背景设置失败") }
-                }
-            }
+            videoItem = nil
+            Task { await sendVideo(item) }
         }
         .onChange(of: emojiItems) { items in
             guard !items.isEmpty else { return }
@@ -915,14 +916,24 @@ struct ChatView: View {
     }
 
     private var messageList: some View {
-        /* 派生数据一次算好：成员索引、@映射、已读提示、时间分隔都不再逐行重算 */
-        let hints = readHints
-        let memberLookup = memberMap
-        let mentions = mentionMap
-        let mentionStamp = mentions.hashValue
-        let dividers = dividerLabels
-        let firstUnread = firstUnreadIndex
-        let unreadCount = unreadMessageCount
+        /* 派生数据只在消息/成员真的变了时重算：AppState 其它字段的发布
+           （别的会话来消息、未读变化）也会重算 body，不该重跑这一整遍 */
+        let derived = derivedCache.value(
+            for: ChatDerivedCache.Key(isGroup: isGroup,
+                                      myId: myId,
+                                      membersHidden: isMembersHidden,
+                                      unreadAnchor: unreadAnchor,
+                                      messages: messages,
+                                      members: members),
+            build: buildDerived
+        )
+        let hints = derived.readHints
+        let memberLookup = derived.membersByUid
+        let mentions = derived.mentions
+        let mentionStamp = derived.mentionStamp
+        let dividers = derived.dividers
+        let firstUnread = derived.firstUnread
+        let unreadCount = derived.unreadCount
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
@@ -972,7 +983,8 @@ struct ChatView: View {
                                 selectCircle(selected: selectedKeys.contains(msg.listKey))
                             }
                             row(msg, member: memberLookup[msg.fromUid], mentionMap: mentions,
-                                mentionStamp: mentionStamp, readHint: hints[msg.listKey] ?? 0)
+                                mentionStamp: mentionStamp, readHint: hints[msg.listKey] ?? 0,
+                                uploadProgress: uploadProgress[msg.listKey])
                         }
                         .background(msg.id > 0 && msg.id == highlightId
                                     ? Color(hex: 0xFFE082).opacity(0.2) : Color.clear)
@@ -1011,7 +1023,8 @@ struct ChatView: View {
             }
             /* 只在底部出现新消息时贴底：上拉加载历史与引用跳转不会把视口甩到底 */
             .onChange(of: messages.last?.listKey) { key in
-                guard key != nil, scrollTarget == nil, atBottom, let last = messages.last else { return }
+                guard initialScrollDone, key != nil, scrollTarget == nil, atBottom,
+                      let last = messages.last else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(last.listKey, anchor: .bottom)
                 }
@@ -1024,6 +1037,21 @@ struct ChatView: View {
             }
             .onChange(of: showEmoji) { _ in stickToBottom(proxy, delay: 0.08) }
             .onChange(of: showMore) { _ in stickToBottom(proxy, delay: 0.08) }
+            /* 首次加载完成：无条件贴底（无动画），之后才走“已在底部才跟随”的逻辑。
+               LazyVStack 首帧可能还没量完，补两次无动画定位 */
+            .onChange(of: initialScrollTick) { tick in
+                guard tick > 0 else { return }
+                atBottom = true
+                if let last = messages.last { proxy.scrollTo(last.listKey, anchor: .bottom) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                    if let last = messages.last { proxy.scrollTo(last.listKey, anchor: .bottom) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if let last = messages.last { proxy.scrollTo(last.listKey, anchor: .bottom) }
+                    atBottom = true
+                    initialScrollDone = true
+                }
+            }
             .onChange(of: scrollTarget) { target in
                 guard let target else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
@@ -1443,9 +1471,36 @@ struct ChatView: View {
         return e.membersHidden == 1 || (e.hideMembers == 1 && myRole == 0)
     }
 
+    /// 气泡上方 @ 提示：按 at_uids 取当前群昵称；@全体成员用 all/-1 表示
+    private func mentionHint(for msg: Message) -> (text: String, highlight: Bool)? {
+        guard isGroup, msg.type != 11 else { return nil }
+        let tokens = (msg.atUids ?? "").split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+        let myId = app.user?.id ?? 0
+        var highlight = false
+        var names: [String] = []
+        for token in tokens {
+            if token == "all" || token == "-1" {
+                names.append("@全体成员")
+                highlight = true
+            } else if let uid = Int64(token) {
+                let name = (members.first(where: { $0.uid == uid })?.name ?? "")
+                    .trimmingCharacters(in: .whitespaces)
+                names.append("@" + (name.isEmpty ? "成员" : name))
+                if uid == myId { highlight = true }
+            }
+        }
+        var seen = Set<String>()
+        let unique = names.filter { seen.insert($0).inserted }
+        return unique.isEmpty ? nil : (unique.joined(separator: " "), highlight)
+    }
+
     @ViewBuilder
     private func row(_ msg: Message, member: GroupMember?, mentionMap: [String: Int64],
-                     mentionStamp: Int, readHint: Int) -> some View {
+                     mentionStamp: Int, readHint: Int, uploadProgress: Double? = nil) -> some View {
+        let hint = mentionHint(for: msg)
         ChatMessageRow(
             message: msg,
             mine: msg.fromUid == myId,
@@ -1456,10 +1511,13 @@ struct ChatView: View {
             myName: app.user?.nickname ?? "我",
             peerName: title,
             readHint: readHint,
+            uploadProgress: uploadProgress,
             playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content ?? ""),
             voicePlayed: playedVoice.contains(msg.listKey),
             mentionMap: mentionMap,
             mentionStamp: mentionStamp,
+            mentionHint: hint?.text,
+            mentionHighlight: hint?.highlight ?? false,
             onMention: { uid in
                 openProfile(uid)
             },
@@ -1546,6 +1604,13 @@ struct ChatView: View {
         switch key {
         case "reply":
             replyTo = msg
+            /* 群里回复谁就带上 @谁：at_uids 驱动气泡上方提示与对方首页 [有人@我] */
+            if isGroup, msg.fromUid != (app.user?.id ?? 0) {
+                let name = (members.first(where: { $0.uid == msg.fromUid })?.name
+                    ?? msg.fromName ?? "")
+                    .trimmingCharacters(in: .whitespaces)
+                insertMention(name: name.isEmpty ? "成员" : name, uid: msg.fromUid)
+            }
             inputFocused = true
         case "copy":
             UIPasteboard.general.string = copyText(msg) ?? ""
@@ -1798,7 +1863,7 @@ struct ChatView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(sending)
+                .accessibilityLabel("发送")
             } else {
                 Button {
                     showMore.toggle()
@@ -1878,9 +1943,12 @@ struct ChatView: View {
             messages.append(local)
             do {
                 let uploaded = try await app.uploadVoice(fileURL: url)
-                let saved = try await app.sendVoice(convType: convType, convId: convId,
-                                                    url: uploaded.url, seconds: seconds)
-                replaceLocal(local, with: saved)
+                let saved = try await APIClient.shared.sendVoice(
+                    convType: convType, convId: convId, url: uploaded.url, seconds: seconds,
+                    clientId: local.clientId ?? "ios_\(UUID().uuidString)"
+                )
+                replaceLocal(local, with: saved.message)
+                Task { await app.refreshConversations() }
             } catch {
                 failLocal(local, "语音发送失败：\(error.localizedDescription)")
             }
@@ -2099,40 +2167,41 @@ struct ChatView: View {
 
     private func send() async {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty, !sending else { return }
+        guard !content.isEmpty else { return }
         let at = atUids.map { $0 == -1 ? "all" : String($0) }.joined(separator: ",")
         let quote = replyTo
+        /* 输入框立刻清空、本机气泡立刻落位：网络与会话列表刷新都不挡输入 */
         text = ""
         atUids = []
         replyTo = nil
         errorText = nil
-        sending = true
-        defer { sending = false }
 
+        let type: Int
+        let body: String
         if let quote, quote.id > 0 {
-            let extra = quotePayload(quote)
-            let local = makeLocal(type: 10, content: extra + "|#|" + content)
-            messages.append(local)
-            do {
-                let saved = try await APIClient.shared.sendTypedMessage(
-                    convType: convType, convId: convId, type: 10,
-                    content: extra + "|#|" + content,
-                    clientId: local.clientId ?? "ios_\(UUID().uuidString)",
-                    atUids: at
-                )
-                replaceLocal(local, with: saved.message)
-                await app.refreshConversations()
-            } catch {
-                failLocal(local, "发送失败：\(error.localizedDescription)")
-            }
-            return
+            type = 10
+            body = quotePayload(quote) + "|#|" + content
+        } else {
+            type = 1
+            body = content
         }
-
-        let local = makeLocal(type: 1, content: content)
+        var local = makeLocal(type: type, content: body)
+        local.atUids = at.isEmpty ? nil : at
         messages.append(local)
+        Task { await transmit(local, atUids: at) }
+    }
+
+    /// 发送只等接口本身：成功后换成服务端消息，会话列表刷新丢到后台，失败才标红
+    private func transmit(_ local: Message, atUids: String = "") async {
         do {
-            let saved = try await app.sendText(convType: convType, convId: convId, text: content, atUids: at)
-            replaceLocal(local, with: saved)
+            let saved = try await APIClient.shared.sendTypedMessage(
+                convType: convType, convId: convId, type: local.type,
+                content: local.content ?? local.text ?? "",
+                clientId: local.clientId ?? "ios_\(UUID().uuidString)",
+                atUids: atUids
+            )
+            replaceLocal(local, with: saved.message)
+            Task { await app.refreshConversations() }
         } catch {
             failLocal(local, "发送失败：\(error.localizedDescription)")
         }
@@ -2152,47 +2221,155 @@ struct ChatView: View {
         guard let idx = messages.firstIndex(where: { $0.localId == msg.localId }) else { return }
         messages[idx].status = 0
         errorText = nil
-        do {
-            let saved: Message
-            if msg.type == 10, let raw = msg.content {
-                let data = try await APIClient.shared.sendTypedMessage(
-                    convType: convType, convId: convId, type: 10, content: raw,
-                    clientId: msg.clientId ?? "ios_\(UUID().uuidString)"
-                )
-                saved = data.message
-            } else {
-                saved = try await app.sendText(convType: convType, convId: convId, text: msg.content ?? msg.text ?? "")
+        if msg.type == 15 {
+            guard pendingVideos[msg.listKey] != nil else {
+                failLocal(msg, "视频文件已失效，请重新选择发送")
+                return
             }
-            replaceLocal(messages[idx], with: saved)
+            await uploadVideo(msg)
+            return
+        }
+        await transmit(messages[idx], atUids: msg.atUids ?? "")
+    }
+
+    /* ---------------- 视频 ---------------- */
+
+    /// 相册选视频：先落临时文件 + 本机气泡，传完再换成服务端消息
+    private func sendVideo(_ item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty else {
+            flash("视频读取失败")
+            return
+        }
+        guard data.count <= 60 * 1024 * 1024 else {
+            flash("视频不能超过 60MB")
+            return
+        }
+        let ext = videoExtension(item)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("akchat_video_\(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: fileURL)
         } catch {
-            failLocal(messages[idx], "发送失败：\(error.localizedDescription)")
+            flash("视频读取失败")
+            return
+        }
+
+        let local = makeLocal(type: 15, content: "")
+        let meta = await videoMeta(fileURL)
+        messages.append(local)
+        pendingVideos[local.listKey] = PendingVideo(
+            fileURL: fileURL, duration: meta.duration, cover: "",
+            width: meta.width, height: meta.height
+        )
+        uploadProgress[local.listKey] = 0
+
+        /* 首帧封面先传（kind=chat 落 uploads/chat；服务端的 cover 是朋友圈封面，不能复用）：
+           两端气泡直接显示封面，不为每个视频起播放器 */
+        if let cover = meta.cover,
+           let up = try? await APIClient.shared.upload(
+               data: cover,
+               filename: "cover_\(Int(Date().timeIntervalSince1970)).jpg",
+               kind: "chat"
+           ) {
+            pendingVideos[local.listKey]?.cover = up.url
+        }
+        await uploadVideo(local)
+    }
+
+    /// 上传 + 发送视频（type=15）；失败后点「重发」会从临时文件重传
+    private func uploadVideo(_ local: Message) async {
+        guard let video = pendingVideos[local.listKey] else { return }
+        uploadProgress[local.listKey] = 0
+        do {
+            let uploaded = try await APIClient.shared.uploadVideo(
+                fileURL: video.fileURL,
+                filename: video.fileURL.lastPathComponent
+            ) { pct in
+                Task { @MainActor in
+                    let shown = uploadProgress[local.listKey] ?? 0
+                    if pct - shown >= 0.01 || pct >= 1 {
+                        uploadProgress[local.listKey] = pct
+                    }
+                }
+            }
+            var extra: [String: Any] = ["duration": video.duration]
+            if !video.cover.isEmpty { extra["cover"] = video.cover }
+            if video.width > 0, video.height > 0 {
+                extra["w"] = Int(video.width)
+                extra["h"] = Int(video.height)
+            }
+            let json = (try? JSONSerialization.data(withJSONObject: extra))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            let saved = try await APIClient.shared.sendTypedMessage(
+                convType: convType, convId: convId, type: 15,
+                content: uploaded.url + "|#|" + json,
+                clientId: local.clientId ?? "ios_\(UUID().uuidString)"
+            )
+            finishPendingVideo(local)
+            replaceLocal(local, with: saved.message)
+            Task { await app.refreshConversations() }
+        } catch {
+            uploadProgress[local.listKey] = nil
+            failLocal(local, "视频发送失败：\(error.localizedDescription)")
         }
     }
 
-    private func sendPhotoData(_ data: Data) async {
-        guard !sending else { return }
-        sending = true
-        defer { sending = false }
-        do {
-            let local = makeLocal(type: 5, content: "")
-            messages.append(local)
-            let uploaded = try await app.uploadImage(data)
-            let saved = try await app.sendImage(convType: convType, convId: convId, url: uploaded.url)
-            replaceLocal(local, with: saved)
-        } catch {
-            errorText = "图片发送失败：\(error.localizedDescription)"
+    private func finishPendingVideo(_ local: Message) {
+        uploadProgress[local.listKey] = nil
+        guard let video = pendingVideos.removeValue(forKey: local.listKey) else { return }
+        try? FileManager.default.removeItem(at: video.fileURL)
+    }
+
+    private func videoExtension(_ item: PhotosPickerItem) -> String {
+        for type in item.supportedContentTypes {
+            if let ext = type.preferredFilenameExtension { return ext }
         }
+        return "mov"
+    }
+
+    /// 时长 / 首帧封面 / 宽高：解不出来只影响封面，不挡发送
+    private func videoMeta(_ url: URL) async -> (duration: Int, cover: Data?, width: Double, height: Double) {
+        let asset = AVURLAsset(url: url)
+        let length = try? await asset.load(.duration)
+        let seconds = length?.seconds ?? 0
+        var width: Double = 0
+        var height: Double = 0
+        if let track = (try? await asset.loadTracks(withMediaType: .video))?.first,
+           let size = try? await track.load(.naturalSize) {
+            /* 竖拍视频 naturalSize 是横的，按 preferredTransform 转一次才是显示尺寸 */
+            if let transform = try? await track.load(.preferredTransform) {
+                let oriented = size.applying(transform)
+                width = abs(Double(oriented.width))
+                height = abs(Double(oriented.height))
+            } else {
+                width = Double(size.width)
+                height = Double(size.height)
+            }
+        }
+        var cover: Data?
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 640, height: 640)
+        let time = CMTime(seconds: min(1, max(0, seconds / 2)), preferredTimescale: 600)
+        if let frame = try? await generator.image(at: time) {
+            cover = UIImage(cgImage: frame.image).jpegData(compressionQuality: 0.8)
+        }
+        return (Int(seconds.rounded()), cover, width, height)
     }
 
     private func sendSticker(_ url: String) async {
-        guard !sending else { return }
-        sending = true
-        defer { sending = false }
+        let clientId = "sticker_" + UUID().uuidString
+        var local = makeLocal(type: 5, content: url)
+        local.clientId = clientId
+        messages.append(local)
         do {
-            let saved = try await app.sendSticker(convType: convType, convId: convId, url: url)
-            messages.append(saved)
+            let saved = try await APIClient.shared.sendImage(
+                convType: convType, convId: convId, url: url, clientId: clientId
+            )
+            replaceLocal(local, with: saved.message)
+            Task { await app.refreshConversations() }
         } catch {
-            errorText = "表情发送失败：\(error.localizedDescription)"
+            failLocal(local, "表情发送失败：\(error.localizedDescription)")
         }
     }
 
@@ -2254,7 +2431,7 @@ struct ChatView: View {
                     clientId: local.clientId ?? "ios_\(UUID().uuidString)"
                 )
                 replaceLocal(local, with: saved.message)
-                await app.refreshConversations()
+                Task { await app.refreshConversations() }
             } catch {
                 failLocal(local, "图片发送失败：\(error.localizedDescription)")
             }
@@ -2282,7 +2459,7 @@ struct ChatView: View {
                 clientId: local.clientId ?? "ios_\(UUID().uuidString)"
             )
             replaceLocal(local, with: saved.message)
-            await app.refreshConversations()
+            Task { await app.refreshConversations() }
         } catch {
             failLocal(local, "图片发送失败：\(error.localizedDescription)")
         }
@@ -2290,6 +2467,7 @@ struct ChatView: View {
 
     private func deleteLocalSilently(_ msg: Message) {
         messages.removeAll { $0.listKey == msg.listKey }
+        finishPendingVideo(msg)
     }
 
     private func deleteLocal(_ msg: Message) {
@@ -2400,7 +2578,7 @@ struct ChatView: View {
     }
 
     private func startCardPolling() {
-        guard cardPollTask == nil, scenePhase == .active else { return }
+        guard cardPollTask == nil, scenePhase == .active, tabIsActive else { return }
         cardPollTask = Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -2409,6 +2587,33 @@ struct ChatView: View {
                 await refreshCardStates(force: false)
             }
         }
+    }
+
+    /// 页面在屏上：接管本会话的通知抑制与卡片轮询
+    private func activatePage() {
+        guard tabIsActive else { return }
+        LocalNotifier.shared.activeKey = LocalNotifier.shared.key(convType, convId)
+        syncPeerConv()
+        startCardPolling()
+    }
+
+    /// 页面离屏（返回 / 切到别的 tab）：不再轮询，也不该继续拦截本会话的通知
+    private func pausePage() {
+        LocalNotifier.shared.activeKey = nil
+        cardPollTask?.cancel()
+        cardPollTask = nil
+    }
+
+    private func buildDerived() -> ChatDerivedCache.Value {
+        var value = ChatDerivedCache.Value()
+        value.readHints = readHints
+        value.membersByUid = memberMap
+        value.mentions = mentionMap
+        value.mentionStamp = value.mentions.hashValue
+        value.dividers = dividerLabels
+        value.firstUnread = firstUnreadIndex
+        value.unreadCount = unreadMessageCount
+        return value
     }
 
     @MainActor
@@ -2473,6 +2678,43 @@ struct ChatView: View {
 
 /* ---------------- 单条消息 ---------------- */
 
+/// 消息派生数据（已读提示 / 时间分隔 / 成员索引 / @ 名单）缓存。
+/// body 会被 AppState 任意字段的发布触发重算，只有消息或成员真的变了才重跑这遍 O(n) 汇总。
+/// 本身不发布任何状态，所以不会反向触发 SwiftUI 刷新。
+private final class ChatDerivedCache: ObservableObject {
+    struct Key: Equatable {
+        var isGroup: Bool
+        var myId: Int64
+        var membersHidden: Bool
+        var unreadAnchor: Int64
+        var messages: [Message]
+        var members: [GroupMember]
+    }
+
+    struct Value {
+        var readHints: [String: Int] = [:]
+        var membersByUid: [Int64: GroupMember] = [:]
+        var mentions: [String: Int64] = [:]
+        var mentionStamp = 0
+        var dividers: [String: String] = [:]
+        var firstUnread = -1
+        var unreadCount = 0
+    }
+
+    private var key: Key?
+    private var cached = Value()
+
+    func value(for key: Key, build: () -> Value) -> Value {
+        if let current = self.key, current == key { return cached }
+        let started = AKPerf.start()
+        let fresh = build()
+        AKPerf.log("chat.derived", since: started, "\(key.messages.count) 条消息")
+        self.key = key
+        cached = fresh
+        return fresh
+    }
+}
+
 private struct ChatMessageRow: View, Equatable {
     let message: Message
     let mine: Bool
@@ -2483,11 +2725,17 @@ private struct ChatMessageRow: View, Equatable {
     let myName: String
     var peerName: String = "对方"
     let readHint: Int
+    /// 视频上传百分比（仅本机待发视频有值）
+    var uploadProgress: Double? = nil
     let playingVoice: Bool
     var voicePlayed: Bool = true
     var mentionMap: [String: Int64] = [:]
     /// @ 名单的指纹：成员变化时行会重建，但比较本身不做 O(成员数) 的字典逐项对比
     var mentionStamp: Int = 0
+    /// 气泡上方 @ 提示（at_uids 解析）
+    var mentionHint: String? = nil
+    /// @ 到自己 / 全体时用告警色
+    var mentionHighlight: Bool = false
     var onMention: (Int64) -> Void = { _ in }
     let onVoiceTap: () -> Void
     let onRetry: () -> Void
@@ -2548,7 +2796,8 @@ private struct ChatMessageRow: View, Equatable {
             peerName: peerName,
             mentionMap: mentionMap,
             onMention: onMention,
-            voicePlayed: voicePlayed
+            voicePlayed: voicePlayed,
+            uploadProgress: uploadProgress
         )
     }
 
@@ -2605,6 +2854,15 @@ private struct ChatMessageRow: View, Equatable {
                         }
                         .padding(.leading, 6)
                         .padding(.bottom, 5)
+                    }
+
+                    if let mentionHint, !mentionHint.isEmpty {
+                        Text(mentionHint)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(mentionHighlight ? AKColor.red : AKColor.link)
+                            .lineLimit(1)
+                            .padding(.leading, 6)
+                            .padding(.bottom, 3)
                     }
 
                     bodyView
@@ -2667,9 +2925,12 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.myName == rhs.myName
             && lhs.peerName == rhs.peerName
             && lhs.readHint == rhs.readHint
+            && lhs.uploadProgress == rhs.uploadProgress
             && lhs.playingVoice == rhs.playingVoice
             && lhs.voicePlayed == rhs.voicePlayed
             && lhs.mentionStamp == rhs.mentionStamp
+            && lhs.mentionHint == rhs.mentionHint
+            && lhs.mentionHighlight == rhs.mentionHighlight
             && lhs.reeditText == rhs.reeditText
     }
 }
@@ -3239,41 +3500,34 @@ private struct VideoPreviewSheet: View {
     }
 }
 
-/// 系统相机拍照发送
-private struct CameraPicker: UIViewControllerRepresentable {
-    var onImage: (UIImage) -> Void
-    var onCancel: () -> Void
+/// 带进度的上传：URLSession 的 async 上传接口不回报进度，只能用任务代理
+private final class ProgressUploader: NSObject, URLSessionTaskDelegate {
+    private var onProgress: ((Double) -> Void)?
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
-        picker.delegate = context.coordinator
-        return picker
+    func upload(request: URLRequest, body: Data,
+                onProgress: @escaping (Double) -> Void) async throws -> (Data, URLResponse) {
+        self.onProgress = onProgress
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(Data, URLResponse), Error>) in
+            let task = session.uploadTask(with: request, from: body) { data, resp, error in
+                if let error {
+                    cont.resume(throwing: APIError.network(error.localizedDescription))
+                } else if let data, let resp {
+                    cont.resume(returning: (data, resp))
+                } else {
+                    cont.resume(throwing: APIError.network("视频上传失败"))
+                }
+            }
+            task.resume()
+        }
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onImage: onImage, onCancel: onCancel)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onImage: (UIImage) -> Void
-        let onCancel: () -> Void
-
-        init(onImage: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
-            self.onImage = onImage
-            self.onCancel = onCancel
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage { onImage(image) }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            onCancel()
-        }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        let pct = min(max(Double(totalBytesSent) / Double(totalBytesExpectedToSend), 0), 1)
+        onProgress?(pct)
     }
 }
 
@@ -3306,6 +3560,39 @@ extension APIClient {
             "msg_id": msgId,
             "scope": shared ? "all" : "self"
         ])
+    }
+
+    /// 视频上传要真实百分比：Core 的 upload 是一次性请求拿不到进度，这里用带代理的上传任务
+    func uploadVideo(fileURL: URL, filename: String,
+                     onProgress: @escaping (Double) -> Void) async throws -> UploadData {
+        let data = try Data(contentsOf: fileURL)
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ s: String) { body.append(Data(s.utf8)) }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"kind\"\r\n\r\nvideo\r\n")
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: application/octet-stream\r\n\r\n")
+        body.append(data)
+        append("\r\n--\(boundary)--\r\n")
+
+        var req = URLRequest(url: APIClient.base.appendingPathComponent("api/v1/upload"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 180
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let token = SessionStore.shared.token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let uploader = ProgressUploader()
+        let (respData, resp) = try await uploader.upload(request: req, body: body, onProgress: onProgress)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 401 { throw APIError.auth }
+        guard let decoded = try? JSONDecoder().decode(APIResp<UploadData>.self, from: respData),
+              decoded.code == 0, let payload = decoded.data else {
+            throw APIError.server("视频上传失败")
+        }
+        return payload
     }
 }
 

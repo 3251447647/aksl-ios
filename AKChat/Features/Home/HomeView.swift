@@ -118,17 +118,15 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .refreshable {
                 let t = AKPerf.start()
-                await app.refreshConversations()
+                await app.refreshConversations(force: true)
                 AKPerf.log("home.refresh", since: t, "\(app.conversations.count) 个会话")
             }
             .task {
+                /* 公告、会话、通讯录互不依赖：并行拉，首页不必串行等三次请求 */
                 async let notices: Void = loadNoticePopup()
-                let t = AKPerf.start()
-                await app.refreshConversations()
-                AKPerf.log("home.conversations", since: t, "\(app.conversations.count) 个会话")
-                let c = AKPerf.start()
-                await app.loadContacts()
-                AKPerf.log("home.contacts", since: c)
+                async let conversations: Void = refreshConversationsLogged()
+                async let contacts: Void = loadContactsLogged()
+                _ = await (conversations, contacts)
                 _ = await notices
             }
             .sheet(isPresented: $showScanner) {
@@ -272,6 +270,18 @@ struct HomeView: View {
     }
 
     /* ---------- 系统公告弹窗 ---------- */
+
+    private func refreshConversationsLogged() async {
+        let started = AKPerf.start()
+        await app.refreshConversations()
+        AKPerf.log("home.conversations", since: started, "\(app.conversations.count) 个会话")
+    }
+
+    private func loadContactsLogged() async {
+        let started = AKPerf.start()
+        await app.loadContacts()
+        AKPerf.log("home.contacts", since: started)
+    }
 
     private static func storedNoticeIds() -> Set<Int64> {
         Set((UserDefaults.standard.stringArray(forKey: noticeDismissKey) ?? []).compactMap { Int64($0) })
@@ -418,7 +428,7 @@ private struct ConversationRow: View, Equatable {
         if conv.convType == "group" && conv.atAll > 0 {
             head = Text("@全体成员 ").foregroundColor(AKColor.red)
         } else if conv.convType == "group" && conv.atMe > 0 {
-            let from = conv.lastFromName
+            let from = conv.atMeFrom
             head = Text(from.isEmpty ? "[有人@我] " : "[\(from)@我] ").foregroundColor(AKColor.red)
         }
         let showName = conv.convType == "group" && conv.lastFrom != "me"

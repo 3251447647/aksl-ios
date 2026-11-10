@@ -38,9 +38,24 @@ struct SearchResult: Decodable {
 
     enum CodingKeys: String, CodingKey { case users, groups }
 
+    init(users: [SearchUser], groups: [SearchGroup]) {
+        self.users = users
+        self.groups = groups
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         users = (try? c.decode([SearchUser].self, forKey: .users)) ?? []
         groups = (try? c.decode([SearchGroup].self, forKey: .groups)) ?? []
+    }
+
+    /// 找人/找群只认 AK号 / 靓号 / 群号 / 群靓号的完全相等；服务端 /search 仍会命中昵称/邮箱/手机，这里统一剔除
+    func exactNumberMatches(keyword: String) -> SearchResult {
+        let kw = keyword.trimmingCharacters(in: .whitespaces)
+        guard !kw.isEmpty else { return self }
+        return SearchResult(
+            users: users.filter { ($0.yxId ?? "") == kw || $0.prettyNo == kw },
+            groups: groups.filter { $0.groupNo == kw || $0.prettyNo == kw }
+        )
     }
 }

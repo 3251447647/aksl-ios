@@ -24,7 +24,6 @@ struct UserProfileView: View {
     @State private var showBlockConfirm = false
     @State private var showReport = false
     @State private var showSharePicker = false
-    @State private var shareBusy = false
     @State private var reportReason = ""
     @State private var reportNote = ""
     @State private var toastText: String?
@@ -116,7 +115,7 @@ struct UserProfileView: View {
                 .restoresSwipeBack()
         }
         .sheet(isPresented: $showSharePicker) {
-            sharePicker
+            CardSharePickerView(kind: "user", cardId: uid, cardName: profile?.displayName ?? presetName) { showToast($0) }
         }
         .sheet(isPresented: $showReport) {
             reportSheet
@@ -972,81 +971,6 @@ struct UserProfileView: View {
             )
             showToast(msg.isEmpty ? "群昵称已保存" : msg)
             await load()
-        } catch let err {
-            showToast(err.localizedDescription)
-        }
-    }
-
-    // MARK: - 分享好友名片
-
-    private var sharePicker: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if app.conversations.isEmpty {
-                    Text("暂无可分享的会话")
-                        .font(.system(size: 13))
-                        .foregroundColor(AKColor.hint)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(app.conversations) { c in
-                            Button {
-                                Task { await shareCard(to: c) }
-                            } label: {
-                                HStack(spacing: 12) {
-                                    AvatarView(url: c.avatar, name: c.name ?? "会话", size: 40)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(c.name ?? "会话")
-                                            .font(.system(size: 15))
-                                            .foregroundColor(AKColor.text)
-                                            .lineLimit(1)
-                                        Text(c.convType == "group" ? "群聊" : "好友")
-                                            .font(.system(size: 11.5))
-                                            .foregroundColor(AKColor.hint)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(shareBusy)
-                            .listRowBackground(AKColor.card)
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(AKColor.bg)
-                }
-            }
-            .background(AKColor.bg)
-            .navigationTitle("分享给")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { showSharePicker = false }
-                        .font(.system(size: 15))
-                        .foregroundColor(AKColor.text)
-                }
-            }
-        }
-    }
-
-    private func shareCard(to conv: Conversation) async {
-        guard !shareBusy else { return }
-        shareBusy = true
-        defer { shareBusy = false }
-        do {
-            let target: [String: Any] = ["type": conv.convType, "id": conv.convId]
-            let msg = try await APIClient.shared.postRaw(
-                "api/v1/share/card",
-                body: [
-                    "kind": "user",
-                    "id": uid,
-                    "targets": [target]
-                ]
-            )
-            showSharePicker = false
-            showToast(msg.isEmpty ? "名片已发送" : msg)
         } catch let err {
             showToast(err.localizedDescription)
         }

@@ -1,4 +1,17 @@
 import SwiftUI
+import QuartzCore
+
+private struct TabIsActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// 当前页面所属 tab 是否在屏上：页面常驻，隐藏时据此暂停轮询与重复刷新
+    var tabIsActive: Bool {
+        get { self[TabIsActiveKey.self] }
+        set { self[TabIsActiveKey.self] = newValue }
+    }
+}
 
 /// 二级页占满全屏时要盖住自绘 tab 栏。页面用 reportsDetailPage() 上报；
 /// 用深度计数而非布尔，多层 push（群聊 → 群资料 → 设置）逐层返回时才不会提前恢复。
@@ -102,6 +115,9 @@ private struct SwipeBackGestureEnabler: UIViewControllerRepresentable {
 struct MainTabView: View {
     @EnvironmentObject private var app: AppState
     @State private var tab = 0
+    /// 点开过的 tab：页面一旦挂载就常驻（保留各页滚动位置），没点开过的先不建，
+    /// 避免启动时一次性铺满四个全屏页面
+    @State private var mounted: Set<Int> = [0]
     @AppStorage("floatingBubble") private var bubbleOn = false
     @State private var bubbleChat: BubbleChat?
     @StateObject private var tabVisibility = TabBarVisibility()
@@ -119,10 +135,10 @@ struct MainTabView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                HomeView().opacity(tab == 0 ? 1 : 0).allowsHitTesting(tab == 0)
-                ContactsView().opacity(tab == 1 ? 1 : 0).allowsHitTesting(tab == 1)
-                DiscoverView().opacity(tab == 2 ? 1 : 0).allowsHitTesting(tab == 2)
-                MeView().opacity(tab == 3 ? 1 : 0).allowsHitTesting(tab == 3)
+                if mounted.contains(0) { tabPage(0) { HomeView() } }
+                if mounted.contains(1) { tabPage(1) { ContactsView() } }
+                if mounted.contains(2) { tabPage(2) { DiscoverView() } }
+                if mounted.contains(3) { tabPage(3) { MeView() } }
             }
             .padding(.bottom, showTabBar ? 54 : 0)
 
@@ -131,7 +147,7 @@ struct MainTabView: View {
                     if let conv = app.conversations.first {
                         bubbleChat = BubbleChat(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
                     } else {
-                        tab = 0
+                        select(0)
                     }
                 }
             }
@@ -152,11 +168,33 @@ struct MainTabView: View {
         }
     }
 
+    @ViewBuilder
+    private func tabPage<Content: View>(_ index: Int, @ViewBuilder content: () -> Content) -> some View {
+        let active = tab == index
+        content()
+            .opacity(active ? 1 : 0)
+            .allowsHitTesting(active)
+            .environment(\.tabIsActive, active)
+    }
+
+    /// 切换 tab 并打一帧耗时（DEBUG）：包含本次提交的布局与首帧栅格化
+    private func select(_ index: Int) {
+        guard index != tab else { return }
+        mounted.insert(index)
+        let started = AKPerf.start()
+        CATransaction.begin()
+        CATransaction.setCompletionBlock {
+            AKPerf.log("tab.switch", since: started, "-> \(index)")
+        }
+        tab = index
+        CATransaction.commit()
+    }
+
     private var tabBar: some View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.offset) { idx, item in
                 Button {
-                    tab = idx
+                    select(idx)
                 } label: {
                     VStack(spacing: 2) {
                         ZStack(alignment: .topTrailing) {

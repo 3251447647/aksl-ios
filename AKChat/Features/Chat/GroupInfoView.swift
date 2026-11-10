@@ -174,7 +174,7 @@ struct GroupInfoView: View {
             }
         }
         .sheet(isPresented: $showShareCard) {
-            GroupCardSharePicker(groupId: groupId, groupName: info?.name ?? "群聊") { showToast($0) }
+            CardSharePickerView(kind: "group", cardId: groupId, cardName: info?.name ?? "群聊") { showToast($0) }
         }
         .task { await load() }
         .refreshable { await load() }
@@ -892,7 +892,7 @@ struct GroupCardProfileView: View {
             }
         }
         .sheet(isPresented: $showShareCard) {
-            GroupCardSharePicker(groupId: groupId, groupName: info?.name ?? "群聊") { showToast($0) }
+            CardSharePickerView(kind: "group", cardId: groupId, cardName: info?.name ?? "群聊") { showToast($0) }
         }
         .task { await load() }
         .overlay(alignment: .bottom) {
@@ -1099,110 +1099,6 @@ struct GroupCardProfileView: View {
         toastText = message
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
             if toastText == message { toastText = nil }
-        }
-    }
-}
-
-/// 分享群名片：选会话 → POST /share/card（kind=group），
-/// 卡片 JSON 由服务端生成（gid/name/avatar/group_no/member_count…），与安卓 SharePicker 一致
-struct GroupCardSharePicker: View {
-    let groupId: Int64
-    let groupName: String
-    var onDone: (String) -> Void
-
-    @EnvironmentObject private var app: AppState
-    @Environment(\.dismiss) private var dismiss
-    @State private var busy = false
-    @State private var errorText: String?
-
-    private var targets: [Conversation] {
-        app.conversations.filter {
-            ($0.convType == "group" || $0.convType == "private")
-                && !($0.convType == "group" && $0.convId == groupId)
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if targets.isEmpty {
-                    Text("暂无可分享的会话")
-                        .font(.system(size: 13))
-                        .foregroundColor(AKColor.hint)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(targets) { c in
-                            Button {
-                                Task { await share(to: c) }
-                            } label: {
-                                HStack(spacing: 12) {
-                                    AvatarView(url: c.avatar, name: c.name ?? "会话", size: 40)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(c.name ?? "会话")
-                                            .font(.system(size: 15))
-                                            .foregroundColor(AKColor.text)
-                                            .lineLimit(1)
-                                        Text(c.convType == "group" ? "群聊" : "好友")
-                                            .font(.system(size: 11.5))
-                                            .foregroundColor(AKColor.hint)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(busy)
-                            .listRowBackground(AKColor.card)
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(AKColor.bg)
-                }
-                if let errorText {
-                    Text(errorText)
-                        .font(.system(size: 12))
-                        .foregroundColor(AKColor.red)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                }
-            }
-            .background(AKColor.bg)
-            .navigationTitle("分享群名片")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("取消") { dismiss() }
-                        .font(.system(size: 15))
-                        .foregroundColor(AKColor.text)
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    if busy { ProgressView() }
-                }
-            }
-        }
-    }
-
-    private func share(to conv: Conversation) async {
-        guard !busy else { return }
-        busy = true
-        defer { busy = false }
-        do {
-            let target: [String: Any] = [
-                "type": conv.convType == "group" ? "group" : "private",
-                "id": conv.convId,
-            ]
-            let msg = try await APIClient.shared.postRaw("api/v1/share/card", body: [
-                "kind": "group",
-                "id": groupId,
-                "targets": [target],
-            ])
-            await app.refreshConversations()
-            dismiss()
-            onDone(msg.isEmpty ? "已分享「\(groupName)」" : msg)
-        } catch {
-            errorText = error.localizedDescription
         }
     }
 }
