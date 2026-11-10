@@ -300,7 +300,7 @@ final class BroadcastPublisher: NSObject, RoomDelegate, @unchecked Sendable {
         guard status == noErr else { return nil }
 
         let source = UnsafeMutableAudioBufferListPointer(audioBufferList.unsafeMutablePointer)
-        let destination = pcm.mutableAudioBufferList
+        var destination = UnsafeMutableAudioBufferListPointer(pcm.mutableAudioBufferList)
         guard source.count == destination.count else { return nil }
 
         for index in 0 ..< source.count {
