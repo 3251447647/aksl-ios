@@ -5,6 +5,14 @@ import AVFoundation
 import AVKit
 
 struct MomentsView: View {
+    /// 他人朋友圈：>0 且不是本人时只拉该用户的动态（对齐安卓 MomentsScreen 的 otherUid）
+    let uid: Int64 = 0
+    let ownerName: String = ""
+    let ownerAvatar: String? = nil
+    let ownerVip: Int = 0
+    let ownerIsPretty: Int = 0
+    let ownerPrettyNo: String = ""
+
     @EnvironmentObject private var app: AppState
     @State private var showPublish = false
     @State private var commentTarget: Moment?
@@ -19,19 +27,29 @@ struct MomentsView: View {
     @State private var mineMoments: [Moment] = []
     @State private var mineLoading = false
     @State private var coverItem: PhotosPickerItem?
+    /// 他人朋友圈的动态与封面（不写进全局 app.moments，避免污染首页动态流）
+    @State private var otherMoments: [Moment] = []
+    @State private var otherCover = ""
+    @State private var otherLoading = false
     /// 朋友圈未读角标：缓存一份，避免每次 body 都 first(where:) 扫会话列表
     @State private var momentUnread = 0
 
+    /// 是否在看别人的朋友圈
+    private var isOtherFeed: Bool { uid > 0 && uid != (app.user?.id ?? 0) }
+
     private var shownMoments: [Moment] {
-        tab == 1 ? mineMoments : app.moments
+        if isOtherFeed { return otherMoments }
+        return tab == 1 ? mineMoments : app.moments
     }
+
+    private var displayCover: String { isOtherFeed ? otherCover : app.momentCover }
 
     /// 顶部封面：自己的朋友圈封面 + 右上角相机 + 右下角署名（对齐安卓）
     private var coverHeader: some View {
         ZStack(alignment: .topTrailing) {
             Group {
-                if APIClient.fullURL(app.momentCover) != nil {
-                    AKImage(url: app.momentCover,
+                if APIClient.fullURL(displayCover) != nil {
+                    AKImage(url: displayCover,
                             size: CGSize(width: UIScreen.main.bounds.width, height: 200),
                             contentMode: .fill)
                 } else {
@@ -51,29 +69,64 @@ struct MomentsView: View {
             .frame(height: 200)
             .allowsHitTesting(false)
 
-            PhotosPicker(selection: $coverItem, matching: .images) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 15))
-                    .foregroundColor(.white)
-                    .frame(width: 34, height: 34)
-                    .background(Color.black.opacity(0.32))
-                    .clipShape(Circle())
-            }
-            .padding(6)
+            if !isOtherFeed {
+                PhotosPicker(selection: $coverItem, matching: .images) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.black.opacity(0.32))
+                        .clipShape(Circle())
+                }
+                .padding(6)
 
-            HStack(spacing: 8) {
-                Text(app.user?.displayName ?? "我")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                AvatarView(url: app.user?.avatar, name: app.user?.displayName ?? "我", size: 54)
+                HStack(spacing: 8) {
+                    Text(app.user?.displayName ?? "我")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    AvatarView(url: app.user?.avatar, name: app.user?.displayName ?? "我", size: 54)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
         }
         .frame(height: 200)
         .clipped()
+    }
+
+    /// 他人朋友圈顶部资料条（对齐安卓 MomentOwnerHeader）
+    private var ownerHeader: some View {
+        HStack(spacing: 12) {
+            AvatarView(url: ownerAvatar, name: ownerName.isEmpty ? "TA" : ownerName, size: 52)
+                .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text(ownerName.isEmpty ? "TA" : ownerName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(AKColor.text)
+                        .lineLimit(1)
+                    if ownerIsPretty == 1, !ownerPrettyNo.isEmpty {
+                        PrettyBadge(number: ownerPrettyNo)
+                    }
+                    if ownerVip > 0 { VipBadge(level: ownerVip) }
+                }
+                if otherLoading && otherMoments.isEmpty {
+                    Text("加载中…")
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.muted)
+                } else if !ownerPrettyNo.isEmpty {
+                    Text("靓号 \(ownerPrettyNo)")
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.muted)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(AKColor.card)
     }
 
     private func uploadCover(_ item: PhotosPickerItem) async {
@@ -116,15 +169,17 @@ struct MomentsView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     coverHeader
-                    tabBar
+                    if isOtherFeed {
+                        ownerHeader
+                    } else {
+                        tabBar
+                    }
                     if shownMoments.isEmpty {
                         VStack(spacing: 6) {
-                            Text(tab == 1 ? "你还没有发过动态" : "还没有好友动态")
+                            Text(emptyTitle)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(AKColor.sub)
-                            Text(tab == 1
-                                 ? "点击右下角 + 号，发第一条动态吧～"
-                                 : "点击右下角 + 号，发一条自己的动态")
+                            Text(emptyHint)
                                 .font(.system(size: 12.5))
                                 .foregroundColor(AKColor.muted)
                         }
@@ -151,23 +206,25 @@ struct MomentsView: View {
             }
             .background(AKColor.bg)
 
-            Button {
-                showPublish = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 56, height: 56)
-                    .background(AKColor.brand)
-                    .clipShape(Circle())
-                    .shadow(color: Color.black.opacity(0.18), radius: 6, y: 3)
+            if !isOtherFeed {
+                Button {
+                    showPublish = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 56, height: 56)
+                        .background(AKColor.brand)
+                        .clipShape(Circle())
+                        .shadow(color: Color.black.opacity(0.18), radius: 6, y: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 18)
+                .padding(.bottom, 24)
             }
-            .buttonStyle(.plain)
-            .padding(.trailing, 18)
-            .padding(.bottom, 24)
         }
         .reportsDetailPage()
-        .navigationTitle("朋友圈")
+        .navigationTitle(isOtherFeed ? (ownerName.isEmpty ? "朋友圈" : "\(ownerName) 的朋友圈") : "朋友圈")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -175,22 +232,8 @@ struct MomentsView: View {
                 BackButton()
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                NavigationLink {
-                    MomentNoticesView()
-                } label: {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "bell").foregroundColor(AKColor.text)
-                        if momentUnread > 0 {
-                            Text("\(min(momentUnread, 99))")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 3)
-                                .frame(minWidth: 16, minHeight: 16)
-                                .background(AKColor.red)
-                                .clipShape(Capsule())
-                                .offset(x: 8, y: -7)
-                        }
-                    }
+                if !isOtherFeed {
+                    noticeEntry
                 }
             }
         }
@@ -200,16 +243,24 @@ struct MomentsView: View {
             Task { await uploadCover(item) }
         }
         .task {
-            syncUnread()
-            let t = AKPerf.start()
-            await app.loadMoments()
-            AKPerf.log("moments.load", since: t, "\(app.moments.count) 条动态")
+            if isOtherFeed {
+                await loadOther()
+            } else {
+                syncUnread()
+                let t = AKPerf.start()
+                await app.loadMoments()
+                AKPerf.log("moments.load", since: t, "\(app.moments.count) 条动态")
+            }
         }
-        .onChange(of: app.conversations) { _ in syncUnread() }
+        .onChange(of: app.conversations) { _ in
+            if !isOtherFeed { syncUnread() }
+        }
         .fullScreenCover(item: $previewBox) { box in
             MomentImagePager(images: box.images, start: box.index)
         }
-        .sheet(item: $commentTarget) { m in
+        .sheet(item: $commentTarget, onDismiss: {
+            if isOtherFeed { Task { await loadOther() } }
+        }) { m in
             MomentReplySheet(moment: m)
                 .environmentObject(app)
         }
@@ -217,6 +268,7 @@ struct MomentsView: View {
             RepostMomentSheet(moment: m) {
                 await app.loadMoments()
                 if tab == 1 { await loadMine() }
+                if isOtherFeed { await loadOther() }
             }
         }
         .navigationDestination(isPresented: $showPublish) {
@@ -252,16 +304,25 @@ struct MomentsView: View {
         let base = MomentLikeOverride.current(moment, local: likeOverrides[moment.id])
         likeOverrides[moment.id] = base.toggled(uid: app.user?.id ?? 0,
                                                 name: app.user?.displayName ?? "我")
-        await app.likeMoment(moment)
-        if tab == 1 { await loadMine() }
+        if isOtherFeed {
+            await APIClient.shared.likeMoment(id: moment.id)
+            await loadOther()
+        } else {
+            await app.likeMoment(moment)
+            if tab == 1 { await loadMine() }
+        }
         likeOverrides.removeValue(forKey: moment.id)
         liking.remove(moment.id)
     }
 
     private func refresh() async {
         let t = AKPerf.start()
-        await app.loadMoments()
-        if tab == 1 { await loadMine() }
+        if isOtherFeed {
+            await loadOther()
+        } else {
+            await app.loadMoments()
+            if tab == 1 { await loadMine() }
+        }
         AKPerf.log("moments.refresh", since: t, "\(shownMoments.count) 条动态")
     }
 
@@ -278,6 +339,50 @@ struct MomentsView: View {
             mineMoments = data.list
         }
         AKPerf.log("moments.mine", since: t, "\(mineMoments.count) 条动态")
+    }
+
+    /// 只拉该用户的动态（服务端 /moments?uid= 只回该用户，封面也是对方的）
+    private func loadOther() async {
+        guard isOtherFeed, !otherLoading else { return }
+        otherLoading = true
+        defer { otherLoading = false }
+        let t = AKPerf.start()
+        if let data = try? await APIClient.shared.moments(uid: uid) {
+            otherMoments = data.list
+            otherCover = data.cover
+        }
+        AKPerf.log("moments.other", since: t, "\(otherMoments.count) 条动态")
+    }
+
+    private var emptyTitle: String {
+        if isOtherFeed { return "TA 还没有发过动态" }
+        return tab == 1 ? "你还没有发过动态" : "还没有好友动态"
+    }
+
+    private var emptyHint: String {
+        if isOtherFeed { return "过段时间再来看看吧～" }
+        return tab == 1 ? "点击右下角 + 号，发第一条动态吧～" : "点击右下角 + 号，发一条自己的动态"
+    }
+
+    /// 右上角朋友圈消息入口（他人朋友圈不显示，对齐安卓）
+    private var noticeEntry: some View {
+        NavigationLink {
+            MomentNoticesView()
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "bell").foregroundColor(AKColor.text)
+                if momentUnread > 0 {
+                    Text("\(min(momentUnread, 99))")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(AKColor.red)
+                        .clipShape(Capsule())
+                        .offset(x: 8, y: -7)
+                }
+            }
+        }
     }
 }
 

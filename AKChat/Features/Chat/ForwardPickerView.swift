@@ -23,6 +23,9 @@ struct ForwardPickerView: View {
     @State private var hint = ""
     @State private var done = false
 
+    /// 与分享名片一致：群最多选 5 个，好友不限
+    private static let maxGroups = 5
+
     private struct ForwardRow: Identifiable {
         let key: String
         let name: String
@@ -78,6 +81,12 @@ struct ForwardPickerView: View {
         return localRows + extra
     }
 
+    private var groupRows: [ForwardRow] { rows.filter { $0.isGroup } }
+    private var friendRows: [ForwardRow] { rows.filter { !$0.isGroup } }
+    /// 计数只认已选快照：搜索词变化后 rows 会被过滤，已选目标仍要能发出去
+    private var pickedGroupCount: Int { pickedRows.values.filter { $0.isGroup }.count }
+    private var pickedFriendCount: Int { pickedRows.values.filter { !$0.isGroup }.count }
+
     /// 可选目标从全量候选取：搜索关键字过滤后，选中项可能已不在 rows 里
     private var sendableRows: [ForwardRow] {
         var seen = Set<String>()
@@ -97,22 +106,14 @@ struct ForwardPickerView: View {
         VStack(spacing: 0) {
             topBar
             searchBar
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        rowView(row)
-                        Rectangle().fill(AKColor.line)
-                            .frame(height: 0.5)
-                            .padding(.leading, 67)
-                    }
-                    if rows.isEmpty {
-                        Text(searching ? "搜索中…" : "没有匹配的好友或群聊")
-                            .font(.system(size: 13))
-                            .foregroundColor(AKColor.hint)
-                            .padding(.top, 60)
-                    }
-                }
+            HStack(spacing: 0) {
+                column(title: "群聊", count: "已选 \(pickedGroupCount)/\(Self.maxGroups)",
+                       rows: groupRows, empty: searching ? "搜索中…" : "暂无群聊")
+                Rectangle().fill(AKColor.line).frame(width: 0.5)
+                column(title: "好友", count: "已选 \(pickedFriendCount)",
+                       rows: friendRows, empty: searching ? "搜索中…" : "暂无好友")
             }
+            .frame(maxHeight: .infinity)
             .background(AKColor.card)
             bottomBar
         }
@@ -125,14 +126,12 @@ struct ForwardPickerView: View {
         }
         .task(id: keyword) {
             let q = keyword.trimmingCharacters(in: .whitespaces)
-            if q.isEmpty {
-                searchResults = []
-                searching = false
-                return
+            if !q.isEmpty {
+                searching = true
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled else { return }
             }
-            searching = true
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
+            /* 空关键词也拉一次：与分享名片一致，没聊过的好友/群也能直接选 */
             let resp = try? await APIClient.shared.shareTargets(keyword: q)
             guard !Task.isCancelled else { return }
             var out: [ForwardRow] = []
@@ -222,23 +221,52 @@ struct ForwardPickerView: View {
         .background(AKColor.card)
     }
 
+    private func column(title: String, count: String, rows: [ForwardRow], empty: String) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(AKColor.text)
+                Spacer(minLength: 0)
+                Text(count)
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.hint)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(AKColor.fill)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        rowView(row)
+                        Rectangle().fill(AKColor.line)
+                            .frame(height: 0.5)
+                            .padding(.leading, 47)
+                    }
+                    if rows.isEmpty {
+                        Text(empty)
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.hint)
+                            .padding(.top, 40)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private func rowView(_ row: ForwardRow) -> some View {
         let on = picked.contains(row.key)
         return Button {
-            if on {
-                picked.remove(row.key)
-                pickedRows[row.key] = nil
-            } else {
-                picked.insert(row.key)
-                pickedRows[row.key] = row
-            }
+            toggle(row)
         } label: {
-            HStack(spacing: 11) {
-                AvatarView(url: row.avatar, name: row.name, size: 42)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
+            HStack(spacing: 7) {
+                AvatarView(url: row.avatar, name: row.name, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 3) {
                         Text(row.name)
-                            .font(.system(size: 15))
+                            .font(.system(size: 13))
                             .foregroundColor(AKColor.text)
                             .lineLimit(1)
                         if row.isPretty == 1 && !row.prettyNo.isEmpty {
@@ -248,20 +276,37 @@ struct ForwardPickerView: View {
                             VipBadge(level: row.vipLevel)
                         }
                     }
-                    Text(row.isGroup ? "群聊" : "好友")
-                        .font(.system(size: 11))
+                    Text(row.prettyNo.isEmpty ? (row.isGroup ? "群聊" : "好友") : row.prettyNo)
+                        .font(.system(size: 10))
                         .foregroundColor(AKColor.hint)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: on ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 22))
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 17))
                     .foregroundColor(on ? AKColor.brand : AKColor.hint)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func toggle(_ row: ForwardRow) {
+        if picked.contains(row.key) {
+            picked.remove(row.key)
+            pickedRows[row.key] = nil
+            hint = ""
+            return
+        }
+        if row.isGroup && pickedGroupCount >= Self.maxGroups {
+            hint = "最多只能选 \(Self.maxGroups) 个群"
+            return
+        }
+        picked.insert(row.key)
+        pickedRows[row.key] = row
+        hint = ""
     }
 
     private var bottomBar: some View {

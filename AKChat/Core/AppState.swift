@@ -220,8 +220,20 @@ final class AppState: ObservableObject {
     }
 
     func toggleMute(_ conv: Conversation) async {
-        await api.convSet(convType: conv.convType, convId: conv.convId, key: "mute", value: conv.isMute == 1 ? 0 : 1)
+        let next = conv.isMute == 1 ? 0 : 1
+        /* 本地先落状态：刷新回来前的消息也要按新免打扰口径处理 */
+        if let idx = conversations.firstIndex(where: {
+            $0.convType == conv.convType && $0.convId == conv.convId
+        }) {
+            conversations[idx].isMute = next
+        }
+        await api.convSet(convType: conv.convType, convId: conv.convId, key: "mute", value: next)
         await refreshConversations(force: true)
+    }
+
+    /// 会话是否免打扰：本地通知与将来 APNs 前台展示共用同一口径
+    func isConvMuted(convType: String, convId: Int64) -> Bool {
+        conversations.contains { $0.convType == convType && $0.convId == convId && $0.isMute == 1 }
     }
 
     func deleteConversation(_ conv: Conversation) async {
@@ -372,14 +384,16 @@ final class AppState: ObservableObject {
                 let message = try? JSONDecoder().decode(Message.self, from: payloadData)
             else { return }
             incoming = message
-            /* 本地通知兜底：不是自己发的、且不在该会话里时提醒 */
+            /* 本地通知兜底：不是自己发的、会话未免打扰时提醒；消息本身照常入库 */
             if message.fromUid != (user?.id ?? 0), message.recalled != 1 {
-                LocalNotifier.shared.post(
-                    convType: message.convType,
-                    convId: message.convId,
-                    sender: message.fromName ?? "新消息",
-                    body: LocalNotifier.digest(message)
-                )
+                if !isConvMuted(convType: message.convType, convId: message.convId) {
+                    LocalNotifier.shared.post(
+                        convType: message.convType,
+                        convId: message.convId,
+                        sender: message.fromName ?? "新消息",
+                        body: LocalNotifier.digest(message)
+                    )
+                }
             }
             Task { await refreshConversations() }
             return

@@ -1453,9 +1453,13 @@ struct ChatView: View {
         previewImage = PreviewImage(items: items, index: min(max(index, 0), items.count - 1))
     }
 
-    /// 群聊 @ 名字映射（@全体成员 → 0）
+    /// @ 名字映射（群成员或私聊对方；@全体成员 → 0）
     private var mentionMap: [String: Int64] {
-        guard isGroup else { return [:] }
+        /* 私聊没有群成员表：@ 对方昵称也要蓝色可点，点击进对方资料 */
+        if !isGroup {
+            let name = title.trimmingCharacters(in: .whitespaces)
+            return name.isEmpty || convId <= 0 ? [:] : [name: convId]
+        }
         /* 群主关闭成员信息：@ 名字仍蓝色显示，但统一成不可点的 -1（对齐安卓） */
         if isMembersHidden { return ["*": -1] }
         var map: [String: Int64] = ["全体成员": 0]

@@ -360,7 +360,13 @@ struct UserProfileView: View {
 
     private func momentsCell(_ p: UserProfile) -> some View {
         NavigationLink {
-            MomentsView()
+            // 看他人朋友圈要带上 uid，只看自己的才走通用朋友圈
+            MomentsView(uid: p.isSelf == 1 ? 0 : p.id,
+                        ownerName: p.isSelf == 1 ? "" : p.nickname,
+                        ownerAvatar: p.isSelf == 1 ? nil : p.avatar,
+                        ownerVip: p.isSelf == 1 ? 0 : p.vipLevel,
+                        ownerIsPretty: p.isSelf == 1 ? 0 : p.isPretty,
+                        ownerPrettyNo: p.isSelf == 1 ? "" : p.prettyYxid)
         } label: {
             HStack(spacing: 6) {
                 Text("朋友圈")

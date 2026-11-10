@@ -62,11 +62,13 @@ struct InviteData: Decodable {
     let rules: [InviteRule]
     let gotIds: [Int64]
     let invitees: [Invitee]
+    let inviteUrl: String
     let shareUrl: String
 
     enum CodingKeys: String, CodingKey {
         case code, count, rules, invitees
         case gotIds = "got_ids"
+        case inviteUrl = "invite_url"
         case shareUrl = "share_url"
     }
 
@@ -77,6 +79,7 @@ struct InviteData: Decodable {
         rules = (try? c.decode([InviteRule].self, forKey: .rules)) ?? []
         gotIds = (try? c.decode([Int64].self, forKey: .gotIds)) ?? []
         invitees = (try? c.decode([Invitee].self, forKey: .invitees)) ?? []
+        inviteUrl = (try? c.decode(String.self, forKey: .inviteUrl)) ?? ""
         shareUrl = (try? c.decode(String.self, forKey: .shareUrl)) ?? ""
     }
 }
@@ -119,7 +122,7 @@ extension APIClient {
     }
 }
 
-/// 邀请好友：邀请码 / 已邀请人数 / 奖励领取 / 推广话术 / 邀请记录（对齐安卓 InviteScreen）
+/// 邀请好友：邀请码 / 已邀请人数 / 奖励领取 / 专属邀请链接 / 邀请记录（对齐安卓 InviteScreen）
 struct InviteRewardView: View {
     @EnvironmentObject private var app: AppState
 
@@ -158,11 +161,13 @@ struct InviteRewardView: View {
         data != nil && rules.contains { $0.needCount <= count && !gotIds.contains($0.id) }
     }
 
-    private var shareURL: URL? {
-        if let value = data?.shareUrl, !value.isEmpty, let url = URL(string: value) { return url }
+    private var inviteURL: URL? {
+        if let value = data?.inviteUrl, !value.isEmpty, let url = URL(string: value) { return url }
         guard !code.isEmpty else { return nil }
         return URL(string: "https://www.aksliao.cn/register.php?invite=\(code)")
     }
+
+    private var inviteLink: String { inviteURL?.absoluteString ?? "" }
 
     var body: some View {
         ScrollView {
@@ -178,10 +183,10 @@ struct InviteRewardView: View {
                     .padding(.bottom, 8)
                 rewardCard
                     .padding(.horizontal, 14)
-                sectionHeader("推广话术（点击复制）")
+                sectionHeader("专属邀请链接（点击复制）")
                     .padding(.top, 16)
                     .padding(.bottom, 8)
-                promoList
+                inviteLinkCard
                 sectionHeader("邀请记录")
                     .padding(.top, 6)
                     .padding(.bottom, 8)
@@ -362,41 +367,43 @@ struct InviteRewardView: View {
         }
     }
 
-    // MARK: - 推广话术
+    // MARK: - 专属邀请链接
 
-    private var promos: [String] {
-        [
-            "我在用「AK商聊」：消息即时到达，群直播不卡，语音视频清晰，文件和多端同步都好用。注册时填我的邀请码 \(code)，我们就能直接聊。\n 官网下载APP： aksliao.cn",
-            "想找一个稳定、私密的聊天工具？AK商聊支持单聊、群聊、语音视频和群直播，注册自动分配 AK号。填我的邀请码 \(code)，开聊就能找到我。\n 官网下载： aksliao.cn",
-            "工作沟通、建群协作、开直播，一个 AK商聊就够了。消息多端同步，图片文件不压缩，聊天记录更安心。注册填邀请码 \(code)。\n 官网下载： aksliao.cn"
-        ]
-    }
-
-    private var promoList: some View {
-        VStack(spacing: 10) {
-            ForEach(Array(promos.enumerated()), id: \.offset) { _, text in
-                Button {
-                    copy(text, tip: "话术已复制")
-                } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(text)
-                            .font(.system(size: 12.5))
-                            .lineSpacing(4)
-                            .foregroundColor(AKColor.sub)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 14))
-                            .foregroundColor(AKColor.hint)
-                    }
-                    .padding(14)
-                    .background(AKColor.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .contentShape(Rectangle())
+    private var inviteLinkCard: some View {
+        Button {
+            copy(inviteLink, tip: "邀请链接已复制")
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("我的专属邀请链接")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Spacer(minLength: 8)
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 14))
                 }
-                .buttonStyle(.plain)
+                .foregroundColor(AKColor.hint)
+                Text(inviteLink.isEmpty ? "-" : inviteLink)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundColor(green)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("好友打开链接注册会自动绑定你的邀请码，注册成功后引导下载 App")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(AKColor.hint)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.leading)
             }
+            .padding(14)
+            .background(AKColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(inviteLink.isEmpty)
         .padding(.horizontal, 14)
     }
 
@@ -507,7 +514,7 @@ struct InviteRewardView: View {
 
     @ViewBuilder
     private var shareButton: some View {
-        if let url = shareURL {
+        if let url = inviteURL {
             ShareLink(item: url) {
                 bottomLabel("分享链接", icon: "link", primary: false, enabled: true)
             }

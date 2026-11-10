@@ -435,6 +435,9 @@ struct PolicyDetailView: View {
 
 /// 检查更新：进入即查 /api/v1/app/version，用服务端 ios_latest_code 与本机 CFBundleVersion 比较
 struct CheckUpdateView: View {
+    /// 企业签名分发：App 内不直连 IPA，统一打开官网下载页，由页面上的 iOS 按钮交给系统安装
+    private static let downloadPage = URL(string: "https://aksliao.cn/")!
+
     @State private var info: AppVersionInfo?
     @State private var checking = false
     @State private var checked = false
@@ -449,13 +452,16 @@ struct CheckUpdateView: View {
     }
 
     private var latestCode: Int { info?.iosLatestCode ?? 0 }
-    private var latestName: String { info?.iosLatestName ?? "" }
+    private var latestName: String {
+        (info?.iosLatestName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     private var hasUpdate: Bool { latestCode > currentCode }
 
-    /// 服务端还没启用 iOS 版本记录：ios 字段全空（接口会返回空值）
-    private var noIOSInfo: Bool {
-        guard let info else { return false }
-        return info.iosLatestCode <= 0 && info.iosLatestName.isEmpty && info.iosUrl.isEmpty
+    /// 服务端还没启用 iOS 版本记录时 ios_latest_code 为 0：按「暂无更新」展示，不算错误
+    private var noLatest: Bool { latestCode <= 0 }
+
+    private var latestText: String {
+        latestName.isEmpty ? "build \(latestCode)" : "v\(latestName) (\(latestCode))"
     }
 
     /// 只有 ios_force=1 才强制更新
@@ -471,7 +477,7 @@ struct CheckUpdateView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                versionRow
+                versionCard
                 if checking || !checked {
                     ProgressView()
                         .padding(.top, 90)
@@ -498,12 +504,12 @@ struct CheckUpdateView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 18)
-                } else if noIOSInfo {
+                } else if noLatest {
                     Text("暂无更新")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(AKColor.text)
                         .padding(.top, 58)
-                    Text("服务端还没有可用的 iOS 版本信息")
+                    Text("服务端还没有启用 iOS 版本信息")
                         .font(.system(size: 12.5))
                         .foregroundColor(AKColor.muted)
                         .multilineTextAlignment(.center)
@@ -528,10 +534,6 @@ struct CheckUpdateView: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(AKColor.text)
                         .padding(.top, 66)
-                    Text("当前版本 v\(versionName) (\(currentCode))")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(AKColor.muted)
-                        .padding(.top, 8)
                     Button {
                         Task { await check() }
                     } label: {
@@ -560,26 +562,42 @@ struct CheckUpdateView: View {
         }
     }
 
-    private var versionRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "app.badge")
-                .font(.system(size: 15))
-                .foregroundColor(AKColor.brand)
-            Text("当前版本 v\(versionName) (\(currentCode))")
-                .font(.system(size: 13.5, weight: .medium))
-                .foregroundColor(AKColor.text)
-            Spacer(minLength: 0)
+    private var versionCard: some View {
+        VStack(spacing: 0) {
+            versionLine("app.badge", "当前版本", "v\(versionName) (\(currentCode))")
+            if checked && errorText == nil && !noLatest {
+                Rectangle()
+                    .fill(AKColor.line)
+                    .frame(height: 0.5)
+                    .padding(.leading, 46)
+                versionLine("arrow.down.circle", "最新版本", latestText)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.bottom, 6)
     }
 
+    private func versionLine(_ icon: String, _ title: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 15))
+                .foregroundColor(AKColor.brand)
+            Text(title)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundColor(AKColor.text)
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.system(size: 12.5))
+                .foregroundColor(AKColor.muted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
     private var updateCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("发现新版本 " + (latestName.isEmpty ? "\(latestCode)" : latestName))
+            Text("发现新版本 " + latestText)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AKColor.brand)
                 .padding(.bottom, 14)
@@ -607,7 +625,7 @@ struct CheckUpdateView: View {
             }
 
             Button {
-                openUpdate()
+                UIApplication.shared.open(Self.downloadPage)
             } label: {
                 Text("立即更新")
                     .font(.system(size: 14, weight: .medium))
@@ -620,7 +638,7 @@ struct CheckUpdateView: View {
             .buttonStyle(.plain)
             .padding(.top, 18)
 
-            Text("按钮会打开 IPA 安装地址；没有配置地址时打开官网下载页")
+            Text("将打开官网下载页，在页面中点「下载 iOS 安装包」完成安装")
                 .font(.system(size: 11))
                 .foregroundColor(AKColor.hint)
                 .padding(.top, 10)
@@ -629,13 +647,6 @@ struct CheckUpdateView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AKColor.brandSoft)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private func openUpdate() {
-        let raw = (info?.iosUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = "https://www.aksliao.cn/download/"
-        guard let url = URL(string: raw.isEmpty ? fallback : raw) else { return }
-        UIApplication.shared.open(url)
     }
 
     private func check() async {

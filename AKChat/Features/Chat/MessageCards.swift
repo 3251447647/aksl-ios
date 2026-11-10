@@ -155,7 +155,7 @@ struct MessageBody: View {
 
     private var textBubble: some View {
         AKLinkText(text: rawText, color: textColor, fontSize: 14.5, lineHeight: 20,
-                   mentionMap: isGroup ? mentionMap : [:], onMention: onMention)
+                   mentionMap: mentionMap, onMention: onMention)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
@@ -454,7 +454,7 @@ struct MessageBody: View {
             .buttonStyle(.plain)
 
             AKLinkText(text: quoteBodyText, color: textColor, fontSize: 14.5, lineHeight: 20,
-                       mentionMap: isGroup ? mentionMap : [:], onMention: onMention)
+                       mentionMap: mentionMap, onMention: onMention)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
