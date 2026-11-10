@@ -1258,9 +1258,10 @@ struct RedPacketDetailSheet: View {
         .background(AKColor.bg)
         .navigationTitle("红包")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("关闭") { dismiss() }
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -1742,9 +1743,10 @@ struct TransferClaimSheet: View {
         }
         .navigationTitle("转账详情")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("关闭") { dismiss() }
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
         }
     }
@@ -1811,9 +1813,10 @@ struct GiftClaimSheet: View {
         }
         .navigationTitle("礼物详情")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("关闭") { dismiss() }
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
         }
     }

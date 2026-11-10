@@ -109,11 +109,9 @@ struct UserProfileView: View {
         .sheet(isPresented: $showReport) {
             reportSheet
         }
-        .sheet(isPresented: $showChat) {
+        .navigationDestination(isPresented: $showChat) {
             if let p = profile {
-                NavigationStack {
-                    ChatView(convType: "private", convId: p.id, title: p.displayName)
-                }
+                ChatView(convType: "private", convId: p.id, title: p.displayName)
             }
         }
         .alert("加为好友", isPresented: $showAddFriend) {

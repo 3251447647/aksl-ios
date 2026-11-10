@@ -3,6 +3,7 @@ import LiveKit
 import ReplayKit
 import UIKit
 import Combine
+import AVFoundation
 
 /// 直播评论（含会员/靓号角标字段，Core 的 LiveComment 没有）
 struct LiveCommentFull: Decodable, Identifiable {
@@ -229,6 +230,21 @@ struct LiveRoomView: View {
     @State private var left = false
     /// 连接代号：旧的连接任务回来后不许覆盖新的错误/状态
     @State private var connectAttempt = 0
+    /// App 在后台：不断开 Room，但暂停重连与轮询，回前台再恢复
+    @State private var inBackground = false
+    /// 主播端屏幕共享被系统在后台停掉，回前台提示可一键重新开始
+    @State private var shareInterrupted = false
+    /// 当前走系统广播（可切后台）还是 App 内采集（切后台会停）
+    @State private var usingBroadcastShare = false
+    @State private var usingInAppShare = false
+    /// 已弹出系统广播选择器，等待主播确认
+    @State private var broadcastPending = false
+    /// 服务端签发的主播屏幕共享扩展凭证（独立 identity，用于推画面+系统声音）
+    @State private var broadcastSfu: BroadcastSfuInfo?
+    /// 本次系统广播是否已把系统声音凭证交给扩展
+    @State private var broadcastAudioRequested = false
+    /// 是否为共享系统声音改过 AVAudioSession（只有主播会改，观众不能动）
+    @State private var screenShareAudioSessionApplied = false
 
     private let bg = Color(hex: 0x0D0F14)
     private let panelBg = Color(hex: 0x14161B)
@@ -248,6 +264,15 @@ struct LiveRoomView: View {
         .task { await load() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await handleForeground() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            handleBackground()
+        }
+        .onReceive(BroadcastStateCenter.shared.started) { _ in
+            Task { await handleBroadcastState(true) }
+        }
+        .onReceive(BroadcastStateCenter.shared.stopped) { _ in
+            Task { await handleBroadcastState(false) }
         }
         .onDisappear {
             pollTask?.cancel()
@@ -306,6 +331,12 @@ struct LiveRoomView: View {
             VStack(spacing: 0) {
                 topBar
                 stage(height: max(geo.size.height * 0.40, 180))
+                if shareInterrupted && isHost {
+                    shareInterruptedBar
+                }
+                if isHost && usingInAppShare && sharing {
+                    inAppShareHint
+                }
                 commentsPanel
                 if let tip {
                     Text(tip)
@@ -370,20 +401,36 @@ struct LiveRoomView: View {
                 stageTip(title: "连接媒体服务器失败", detail: connectError, retry: true)
             } else if isHost {
                 VStack(spacing: 6) {
-                    Text(sharing ? "正在共享你的屏幕" : "观众暂未看到画面")
+                    Text(broadcastPending
+                         ? "等待系统确认…"
+                         : (shareInterrupted ? "屏幕共享已中断" : (sharing ? "正在共享你的屏幕" : "观众暂未看到画面")))
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundColor(.white)
-                    Text(sharing ? "点下方「停止共享」可暂停画面" : "共享屏幕或开启摄像头，群成员即可实时观看")
+                    Text(broadcastPending
+                         ? "在系统弹窗里选「AK商聊屏幕共享」并点「开始直播」"
+                         : (shareInterrupted
+                            ? "点下方「重新开始共享」恢复画面"
+                            : (sharing
+                               ? (usingBroadcastShare
+                                  ? (kitObserver.screenAudioActive
+                                     ? "可切到其他 App，观众能看到画面并听到系统声音"
+                                     : "可切到其他 App，观众能看到画面")
+                                  : "App 内共享只采集本应用画面，不含系统声音")
+                               : "共享屏幕或开启摄像头，群成员即可实时观看")))
                         .font(.system(size: 10.5))
                         .foregroundColor(Color.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
                     Button {
-                        Task {
-                            if sharing { await stopShare() } else { await startShare() }
+                        if broadcastPending {
+                            showTip("请在系统弹窗中选择「开始直播」")
+                        } else {
+                            Task {
+                                if sharing { await stopShare() } else { await startShare() }
+                            }
                         }
                     } label: {
-                        Text(sharing ? "停止共享" : "开始共享")
+                        Text(broadcastPending ? "等待开始…" : (sharing ? "停止屏幕共享" : "开始屏幕共享"))
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
@@ -427,6 +474,34 @@ struct LiveRoomView: View {
                             .multilineTextAlignment(.center)
                     }
                     Spacer()
+                    if isHost && sharing {
+                        HStack(spacing: 4) {
+                            Circle().fill(dangerColor).frame(width: 6, height: 6)
+                            Image(systemName: usingBroadcastShare
+                                  ? (kitObserver.screenAudioActive ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                                  : "speaker.slash.fill")
+                                .font(.system(size: 9))
+                            Text(hostShareBadge)
+                                .font(.system(size: 10))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.58))
+                        .clipShape(Capsule())
+                    } else if !isHost && viewerScreenOn {
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle.on.rectangle")
+                                .font(.system(size: 9))
+                            Text(kitObserver.screenAudioActive ? "屏幕共享 · 含声音" : "屏幕共享")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.58))
+                        .clipShape(Capsule())
+                    }
                 }
                 Spacer()
                 HStack {
@@ -465,6 +540,61 @@ struct LiveRoomView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.top, 10)
+    }
+
+    /// 回前台时屏幕共享已经被系统停掉：提示并提供一键重开
+    private var shareInterruptedBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(Color(hex: 0xFFB020))
+            Text("屏幕共享已被系统中断")
+                .font(.system(size: 11.5))
+                .foregroundColor(white90)
+            Spacer(minLength: 4)
+            Button {
+                Task { await restartShare() }
+            } label: {
+                Text("重新开始共享")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(AKColor.brand)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(hex: 0x2A2110))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+    }
+
+    /// 签名缺少 App Groups 时只能 App 内采集，切后台会中断
+    private var inAppShareHint: some View {
+        Text("App 内共享不含系统声音，离开 App 会中断")
+            .font(.system(size: 10.5))
+            .foregroundColor(white60)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+    }
+
+    private var hostShareBadge: String {
+        guard usingBroadcastShare else { return "App 内共享 · 无系统声音" }
+        if kitObserver.screenAudioActive { return "屏幕共享 · 含系统声音" }
+        return broadcastAudioRequested ? "屏幕共享 · 声音连接中" : "屏幕共享 · 无系统声音"
+    }
+
+    private var viewerScreenOn: Bool {
+        if screenFlag == 1 { return true }
+        guard let track = kitObserver.remoteVideo else { return false }
+        return track.source == .screenShareVideo
+            || track.name == "screen"
+            || track.name == Track.screenShareVideoName
     }
 
     private func stageTip(title: String, detail: String?, retry: Bool) -> some View {
@@ -526,6 +656,11 @@ struct LiveRoomView: View {
 
     private var displayTrack: VideoTrack? {
         if isHost {
+            // 系统广播：画面由扩展用独立 identity 发布，本机看到的是远端屏幕轨
+            if let remote = kitObserver.remoteVideo,
+               usingBroadcastShare || BroadcastBridge.isFlaggedActive {
+                return remote
+            }
             if let s = screenTrack { return s }
             return room.localParticipant.videoTracks.compactMap { $0.track as? VideoTrack }.first
         }
@@ -694,8 +829,10 @@ struct LiveRoomView: View {
                     Task { await toggleCamera() }
                 }
                 toolItem(icon: sharing ? "stop.circle.fill" : "rectangle.on.rectangle",
-                         label: sharing ? "停止共享" : "共享",
-                         active: sharing) {
+                         label: broadcastPending ? "等待中" : (sharing ? "停止共享" : "共享屏幕"),
+                         active: sharing,
+                         dot: sharing,
+                         enabled: !broadcastPending) {
                     Task {
                         if sharing { await stopShare() } else { await startShare() }
                     }
@@ -743,6 +880,7 @@ struct LiveRoomView: View {
     }
 
     private func toolItem(icon: String, label: String, active: Bool = false, danger: Bool = false,
+                          dot: Bool = false,
                           enabled: Bool = true, action: @escaping () -> Void) -> some View {
         let tint: Color = !enabled ? white45 : (danger ? dangerColor : (active ? AKColor.brand : white90))
         return Button(action: action) {
@@ -754,6 +892,14 @@ struct LiveRoomView: View {
                     Image(systemName: icon)
                         .font(.system(size: 16))
                         .foregroundColor(tint)
+                        .overlay(alignment: .topTrailing) {
+                            if dot {
+                                Circle()
+                                    .fill(dangerColor)
+                                    .frame(width: 7, height: 7)
+                                    .offset(x: 2, y: -1)
+                            }
+                        }
                 }
                 Text(label)
                     .font(.system(size: 10))
@@ -1145,6 +1291,12 @@ struct LiveRoomView: View {
     // MARK: - 数据
 
     private func load() async {
+        // App 被杀后扩展可能还在跑：重新进直播间时先收掉残留广播
+        if BroadcastBridge.isFlaggedActive {
+            BroadcastControl.requestStop()
+            BroadcastBridge.markStopped()
+            BroadcastBridge.clearSession()
+        }
         phase = "loading"
         do {
             let data = try await APIClient.shared.liveRoom(gid: gid)
@@ -1177,6 +1329,7 @@ struct LiveRoomView: View {
         if let av = live.hostAvatar, !av.isEmpty { hostAvatar = av }
         isHost = live.myRole == 1
         viewers = live.viewers
+        screenFlag = live.screen ?? 0
         allowMic = live.allowMic
         micMode = live.micMode
         let t = live.title.trimmingCharacters(in: .whitespaces)
@@ -1187,7 +1340,10 @@ struct LiveRoomView: View {
         if isHost {
             // 主播重新进入：不自动开麦，避免静默开播
             micOn = false
+            // 屏幕由扩展用独立 identity 发布，主 App 不再自动创建广播采集轨
+            BroadcastManager.shared.shouldPublishTrack = false
         }
+        kitObserver.extensionAudioIdentityToMute = isHost ? "\(live.hostId)_bc" : nil
         kitObserver.attach(room)
         startPolling()
         await connectSfu()
@@ -1196,6 +1352,8 @@ struct LiveRoomView: View {
 
     private func connectSfu(_ create: Bool = false, title: String = "", forceReconnect: Bool = false) async {
         guard !left, !closing else { return }
+        // 后台不主动断开，但也不再发起新连接（含重连），等回前台再继续
+        guard !inBackground else { return }
         if room.connectionState == .connected && !forceReconnect { return }
         // 同一时刻只允许一条连接：旧 attempt 晚回来时不能把新连接断掉
         if connecting { return }
@@ -1234,6 +1392,7 @@ struct LiveRoomView: View {
             connectError = serverMsg.isEmpty ? "媒体服务未启用（服务端未返回 SFU 配置）" : serverMsg
             return
         }
+        if isHost, let broadcast = sfu.broadcast { broadcastSfu = broadcast }
         if (sfu.enabled ?? 1) != 1 {
             connectError = serverMsg.isEmpty ? "媒体服务未启用（SFU enabled=0）" : serverMsg
             return
@@ -1281,19 +1440,53 @@ struct LiveRoomView: View {
         }
     }
 
-    /// 回前台：先重建渲染视图，再根据连接状态决定是否重新进房
+    /// 回前台：先重建渲染视图，再根据连接状态决定是否重新进房。
+    /// 系统广播可后台持续，只有 App 内采集会被系统停掉。
     private func handleForeground() async {
+        inBackground = false
         guard phase == "room", !left, !closing else { return }
         renderNonce &+= 1
         kitObserver.refresh()
-        if room.connectionState == .connected {
-            await resumeScreenCaptureIfNeeded()
-            return
+        if isHost {
+            if usingBroadcastShare {
+                // App Group 标记由扩展在 started/finished 时写，比主 App 可能漏收的
+                // Darwin 通知更可靠；回前台时据此补启动或收尾。
+                let flagged = BroadcastBridge.isFlaggedActive
+                if flagged {
+                    shareInterrupted = false
+                    if !sharing {
+                        await handleBroadcastState(true)
+                    } else {
+                        applyScreenShareAudioSession()
+                        ScreenShareKeepAlive.shared.start()
+                    }
+                } else if sharing {
+                    BroadcastControl.requestStop()
+                    await finishBroadcastShare()
+                    showTip("屏幕共享已结束")
+                } else {
+                    broadcastPending = false
+                    usingBroadcastShare = false
+                    broadcastAudioRequested = false
+                    ScreenShareKeepAlive.shared.stop()
+                    restoreScreenShareAudioSession()
+                }
+            } else if usingInAppShare {
+                shareInterrupted = sharing && !RPScreenRecorder.shared().isRecording
+            }
         }
+        if room.connectionState == .connected { return }
         // 首连还在进行中：只重建画面，等它自己完成/超时
         guard !connecting else { return }
         await connectSfu(forceReconnect: true)
-        await resumeScreenCaptureIfNeeded()
+    }
+
+    /// 切后台：不断开 Room，只暂停重连与轮询；只有 App 内采集会被系统停掉。
+    private func handleBackground() {
+        inBackground = true
+        if isHost && sharing && usingInAppShare {
+            shareInterrupted = true
+        }
     }
 
     private func startPolling() {
@@ -1302,13 +1495,21 @@ struct LiveRoomView: View {
             while !Task.isCancelled && phase == "room" {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 if Task.isCancelled { break }
+                // 系统广播期间主播切到其他 App 也要保持心跳，否则服务端 60 秒收不到主播
+                // 心跳会把直播判定为主播离线并结束。
+                guard !inBackground || hostBroadcastHeartbeatNeeded else { continue }
                 await poll()
             }
         }
     }
 
+    private var hostBroadcastHeartbeatNeeded: Bool {
+        isHost && (usingBroadcastShare || BroadcastBridge.isFlaggedActive)
+    }
+
     private func poll() async {
-        guard liveId > 0, phase == "room" else { return }
+        guard !inBackground || hostBroadcastHeartbeatNeeded,
+              liveId > 0, phase == "room" else { return }
         guard let st: LivePollFull = try? await APIClient.shared.get(
             "api/v1/group/live/poll",
             query: ["id": "\(gid)", "live_id": "\(liveId)", "last_comment_id": "\(lastCommentId)"]
@@ -1324,6 +1525,16 @@ struct LiveRoomView: View {
             blockedMsg = "直播已结束"
             phase = "blocked"
             pollTask?.cancel()
+            if isHost && (usingBroadcastShare || BroadcastBridge.isFlaggedActive) {
+                BroadcastControl.requestStop()
+                BroadcastBridge.markStopped()
+                BroadcastBridge.clearSession()
+                sharing = false
+                usingBroadcastShare = false
+                broadcastAudioRequested = false
+                ScreenShareKeepAlive.shared.stop()
+                restoreScreenShareAudioSession()
+            }
             await room.disconnect()
             return
         }
@@ -1503,10 +1714,68 @@ struct LiveRoomView: View {
         }
     }
 
+    /// 开始共享：签名与 IPA 支持系统广播时走 Broadcast Upload Extension（可后台），
+    /// 否则退回 App 内 ReplayKit 采集（切后台会停，且不含系统声音）。
     private func startShare() async {
-        guard !sharing else { return }
+        guard !sharing, !broadcastPending else { return }
+        if ScreenBroadcastSupport.isAvailable {
+            await refreshBroadcastSfu()
+            if let sfu = broadcastSfu,
+               (sfu.enabled ?? 1) == 1,
+               let url = sfu.url, !url.isEmpty,
+               let token = sfu.token, !token.isEmpty,
+               let roomName = sfu.room, !roomName.isEmpty,
+               let identity = sfu.identity, !identity.isEmpty,
+               BroadcastBridge.saveSession(BroadcastSessionConfig(url: url, token: token, room: roomName, identity: identity)) {
+                BroadcastManager.shared.shouldPublishTrack = false
+                applyScreenShareAudioSession()
+                // 选择器期间就占用 audio 后台模式，避免主播在系统弹窗/其他 App 停留时被挂起
+                ScreenShareKeepAlive.shared.start()
+                broadcastAudioRequested = true
+                usingBroadcastShare = true
+                usingInAppShare = false
+                broadcastPending = true
+                BroadcastManager.shared.requestActivation()
+                showTip("请选择「AK商聊屏幕共享」并点「开始直播」，系统声音会一并共享")
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    guard !Task.isCancelled, broadcastPending else { return }
+                    // 自定义 started 通知丢了也能从 App Group 标记恢复
+                    if BroadcastBridge.isFlaggedActive {
+                        await handleBroadcastState(true)
+                        return
+                    }
+                    broadcastPending = false
+                    usingBroadcastShare = false
+                    broadcastAudioRequested = false
+                    ScreenShareKeepAlive.shared.stop()
+                    restoreScreenShareAudioSession()
+                    showTip("未开始屏幕共享，可重试")
+                }
+                return
+            }
+            // 服务端没签发扩展凭证时不硬走扩展，否则画面也发布不出去
+            broadcastAudioRequested = false
+            showTip("系统声音凭证不可用，已改用 App 内共享（不含系统声音）")
+        }
+        usingInAppShare = true
+        usingBroadcastShare = false
+        await startInAppShare()
+    }
+
+    /// 重新获取扩展专用凭证：长时间直播后旧 token 可能过期，开始共享时刷新一次
+    private func refreshBroadcastSfu() async {
+        guard isHost, liveId > 0 else { return }
+        guard let data: LiveRoomData = try? await APIClient.shared.get(
+            "api/v1/group/live/room", query: ["id": "\(gid)"]
+        ) else { return }
+        if let fresh = data.sfu?.broadcast { broadcastSfu = fresh }
+    }
+
+    private func startInAppShare() async {
         let track = await LocalVideoTrack.createBufferTrack(name: "screen")
         guard let capturer = track.capturer as? BufferCapturer else {
+            usingInAppShare = false
             showTip("当前设备不支持屏幕共享")
             return
         }
@@ -1516,35 +1785,94 @@ struct LiveRoomView: View {
             let pub = try await room.localParticipant.publish(videoTrack: track)
             screenPublication = pub
             sharing = true
+            shareInterrupted = false
             await notifyScreen(1)
+            showTip("App 内共享已开始（不含系统声音，切到后台会中断）")
         } catch {
             RPScreenRecorder.shared().stopCapture { _ in }
             screenTrack = nil
+            usingInAppShare = false
             showTip("共享失败：\(error.localizedDescription)")
         }
     }
 
-    /// 屏幕采集单独拆出：iOS 回后台会停掉 RPScreenRecorder，回前台要重新挂上同一个 BufferCapturer
+    /// 共享系统声音期间允许其他 App 的声音继续播放。
+    /// LiveKit 默认的 playAndRecord 不带 mixWithOthers，会把正在放歌/放视频的 App 打断，
+    /// ReplayKit 的 .audioApp 就什么都采不到。
+    private func applyScreenShareAudioSession() {
+        screenShareAudioSessionApplied = true
+        let config = AudioSessionConfiguration(
+            category: .playAndRecord,
+            categoryOptions: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .allowAirPlay],
+            mode: .videoChat
+        )
+        AudioManager.shared.sessionConfiguration = config
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(config.category, mode: config.mode, options: config.categoryOptions)
+        try? session.setActive(true)
+    }
+
+    /// 停止共享后恢复 LiveKit 的动态音频会话配置，并去掉 mixWithOthers
+    private func restoreScreenShareAudioSession() {
+        guard screenShareAudioSessionApplied else { return }
+        screenShareAudioSessionApplied = false
+        AudioManager.shared.sessionConfiguration = nil
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+            .playAndRecord,
+            mode: .videoChat,
+            options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .allowAirPlay]
+        )
+    }
+
+    /// 屏幕采集单独拆出：iOS 回后台会停掉 RPScreenRecorder，重新开始时用同一个 BufferCapturer 重挂
     private func startScreenCapture(_ capturer: BufferCapturer) {
         RPScreenRecorder.shared().startCapture { sample, type, _ in
             if type == .video { capturer.capture(sample) }
         } completionHandler: { err in
-            if let err {
-                Task { @MainActor in
+            Task { @MainActor in
+                if let err {
+                    if isHost && sharing { shareInterrupted = true }
                     showTip("屏幕采集失败：\(err.localizedDescription)")
+                } else {
+                    shareInterrupted = false
                 }
             }
         }
     }
 
-    private func resumeScreenCaptureIfNeeded() async {
-        guard isHost, sharing else { return }
-        guard RPScreenRecorder.shared().isRecording == false else { return }
-        guard let capturer = screenTrack?.capturer as? BufferCapturer else { return }
-        startScreenCapture(capturer)
+    /// 一键重新开始共享：只在 App 内采集时使用，旧采集器/轨道可能已经作废
+    private func restartShare() async {
+        guard isHost, usingInAppShare else { return }
+        if sharing {
+            RPScreenRecorder.shared().stopCapture { _ in }
+            if let pub = screenPublication {
+                try? await room.localParticipant.unpublish(publication: pub)
+            }
+            screenPublication = nil
+            screenTrack = nil
+            sharing = false
+            // stopCapture 是异步收尾的，立刻 startCapture 会报「正在录制中」
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        await startInAppShare()
+        if sharing { shareInterrupted = false }
     }
 
     private func stopShare() async {
+        if usingBroadcastShare || BroadcastBridge.isFlaggedActive {
+            broadcastPending = false
+            BroadcastControl.requestStop()
+            showTip("正在停止屏幕共享…")
+            // 等扩展结束广播；即使通知丢了也要把本地轨道收掉
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await finishBroadcastShare()
+            return
+        }
+        await stopInAppShare()
+    }
+
+    private func stopInAppShare() async {
         RPScreenRecorder.shared().stopCapture { _ in }
         if let pub = screenPublication {
             try? await room.localParticipant.unpublish(publication: pub)
@@ -1552,8 +1880,94 @@ struct LiveRoomView: View {
         screenPublication = nil
         screenTrack = nil
         sharing = false
+        shareInterrupted = false
+        usingInAppShare = false
         await notifyScreen(0)
         showTip("已停止共享")
+    }
+
+    /// 系统广播开始/结束（扩展通过 Darwin 通知同步过来）
+    private func handleBroadcastState(_ active: Bool) async {
+        guard isHost, phase == "room", !left, !closing else { return }
+        if active {
+            // 只有本应用扩展写过 App Group 标记才算（也能过滤残留/错配通知）
+            guard BroadcastBridge.isFlaggedActive else { return }
+            broadcastPending = false
+            // 理论上不会同时存在，出现时先收掉 App 内采集
+            if usingInAppShare {
+                RPScreenRecorder.shared().stopCapture { _ in }
+                if let pub = screenPublication {
+                    try? await room.localParticipant.unpublish(publication: pub)
+                }
+                screenPublication = nil
+                screenTrack = nil
+            }
+            usingBroadcastShare = true
+            usingInAppShare = false
+            sharing = true
+            shareInterrupted = false
+            BroadcastBridge.markStarted()
+            applyScreenShareAudioSession()
+            ScreenShareKeepAlive.shared.start()
+
+            guard room.connectionState == .connected else {
+                // App 在后台被挂起/回前台还没重连：不能反过来把正在跑的广播停掉，
+                // 等 connectSfu 重连后远端视频轨会自己到达。
+                guard usingBroadcastShare else { return }
+                await notifyScreen(1)
+                showTip("屏幕共享已开始，正在恢复媒体连接…")
+                return
+            }
+            // 画面由扩展直接发布，等远端屏幕轨到达再通知观众
+            for _ in 0..<40 {
+                if kitObserver.remoteVideo != nil { break }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard !left, !closing, usingBroadcastShare else { return }
+            await notifyScreen(1)
+            if kitObserver.remoteVideo == nil {
+                showTip("屏幕共享已开始，画面连接中…")
+            } else if kitObserver.screenAudioActive {
+                showTip("屏幕共享已开始（含系统声音），可切换到其他 App")
+            } else {
+                showTip("屏幕共享已开始（无系统声音），可切换到其他 App")
+            }
+            // 扩展音频可能因手动渲染失败而没有推上来：10 秒后仍没有就把“声音连接中”降级
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !left, !closing, sharing, usingBroadcastShare,
+                      !kitObserver.screenAudioActive else { return }
+                broadcastAudioRequested = false
+            }
+            return
+        }
+        guard usingBroadcastShare, !BroadcastBridge.isFlaggedActive else { return }
+        await finishBroadcastShare()
+        showTip("屏幕共享已结束")
+    }
+
+    /// 停止系统广播后的收尾：扩展已自行断开，主 App 只清理状态与通知观众。
+    private func finishBroadcastShare() async {
+        let wasSharing = sharing || usingBroadcastShare
+        if usingInAppShare {
+            RPScreenRecorder.shared().stopCapture { _ in }
+            if let pub = screenPublication {
+                try? await room.localParticipant.unpublish(publication: pub)
+            }
+            usingInAppShare = false
+        }
+        screenPublication = nil
+        screenTrack = nil
+        sharing = false
+        usingBroadcastShare = false
+        broadcastPending = false
+        shareInterrupted = false
+        broadcastAudioRequested = false
+        ScreenShareKeepAlive.shared.stop()
+        restoreScreenShareAudioSession()
+        BroadcastBridge.markStopped()
+        BroadcastBridge.clearSession()
+        if wasSharing { await notifyScreen(0) }
     }
 
     private func notifyScreen(_ value: Int) async {
@@ -1589,16 +2003,32 @@ struct LiveRoomView: View {
         left = true
         connectAttempt &+= 1
         connecting = false
+        inBackground = false
+        shareInterrupted = false
         pollTask?.cancel()
         tipTask?.cancel()
         kitObserver.detach()
+        // 离开直播间时系统广播也必须停，否则扩展会一直采集
+        if BroadcastBridge.isFlaggedActive || usingBroadcastShare {
+            BroadcastControl.requestStop()
+        }
+        BroadcastBridge.markStopped()
+        BroadcastBridge.clearSession()
         if sharing {
-            RPScreenRecorder.shared().stopCapture { _ in }
+            if usingInAppShare {
+                RPScreenRecorder.shared().stopCapture { _ in }
+            }
             sharing = false
             await notifyScreen(0)
         }
         screenPublication = nil
         screenTrack = nil
+        usingBroadcastShare = false
+        usingInAppShare = false
+        broadcastPending = false
+        broadcastAudioRequested = false
+        ScreenShareKeepAlive.shared.stop()
+        restoreScreenShareAudioSession()
         await room.disconnect()
     }
 

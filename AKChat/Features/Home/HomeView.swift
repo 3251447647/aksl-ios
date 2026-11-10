@@ -17,6 +17,7 @@ struct IncomingCall: Identifiable {
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.tabBarVisibility) private var tabBar
     @State private var showCreateGroup = false
     @State private var showAddFriend = false
     @State private var showSearch = false
@@ -25,6 +26,14 @@ struct HomeView: View {
     @State private var showGroupInvites = false
     @State private var scanTarget: ScanTarget?
     @State private var plusOpen = false
+    @State private var noticePopup: Notice?
+    @State private var noticeDetail: NoticeDetail?
+    @State private var showNoticeDetail = false
+    @State private var noticeSeen: Set<Int64> = []
+    /// 公告弹窗是悬浮层，弹出时借 tab 栏的深度计数把它盖住
+    @State private var noticeOverlayPage = UUID()
+
+    private static let noticeDismissKey = "platformNoticeDismissedIds"
 
     private var filtered: [Conversation] { app.conversations }
     /// 顶栏角标只算非免打扰会话
@@ -73,6 +82,39 @@ struct HomeView: View {
                     .transition(.opacity)
                 }
             }
+            .overlay {
+                if let n = noticePopup {
+                    ZStack {
+                        Color.black.opacity(0.45).ignoresSafeArea()
+                            .onTapGesture {
+                                noticeSeen.insert(n.id)
+                                noticePopup = nil
+                            }
+                        SystemNoticePopup(
+                            notice: n,
+                            onLater: {
+                                noticeSeen.insert(n.id)
+                                noticePopup = nil
+                            },
+                            onDetail: {
+                                Task {
+                                    if let d = try? await APIClient.shared.notice(id: n.id) {
+                                        noticeSeen.insert(n.id)
+                                        noticePopup = nil
+                                        noticeDetail = d
+                                        showNoticeDetail = true
+                                    }
+                                }
+                            },
+                            onConfirm: {
+                                rememberNotice(n.id, persist: true)
+                                Task { await APIClient.shared.readNotice(id: n.id) }
+                            }
+                        )
+                    }
+                    .transition(.opacity)
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .refreshable {
                 let t = AKPerf.start()
@@ -80,12 +122,14 @@ struct HomeView: View {
                 AKPerf.log("home.refresh", since: t, "\(app.conversations.count) 个会话")
             }
             .task {
+                async let notices: Void = loadNoticePopup()
                 let t = AKPerf.start()
                 await app.refreshConversations()
                 AKPerf.log("home.conversations", since: t, "\(app.conversations.count) 个会话")
                 let c = AKPerf.start()
                 await app.loadContacts()
                 AKPerf.log("home.contacts", since: c)
+                _ = await notices
             }
             .sheet(isPresented: $showScanner) {
                 ScannerView { code in handleScan(code) }
@@ -104,6 +148,21 @@ struct HomeView: View {
             }
             .navigationDestination(isPresented: $showGroupInvites) {
                 GroupInvitesView().reportsDetailPage().restoresSwipeBack()
+            }
+            .navigationDestination(isPresented: $showNoticeDetail) {
+                if let d = noticeDetail {
+                    NoticeDetailView(detail: d, isRead: false) {
+                        rememberNotice(d.id, persist: true)
+                    }
+                    .restoresSwipeBack()
+                }
+            }
+            .onChange(of: noticePopup) { value in
+                if value != nil {
+                    tabBar.enter(noticeOverlayPage)
+                } else {
+                    tabBar.leave(noticeOverlayPage)
+                }
             }
             .navigationDestination(isPresented: Binding(
                 get: { scanTarget != nil },
@@ -210,6 +269,33 @@ struct HomeView: View {
             .background(AKColor.card)
         }
         .buttonStyle(.plain)
+    }
+
+    /* ---------- 系统公告弹窗 ---------- */
+
+    private static func storedNoticeIds() -> Set<Int64> {
+        Set((UserDefaults.standard.stringArray(forKey: noticeDismissKey) ?? []).compactMap { Int64($0) })
+    }
+
+    /// 启动/进首页只拉未读，已确认过的 id 本机再记一份，服务端还没清时也不重弹
+    private func loadNoticePopup() async {
+        guard noticePopup == nil, let data: NoticeUnreadResp = try? await APIClient.shared.get(
+            "api/v1/notices", query: ["only_unread": "1"]
+        ) else { return }
+        let seen = Self.storedNoticeIds().union(noticeSeen)
+        noticePopup = data.list.first { $0.id > 0 && $0.read != 1 && !seen.contains($0.id) }
+    }
+
+    private func rememberNotice(_ id: Int64, persist: Bool) {
+        noticeSeen.insert(id)
+        if persist {
+            var ids = UserDefaults.standard.stringArray(forKey: Self.noticeDismissKey) ?? []
+            if !ids.contains("\(id)") {
+                ids.append("\(id)")
+                UserDefaults.standard.set(Array(ids.suffix(100)), forKey: Self.noticeDismissKey)
+            }
+        }
+        noticePopup = nil
     }
 
     /* ---------- 通讯录通知条 ---------- */

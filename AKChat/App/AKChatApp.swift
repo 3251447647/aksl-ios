@@ -1,4 +1,5 @@
 import SwiftUI
+import LiveKit
 
 @main
 struct AKChatApp: App {
@@ -10,6 +11,14 @@ struct AKChatApp: App {
             RootView()
                 .environmentObject(app)
                 .task {
+                    // 屏幕共享由扩展用独立 identity 发布，主 App 永不自动创建广播采集轨
+                    BroadcastManager.shared.shouldPublishTrack = false
+                    // 冷启动时主 App 已经不在，扩展若还在广播就没人接帧，先收掉
+                    if BroadcastBridge.isFlaggedActive {
+                        BroadcastControl.requestStop()
+                        BroadcastBridge.markStopped()
+                        BroadcastBridge.clearSession()
+                    }
                     CallKitManager.shared.setup()
                     await app.bootstrap()
                 }

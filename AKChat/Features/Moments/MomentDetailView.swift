@@ -29,61 +29,59 @@ struct MomentDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if gone {
-                    goneState
-                } else {
-                    ScrollView {
-                        MomentCard(
-                            moment: current,
-                            isMine: mine,
-                            onLike: { Task { await toggleLike() } },
-                            onComment: { composing = true },
-                            onDelete: { showDelete = true },
-                            onPreview: { idx in
-                                previewBox = MomentImageBox(images: current.images, index: idx)
-                            },
-                            likeOverride: likeOverride,
-                            onRepost: { repostTarget = current }
-                        )
-                        .padding(12)
-                    }
+        Group {
+            if gone {
+                goneState
+            } else {
+                ScrollView {
+                    MomentCard(
+                        moment: current,
+                        isMine: mine,
+                        onLike: { Task { await toggleLike() } },
+                        onComment: { composing = true },
+                        onDelete: { showDelete = true },
+                        onPreview: { idx in
+                            previewBox = MomentImageBox(images: current.images, index: idx)
+                        },
+                        likeOverride: likeOverride,
+                        onRepost: { repostTarget = current }
+                    )
+                    .padding(12)
                 }
             }
-            .background(AKColor.bg)
-            .reportsDetailPage()
-            .navigationTitle("动态详情")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationBarBackButtonHidden(true)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    BackButton()
-                }
+        }
+        .background(AKColor.bg)
+        .reportsDetailPage()
+        .navigationTitle("动态详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
-            .safeAreaInset(edge: .bottom) {
-                if !gone { composer }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if !gone { composer }
+        }
+        .fullScreenCover(item: $previewBox) { box in
+            MomentImagePager(images: box.images, start: box.index)
+        }
+        .sheet(item: $repostTarget) { m in
+            RepostMomentSheet(moment: m) {
+                await app.loadMoments()
             }
-            .fullScreenCover(item: $previewBox) { box in
-                MomentImagePager(images: box.images, start: box.index)
-            }
-            .sheet(item: $repostTarget) { m in
-                RepostMomentSheet(moment: m) {
+        }
+        .alert("删除动态", isPresented: $showDelete) {
+            Button("删除", role: .destructive) {
+                Task {
+                    await APIClient.shared.deleteMoment(id: current.id)
                     await app.loadMoments()
+                    gone = true
                 }
             }
-            .alert("删除动态", isPresented: $showDelete) {
-                Button("删除", role: .destructive) {
-                    Task {
-                        await APIClient.shared.deleteMoment(id: current.id)
-                        await app.loadMoments()
-                        gone = true
-                    }
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("确定删除这条动态吗？点赞和评论将一并清除，此操作不可恢复。")
-            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("确定删除这条动态吗？点赞和评论将一并清除，此操作不可恢复。")
         }
     }
 

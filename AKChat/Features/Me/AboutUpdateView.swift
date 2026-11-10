@@ -394,9 +394,9 @@ struct PolicyDetailView: View {
     }
 }
 
-/// 检查更新：进入即查，用服务端 iOS 最新 version_code 与本地 CFBundleVersion 比较
+/// 检查更新：进入即查 /api/v1/app/version，用服务端 ios_latest_code 与本机 CFBundleVersion 比较
 struct CheckUpdateView: View {
-    @State private var info: IOSVersionInfo?
+    @State private var info: AppVersionInfo?
     @State private var checking = false
     @State private var checked = false
     @State private var errorText: String?
@@ -409,18 +409,21 @@ struct CheckUpdateView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
     }
 
-    private var latestCode: Int { info?.versionCode ?? 0 }
+    private var latestCode: Int { info?.iosLatestCode ?? 0 }
+    private var latestName: String { info?.iosLatestName ?? "" }
     private var hasUpdate: Bool { latestCode > currentCode }
 
-    /// force_update=1 或本地低于 min_supported_code 都必须更新
-    private var forced: Bool {
-        guard let info, hasUpdate else { return false }
-        if info.forceUpdate == 1 { return true }
-        return info.minSupportedCode > 0 && currentCode < info.minSupportedCode
+    /// 服务端还没启用 iOS 版本记录：ios 字段全空（接口会返回空值）
+    private var noIOSInfo: Bool {
+        guard let info else { return false }
+        return info.iosLatestCode <= 0 && info.iosLatestName.isEmpty && info.iosUrl.isEmpty
     }
 
+    /// 只有 ios_force=1 才强制更新
+    private var forced: Bool { hasUpdate && (info?.iosForce ?? 0) == 1 }
+
     private var changelogLines: [String] {
-        (info?.changelog ?? "")
+        (info?.iosChangelog ?? "")
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -429,6 +432,7 @@ struct CheckUpdateView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
+                versionRow
                 if checking || !checked {
                     ProgressView()
                         .padding(.top, 90)
@@ -455,14 +459,37 @@ struct CheckUpdateView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.top, 18)
+                } else if noIOSInfo {
+                    Text("暂无更新")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(AKColor.text)
+                        .padding(.top, 58)
+                    Text("服务端还没有可用的 iOS 版本信息")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AKColor.muted)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 8)
+                    Button {
+                        Task { await check() }
+                    } label: {
+                        Text("重新检查")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 26)
+                            .frame(height: 42)
+                            .background(AKColor.brand)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 22)
                 } else if hasUpdate {
                     updateCard
                 } else {
-                    Text("当前已是最新版本")
+                    Text("已是最新版本")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(AKColor.text)
                         .padding(.top, 66)
-                    Text("当前版本 v\(versionName)")
+                    Text("当前版本 v\(versionName) (\(currentCode))")
                         .font(.system(size: 12.5))
                         .foregroundColor(AKColor.muted)
                         .padding(.top, 8)
@@ -494,9 +521,26 @@ struct CheckUpdateView: View {
         }
     }
 
+    private var versionRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "app.badge")
+                .font(.system(size: 15))
+                .foregroundColor(AKColor.brand)
+            Text("当前版本 v\(versionName) (\(currentCode))")
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundColor(AKColor.text)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(AKColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.bottom, 6)
+    }
+
     private var updateCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("发现新版本 v" + (info?.versionName ?? ""))
+            Text("发现新版本 " + (latestName.isEmpty ? "\(latestCode)" : latestName))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AKColor.brand)
                 .padding(.bottom, 14)
@@ -523,13 +567,6 @@ struct CheckUpdateView: View {
                     .padding(.top, 12)
             }
 
-            if let size = info?.fileSize, size > 0 {
-                Text("安装包 " + sizeText(size))
-                    .font(.system(size: 11.5))
-                    .foregroundColor(AKColor.hint)
-                    .padding(.top, 6)
-            }
-
             Button {
                 openUpdate()
             } label: {
@@ -544,7 +581,7 @@ struct CheckUpdateView: View {
             .buttonStyle(.plain)
             .padding(.top, 18)
 
-            Text("按钮会打开 App Store 或 IPA 安装地址；没有配置地址时打开官网下载页")
+            Text("按钮会打开 IPA 安装地址；没有配置地址时打开官网下载页")
                 .font(.system(size: 11))
                 .foregroundColor(AKColor.hint)
                 .padding(.top, 10)
@@ -555,18 +592,8 @@ struct CheckUpdateView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func sizeText(_ bytes: Int64) -> String {
-        if bytes >= 1024 * 1024 * 1024 {
-            return String(format: "%.1fG", Double(bytes) / 1024 / 1024 / 1024)
-        }
-        if bytes >= 1024 * 1024 {
-            return String(format: "%.1fM", Double(bytes) / 1024 / 1024)
-        }
-        return "\(bytes / 1024)K"
-    }
-
     private func openUpdate() {
-        let raw = (info?.ipaUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = (info?.iosUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = "https://www.aksliao.cn/download/"
         guard let url = URL(string: raw.isEmpty ? fallback : raw) else { return }
         UIApplication.shared.open(url)
@@ -581,16 +608,10 @@ struct CheckUpdateView: View {
             checked = true
         }
         do {
-            info = try await APIClient.shared.iosAppVersion()
+            info = try await APIClient.shared.appVersion()
         } catch {
-            // 老服务端还没有 /app/version/ios，回落到安卓接口里的 ios_* 字段
-            do {
-                let legacy = try await APIClient.shared.appVersion()
-                info = IOSVersionInfo(legacy: legacy)
-            } catch {
-                errorText = error.localizedDescription
-                info = nil
-            }
+            errorText = error.localizedDescription
+            info = nil
         }
     }
 }

@@ -572,11 +572,21 @@ struct AppConfigData: Decodable {
     }
 }
 
+struct BroadcastSfuInfo: Decodable {
+    let enabled: Int?
+    let url: String?
+    let token: String?
+    let room: String?
+    let identity: String?
+}
+
 struct SfuInfo: Decodable {
     let enabled: Int?
     let url: String?
     let token: String?
     let room: String?
+    /// iOS 屏幕共享扩展专用凭证（独立 identity，不要和主连接混用）
+    let broadcast: BroadcastSfuInfo?
 }
 
 struct LiveInfo: Decodable {
@@ -590,9 +600,10 @@ struct LiveInfo: Decodable {
     let micMode: Int
     let startedAt: Int64
     let myRole: Int
+    let screen: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, viewers
+        case id, title, viewers, screen
         case hostId = "host_id"
         case hostName = "host_name"
         case hostAvatar = "host_avatar"

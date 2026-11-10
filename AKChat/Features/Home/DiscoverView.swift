@@ -4,7 +4,6 @@ import SwiftUI
 struct DiscoverView: View {
     @EnvironmentObject private var app: AppState
     @State private var showScanner = false
-    @State private var showInvite = false
     @State private var scanUid: Int64 = 0
     @State private var showScanProfile = false
 
@@ -47,8 +46,8 @@ struct DiscoverView: View {
                             }
                             .buttonStyle(.plain)
                             divider
-                            Button {
-                                showInvite = true
+                            NavigationLink {
+                                InviteRewardView()
                             } label: {
                                 row("邀请有礼", icon: "gift.fill", tint: Color(hex: 0xFF8A65))
                             }
@@ -82,11 +81,9 @@ struct DiscoverView: View {
                     openCode(code)
                 }
             }
-            .sheet(isPresented: $showInvite) {
-                NavigationStack { InviteView() }
-            }
-            .sheet(isPresented: $showScanProfile) {
-                NavigationStack { UserProfileView(uid: scanUid) }
+            .navigationDestination(isPresented: $showScanProfile) {
+                UserProfileView(uid: scanUid)
+                    .restoresSwipeBack()
             }
         }
     }
@@ -161,149 +158,5 @@ struct DiscoverView: View {
             .fill(AKColor.fill)
             .frame(height: 0.6)
             .padding(.leading, 56)
-    }
-}
-
-/// 邀请有礼：展示我的邀请码与分享入口
-struct InviteView: View {
-    @EnvironmentObject private var app: AppState
-    @Environment(\.dismiss) private var dismiss
-    @State private var copied = false
-
-    private var code: String {
-        app.user?.displayNo ?? ""
-    }
-
-    private var inviteLink: URL? {
-        guard !code.isEmpty else { return nil }
-        return URL(string: "https://www.aksliao.cn/register.php?invite=\(code)")
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                codeCard
-
-                Text("好友注册时填写该 AK号，双方都可获得奖励")
-                    .font(.system(size: 12))
-                    .foregroundColor(AKColor.hint)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-
-                shareButton
-                posterEntry
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
-        }
-        .background(AKColor.bg.ignoresSafeArea())
-        .navigationTitle("邀请有礼")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("关闭") { dismiss() }
-            }
-        }
-    }
-
-    /// 顶部邀请码卡：金色大号号码，整块可点复制
-    private var codeCard: some View {
-        VStack(spacing: 10) {
-            Text("我的邀请码")
-                .font(.system(size: 13))
-                .foregroundColor(AKColor.sub)
-
-            Button {
-                copyCode()
-            } label: {
-                VStack(spacing: 8) {
-                    Text(code.isEmpty ? "-" : code)
-                        .font(.system(size: 30, weight: .bold))
-                        .foregroundColor(AKColor.gold)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    HStack(spacing: 5) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 11))
-                        Text(copied ? "已复制" : "点击复制")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundColor(AKColor.hint)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(code.isEmpty)
-        }
-        .padding(.vertical, 18)
-        .frame(maxWidth: .infinity)
-        .background(AKColor.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    @ViewBuilder
-    private var shareButton: some View {
-        if let url = inviteLink {
-            ShareLink(item: url) {
-                greenButtonLabel("分享邀请链接", enabled: true)
-            }
-            .buttonStyle(.plain)
-        } else {
-            greenButtonLabel("分享邀请链接", enabled: false)
-        }
-    }
-
-    private func greenButtonLabel(_ title: String, enabled: Bool) -> some View {
-        Text(title)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 46)
-            .background(enabled ? AKColor.brand : AKColor.line)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private var posterEntry: some View {
-        NavigationLink {
-            PosterView(name: app.user?.displayName ?? "我",
-                       avatar: app.user?.avatar,
-                       number: code,
-                       uid: app.user?.id ?? 0)
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(AKColor.goldSoft)
-                        .frame(width: 38, height: 38)
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 17))
-                        .foregroundColor(AKColor.gold)
-                }
-                Text("我的海报")
-                    .font(.system(size: 15))
-                    .foregroundColor(AKColor.text)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AKColor.placeholder)
-            }
-            .padding(14)
-            .background(AKColor.card)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func copyCode() {
-        guard !code.isEmpty else { return }
-        UIPasteboard.general.string = code
-        copied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            copied = false
-        }
     }
 }

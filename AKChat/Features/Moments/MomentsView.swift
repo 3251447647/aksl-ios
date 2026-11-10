@@ -219,12 +219,14 @@ struct MomentsView: View {
                 if tab == 1 { await loadMine() }
             }
         }
-        .sheet(isPresented: $showPublish) {
+        .navigationDestination(isPresented: $showPublish) {
             PublishMomentView { content, images, videoUrl, duration, cover in
                 await app.publishMoment(content: content, images: images,
                                         videoUrl: videoUrl, duration: duration, cover: cover)
                 if tab == 1 { await loadMine() }
             }
+            .reportsDetailPage()
+            .restoresSwipeBack()
         }
         .alert("删除动态", isPresented: Binding(
             get: { deleteTarget != nil },
@@ -685,131 +687,130 @@ private struct PublishMomentView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ZStack(alignment: .topLeading) {
-                        TextEditor(text: $text)
-                            .font(.system(size: 15))
-                            .frame(height: 160)
-                            .padding(6)
-                            .background(AKColor.card)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(AKColor.line, lineWidth: 0.8)
-                            )
-                            .onChange(of: text) { value in
-                                if value.count > maxLen { text = String(value.prefix(maxLen)) }
-                            }
-                        if text.isEmpty {
-                            Text("这一刻的想法…")
-                                .font(.system(size: 15))
-                                .foregroundColor(AKColor.placeholder)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 16)
-                                .allowsHitTesting(false)
-                        }
-                    }
-
-                    HStack {
-                        Button {
-                            showEmoji.toggle()
-                        } label: {
-                            Text("😊 表情")
-                                .font(.system(size: 13))
-                                .foregroundColor(AKColor.link)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(AKColor.fill)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        Spacer(minLength: 0)
-                        Text("\(text.count)/\(maxLen)")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(text.count > maxLen - 100 ? AKColor.red : AKColor.placeholder)
-                    }
-
-                    if showEmoji {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8),
-                                  spacing: 2) {
-                            ForEach(emojis, id: \.self) { e in
-                                Button {
-                                    if text.count + e.count <= maxLen { text += e }
-                                } label: {
-                                    Text(e)
-                                        .font(.system(size: 20))
-                                        .frame(height: 36)
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $text)
+                        .font(.system(size: 15))
+                        .frame(height: 160)
                         .padding(6)
-                        .background(AKColor.fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-
-                    if !videoURL.isEmpty || uploadingVideo {
-                        videoPreview
-                    } else {
-                        imageGrid
-                        HStack {
-                            Text("\(previews.count)/9 张图片")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(AKColor.placeholder)
-                            Spacer(minLength: 0)
-                            PhotosPicker(selection: $videoItem, matching: .videos) {
-                                Text(uploadingVideo ? "读取视频中…" : "＋ 视频")
-                                    .font(.system(size: 12.5, weight: .medium))
-                                    .foregroundColor(uploadingVideo ? AKColor.muted : AKColor.link)
-                            }
-                            .disabled(uploadingVideo)
+                        .background(AKColor.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(AKColor.line, lineWidth: 0.8)
+                        )
+                        .onChange(of: text) { value in
+                            if value.count > maxLen { text = String(value.prefix(maxLen)) }
                         }
-                        if previews.isEmpty {
-                            Text("视频动态仅支持 1 个视频（30 秒内、30MB 内），与图片不能同时发布")
-                                .font(.system(size: 11))
-                                .foregroundColor(AKColor.hint)
-                                .lineSpacing(3)
-                        }
-                    }
-
-                    if let errorText {
-                        Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
+                    if text.isEmpty {
+                        Text("这一刻的想法…")
+                            .font(.system(size: 15))
+                            .foregroundColor(AKColor.placeholder)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 16)
+                            .allowsHitTesting(false)
                     }
                 }
-                .padding(16)
-            }
-            .background(AKColor.card)
-            .navigationTitle("发表动态")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
+
+                HStack {
                     Button {
-                        Task { await publish() }
+                        showEmoji.toggle()
                     } label: {
-                        Text(publishing ? "发表中…" : "发表")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                            .background(AKColor.brand)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        Text("😊 表情")
+                            .font(.system(size: 13))
+                            .foregroundColor(AKColor.link)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(AKColor.fill)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    .disabled(publishing || uploadingVideo || !hasContent)
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 0)
+                    Text("\(text.count)/\(maxLen)")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(text.count > maxLen - 100 ? AKColor.red : AKColor.placeholder)
+                }
+
+                if showEmoji {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 8),
+                              spacing: 2) {
+                        ForEach(emojis, id: \.self) { e in
+                            Button {
+                                if text.count + e.count <= maxLen { text += e }
+                            } label: {
+                                Text(e)
+                                    .font(.system(size: 20))
+                                    .frame(height: 36)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(6)
+                    .background(AKColor.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                if !videoURL.isEmpty || uploadingVideo {
+                    videoPreview
+                } else {
+                    imageGrid
+                    HStack {
+                        Text("\(previews.count)/9 张图片")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(AKColor.placeholder)
+                        Spacer(minLength: 0)
+                        PhotosPicker(selection: $videoItem, matching: .videos) {
+                            Text(uploadingVideo ? "读取视频中…" : "＋ 视频")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(uploadingVideo ? AKColor.muted : AKColor.link)
+                        }
+                        .disabled(uploadingVideo)
+                    }
+                    if previews.isEmpty {
+                        Text("视频动态仅支持 1 个视频（30 秒内、30MB 内），与图片不能同时发布")
+                            .font(.system(size: 11))
+                            .foregroundColor(AKColor.hint)
+                            .lineSpacing(3)
+                    }
+                }
+
+                if let errorText {
+                    Text(errorText).font(.system(size: 12)).foregroundColor(AKColor.red)
                 }
             }
-            .onChange(of: videoItem) { item in
-                guard let item else { return }
-                Task { await uploadVideo(item) }
+            .padding(16)
+        }
+        .background(AKColor.card)
+        .navigationTitle("发表动态")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
-            .onChange(of: items) { list in
-                Task { await loadImages(list) }
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task { await publish() }
+                } label: {
+                    Text(publishing ? "发表中…" : "发表")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(AKColor.brand)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .disabled(publishing || uploadingVideo || !hasContent)
             }
+        }
+        .onChange(of: videoItem) { item in
+            guard let item else { return }
+            Task { await uploadVideo(item) }
+        }
+        .onChange(of: items) { list in
+            Task { await loadImages(list) }
         }
     }
 

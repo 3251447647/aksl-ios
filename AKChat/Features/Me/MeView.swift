@@ -69,7 +69,7 @@ struct MeView: View {
                             menuCell("headphones", Color(hex: 0x2FA84F), "联系客服")
                         }
                         menuDivider
-                        NavigationLink { InviteView() } label: {
+                        NavigationLink { InviteRewardView() } label: {
                             menuCell("giftcard.fill", Color(hex: 0xFF6B81), "邀请好友")
                         }
                         .buttonStyle(.plain)

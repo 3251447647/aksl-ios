@@ -128,6 +128,7 @@ struct GroupPreviewView: View {
         .reportsDetailPage()
         .navigationTitle("群资料")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) { BackButton() }
@@ -370,6 +371,11 @@ struct GroupPreviewView: View {
     }
 
     private func load() async {
+        guard groupId > 0 else {
+            loading = false
+            errorText = "群名片数据不完整，请让对方重新分享"
+            return
+        }
         loading = true
         defer { loading = false }
         do {

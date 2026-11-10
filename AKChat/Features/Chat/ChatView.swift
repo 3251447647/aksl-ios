@@ -9,6 +9,11 @@ struct ProfileTarget: Identifiable {
     var gid: Int64 = 0
 }
 
+/// 群名片/群资料跳转：gid 随路由一起传递，不再先写状态再翻 isPresented
+struct GroupRoute: Identifiable, Hashable {
+    let id: Int64
+}
+
 /// 长按菜单里需要二次确认的操作
 private enum ChatConfirm: Identifiable {
     case recall(Message)
@@ -62,6 +67,8 @@ struct ChatView: View {
     @State private var atUids: [Int64] = []
     @State private var pendingNotice: GroupNotice?
     @State private var showNotice = false
+    @State private var latestNotice: GroupNoticeItem?
+    @State private var showNoticeDetail = false
     @State private var scrollTarget: String?
     @State private var localSeq: Int64 = -1
     @State private var profileTarget: ProfileTarget?
@@ -72,6 +79,8 @@ struct ChatView: View {
     @State private var liveGid: Int64 = 0
     @State private var active: GroupActiveData?
     @State private var groupInfo: GroupInfo?
+    /// /group 里 Core 模型没映射的字段（成员信息可见性）：仅用于拦截进他人主页
+    @State private var groupExtras: GroupInfoExtras?
     @State private var showGroupCall = false
     @State private var showMore = false
     @State private var showPhotoPicker = false
@@ -79,8 +88,7 @@ struct ChatView: View {
     @State private var showTransfer = false
     @State private var showGift = false
     @State private var callType = 1
-    @State private var previewGroupId: Int64 = 0
-    @State private var showGroupPreview = false
+    @State private var groupRoute: GroupRoute?
     @State private var showCall = false
     @State private var menuTarget: Message?
     @State private var selectMode = false
@@ -103,6 +111,10 @@ struct ChatView: View {
     @State private var unreadAnchor: Int64 = 0
     @State private var pinScopeTarget: Message?
     @State private var localPinId: Int64 = 0
+    /// 引用跳转后的短暂高亮（对齐安卓 highlightId）
+    @State private var highlightId: Int64 = 0
+    /// 自己撤回过的消息原文：只有撤回者知道原文，用于「重新编辑」
+    @State private var recallOriginals: [Int64: String] = [:]
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
@@ -177,7 +189,7 @@ struct ChatView: View {
             if let pinText {
                 pinBar(pinText)
             }
-            if isGroup, let notice = groupNoticeText {
+            if isGroup, let notice = noticeBarText {
                 noticeBar(notice)
             }
             if isGroup {
@@ -295,10 +307,9 @@ struct ChatView: View {
                     .padding(.bottom, 90)
             }
         }
-        .sheet(isPresented: $showGroupInfo) {
-            NavigationStack {
-                GroupInfoView(groupId: convId)
-            }
+        .navigationDestination(isPresented: $showGroupInfo) {
+            GroupInfoView(groupId: convId)
+                .restoresSwipeBack()
         }
         .sheet(isPresented: $showAtPicker) {
             AtMemberPicker(members: members, myRole: myRole) { uid, name in
@@ -314,17 +325,12 @@ struct ChatView: View {
                         notice: pendingNotice,
                         onClose: {
                             showNotice = false
-                            if let n = pendingNotice {
-                                Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
-                            }
+                            confirmGroupNotice(pendingNotice)
                         },
                         groupName: groupInfo?.name ?? title,
                         groupAvatar: groupInfo?.avatar,
                         onOpenProfile: {
                             showNotice = false
-                            if let n = pendingNotice {
-                                Task { await APIClient.shared.ackGroupNotice(gid: convId, noticeId: n.id) }
-                            }
                             showGroupInfo = true
                         }
                     )
@@ -349,12 +355,16 @@ struct ChatView: View {
                 },
                 onRecall: { msg in confirm = .recall(msg) },
                 onDelete: { msg in deleteLocal(msg) },
-                canRecall: { msg in canRecall(msg) }
+                canRecall: { msg in msg.fromUid == myId && canRecall(msg) }
             )
         }
-        .sheet(item: $profileTarget) { target in
-            NavigationStack {
+        .navigationDestination(isPresented: Binding(
+            get: { profileTarget != nil },
+            set: { if !$0 { profileTarget = nil } }
+        )) {
+            if let target = profileTarget {
                 UserProfileView(uid: target.id, gid: target.gid)
+                    .restoresSwipeBack()
             }
         }
         .sheet(isPresented: $showForward, onDismiss: { Task { await load() } }) {
@@ -372,6 +382,7 @@ struct ChatView: View {
                 canRecall: canRecall(msg),
                 canPin: canPin && msg.id > 0 && msg.type != 11,
                 canAddEmoji: msg.type == 5 && msg.fromUid != myId && isStickerMessage(msg),
+                canReedit: msg.fromUid == myId && recallOriginals[msg.id] != nil,
                 onPick: { key in handleMenu(key, msg: msg) }
             )
         }
@@ -440,8 +451,11 @@ struct ChatView: View {
                 }
             }
         }
-        .sheet(item: $payTarget) { msg in
-            NavigationStack {
+        .navigationDestination(isPresented: Binding(
+            get: { payTarget != nil },
+            set: { if !$0 { payTarget = nil } }
+        )) {
+            if let msg = payTarget {
                 Group {
                     if msg.type == 7 || msg.type == 21 {
                         RedPacketDetailSheet(
@@ -464,19 +478,30 @@ struct ChatView: View {
                         }
                     }
                 }
+                .reportsDetailPage()
+                .restoresSwipeBack()
             }
         }
-        .sheet(isPresented: $showRecord) {
+        .navigationDestination(isPresented: $showRecord) {
             ChatRecordView(payload: recordPayload ?? "")
+                .reportsDetailPage()
+                .restoresSwipeBack()
         }
         .sheet(isPresented: $showVideo) {
             NavigationStack {
                 VideoPreviewSheet(url: videoURL)
             }
         }
-        .sheet(isPresented: $showNotices) {
-            NavigationStack {
-                GroupNoticesView(groupId: convId)
+        .navigationDestination(isPresented: $showNotices) {
+            GroupNoticesView(groupId: convId)
+                .restoresSwipeBack()
+        }
+        .navigationDestination(isPresented: $showNoticeDetail) {
+            if let n = latestNotice {
+                GroupNoticeDetailView(groupId: convId, notice: n, canManage: n.canManage == 1) {
+                    await loadLatestNotice()
+                }
+                .restoresSwipeBack()
             }
         }
         .fullScreenCover(isPresented: $showCamera) {
@@ -491,8 +516,14 @@ struct ChatView: View {
         .fullScreenCover(isPresented: $showLive) {
             NavigationStack { LiveRoomView(gid: liveGid) }
         }
-        .sheet(isPresented: $showGroupPreview) {
-            NavigationStack { GroupPreviewView(groupId: previewGroupId) }
+        .navigationDestination(isPresented: Binding(
+            get: { groupRoute != nil },
+            set: { if !$0 { groupRoute = nil } }
+        )) {
+            if let route = groupRoute {
+                GroupPreviewView(groupId: route.id)
+                    .restoresSwipeBack()
+            }
         }
         .fullScreenCover(isPresented: $showCall) {
             CallScreen()
@@ -544,15 +575,21 @@ struct ChatView: View {
                 Task {
                     async let members: Void = loadMembers()
                     async let notice: Void = loadPendingNotice()
-                    _ = await (members, notice)
+                    async let latest: Void = loadLatestNotice()
+                    _ = await (members, notice, latest)
                 }
                 Task {
                     async let activeReq = APIClient.shared.groupActive(gid: convId)
                     async let infoReq = APIClient.shared.groupInfo(id: convId)
-                    let (a, i) = await (try? activeReq, try? infoReq)
+                    let a = try? await activeReq
+                    let i = try? await infoReq
+                    let e: GroupInfoExtras? = try? await APIClient.shared.get(
+                        "api/v1/group", query: ["id": "\(convId)"]
+                    )
                     await MainActor.run {
                         active = a
                         groupInfo = i
+                        groupExtras = e
                     }
                 }
             }
@@ -822,17 +859,19 @@ struct ChatView: View {
                             row(msg, member: memberLookup[msg.fromUid], mentionMap: mentions,
                                 mentionStamp: mentionStamp, readHint: hints[msg.listKey] ?? 0)
                         }
+                        .background(msg.id > 0 && msg.id == highlightId
+                                    ? Color(hex: 0xFFE082).opacity(0.2) : Color.clear)
                         .id(msg.listKey)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .onChange(of: messages.count) { _ in
-                if let last = messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.listKey, anchor: .bottom)
-                    }
+            /* 只在底部出现新消息时贴底：上拉加载历史与引用跳转不会把视口甩到底 */
+            .onChange(of: messages.last?.listKey) { key in
+                guard key != nil, scrollTarget == nil, let last = messages.last else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(last.listKey, anchor: .bottom)
                 }
             }
             .onChange(of: scrollTarget) { target in
@@ -871,7 +910,7 @@ struct ChatView: View {
         .overlay(Rectangle().fill(AKColor.line).frame(height: 0.5), alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
-            if pinMsgId > 0 { scrollTarget = "m_\(pinMsgId)" }
+            if pinMsgId > 0 { locateMessage(pinMsgId) }
         }
     }
 
@@ -892,6 +931,14 @@ struct ChatView: View {
         return text.isEmpty ? nil : text
     }
 
+    /// 顶部公告条：优先用最新一条群公告的首行（点击进详情），否则回退到旧的群资料公告文本
+    private var noticeBarText: String? {
+        if let text = latestNotice?.content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return text.split(whereSeparator: { $0.isNewline }).first.map { String($0) }
+        }
+        return groupNoticeText
+    }
+
     /// 被禁言 / 群封禁 / 全员禁言时输入区置灰（对齐安卓 MutedComposerBar）
     private var muteHint: String? {
         guard isGroup else { return nil }
@@ -908,7 +955,7 @@ struct ChatView: View {
 
     private func noticeBar(_ text: String) -> some View {
         Button {
-            showNotices = true
+            if latestNotice != nil { showNoticeDetail = true } else { showNotices = true }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "megaphone.fill")
@@ -1123,13 +1170,56 @@ struct ChatView: View {
         return false
     }
 
+    /// 引用块点击：本地找不到就往前翻页（最多 8 页），找到后滚动并短暂高亮
     private func jumpToQuote(_ id: Int64) {
         guard id > 0 else { return }
         if messages.contains(where: { $0.id == id }) {
-            scrollTarget = "m_\(id)"
-        } else {
-            errorText = "原消息已不在聊天记录中"
+            locateMessage(id)
+            return
         }
+        Task {
+            var pages = 0
+            while pages < 8, !messages.contains(where: { $0.id == id }) {
+                let before = messages.count
+                await loadMore()
+                if messages.count == before { break }
+                pages += 1
+            }
+            if messages.contains(where: { $0.id == id }) {
+                locateMessage(id, afterLoad: pages > 0)
+            } else {
+                flash("原消息已不在聊天记录中")
+            }
+        }
+    }
+
+    /// 滚到指定消息并短暂高亮（对齐安卓 highlightId 的 2.4s）
+    private func locateMessage(_ id: Int64, afterLoad: Bool = false) {
+        highlightId = id
+        scrollTarget = "m_\(id)"
+        Task {
+            if afterLoad {
+                /* 刚拖下来的历史消息要等 LazyVStack 布局完才能滚到位 */
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await MainActor.run {
+                    if highlightId == id { scrollTarget = "m_\(id)" }
+                }
+            }
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            await MainActor.run {
+                if highlightId == id { highlightId = 0 }
+            }
+        }
+    }
+
+    /// 进用户主页：群主关闭了成员信息查看时，除自己外一律拦下（对齐安卓 onAvatarClick）
+    private func openProfile(_ uid: Int64) {
+        guard uid > 0 else { return }
+        if isGroup, uid != myId, isMembersHidden {
+            flash("群主已关闭成员信息查看")
+            return
+        }
+        profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0)
     }
 
     private func redPacketId(_ m: Message) -> Int64 {
@@ -1141,23 +1231,28 @@ struct ChatView: View {
         return m.id
     }
 
-    /// 会话内图片组成预览列表，供分页器使用
-    private func openImagePager(_ url: String) {
+    /// 会话内图片/视频组成预览列表（对齐安卓 openImage）：命中当前张就整会话左右滑，
+    /// 找不到（表情包、相册图等）退回单张查看
+    private func openMediaPager(_ raw: String, isVideo: Bool) {
+        let target = VoiceService.cleanPath(raw)
+        guard !target.isEmpty else { return }
         var items: [PreviewMedia] = []
-        var at = 0
+        var at = -1
         for m in messages {
-            let sticker = isStickerMessage(m)
-            guard (m.type == 5 && !sticker) || m.type == 15 else { continue }
-            let raw = m.text ?? ""
-            guard let u = APIClient.fullURL(VoiceService.cleanPath(raw)) else { continue }
-            if raw == url || VoiceService.cleanPath(raw) == url { at = items.count }
+            guard (m.type == 5 && !isStickerMessage(m)) || m.type == 15 else { continue }
+            let path = VoiceService.cleanPath(m.text ?? m.content ?? "")
+            guard !path.isEmpty, let u = APIClient.fullURL(path) else { continue }
+            if at < 0, path == target { at = items.count }
             items.append(PreviewMedia(url: u, isVideo: m.type == 15, message: m))
         }
-        if items.isEmpty, let u = APIClient.fullURL(VoiceService.cleanPath(url)) {
-            items = [PreviewMedia(url: u, isVideo: false, message: nil)]
+        guard at >= 0 else {
+            guard let u = APIClient.fullURL(target) else { return }
+            previewImage = PreviewImage(
+                items: [PreviewMedia(url: u, isVideo: isVideo, message: nil)], index: 0
+            )
+            return
         }
-        guard !items.isEmpty else { return }
-        previewImage = PreviewImage(items: items, index: min(at, items.count - 1))
+        previewImage = PreviewImage(items: items, index: at)
     }
 
     private func openAlbum(_ paths: [String], index: Int) {
@@ -1176,12 +1271,19 @@ struct ChatView: View {
     /// 群聊 @ 名字映射（@全体成员 → 0）
     private var mentionMap: [String: Int64] {
         guard isGroup else { return [:] }
+        /* 群主关闭成员信息：@ 名字仍蓝色显示，但统一成不可点的 -1（对齐安卓） */
+        if isMembersHidden { return ["*": -1] }
         var map: [String: Int64] = ["全体成员": 0]
         for m in members {
             let name = m.name ?? ""
             if !name.isEmpty { map[name] = m.uid }
         }
         return map
+    }
+
+    private var isMembersHidden: Bool {
+        guard isGroup, let e = groupExtras else { return false }
+        return e.membersHidden == 1 || (e.hideMembers == 1 && myRole == 0)
     }
 
     @ViewBuilder
@@ -1202,7 +1304,7 @@ struct ChatView: View {
             mentionMap: mentionMap,
             mentionStamp: mentionStamp,
             onMention: { uid in
-                if uid > 0 { profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0) }
+                openProfile(uid)
             },
             onVoiceTap: {
                 playedVoice.insert(msg.listKey)
@@ -1212,7 +1314,7 @@ struct ChatView: View {
                 Task { await resend(msg) }
             },
             onAvatarTap: {
-                profileTarget = ProfileTarget(id: msg.fromUid, gid: isGroup ? convId : 0)
+                openProfile(msg.fromUid)
             },
             onAvatarLongPress: {
                 guard isGroup, msg.fromUid != myId else { return }
@@ -1227,11 +1329,11 @@ struct ChatView: View {
                 showLive = true
             },
             onOpenGroup: { gid in
-                previewGroupId = gid
-                showGroupPreview = true
+                guard gid > 0 else { return }
+                groupRoute = GroupRoute(id: gid)
             },
             onOpenProfile: { uid in
-                profileTarget = ProfileTarget(id: uid, gid: isGroup ? convId : 0)
+                openProfile(uid)
             },
             onQuoteLocate: { qid in
                 jumpToQuote(qid)
@@ -1260,6 +1362,14 @@ struct ChatView: View {
             },
             onOpenAlbum: { urls, index in
                 openAlbum(urls, index: index)
+            },
+            onOpenMedia: { raw, isVideo in
+                openMediaPager(raw, isVideo: isVideo)
+            },
+            reeditText: recallOriginals[msg.id],
+            onReedit: { original in
+                text = original
+                inputFocused = true
             }
         )
         .equatable()
@@ -1295,6 +1405,13 @@ struct ChatView: View {
                 await APIClient.shared.addFavorite(message: msg, convName: title)
                 flash("已收藏")
             }
+        case "save":
+            saveMedia(msg)
+        case "reedit":
+            if let original = recallOriginals[msg.id] {
+                text = original
+                inputFocused = true
+            }
         case "pin":
             if isGroup {
                 Task { await togglePin(msg) }
@@ -1318,6 +1435,20 @@ struct ChatView: View {
             confirm = .delete(msg)
         default:
             break
+        }
+    }
+
+    /// 长按菜单「保存」：图片/视频下载后写入系统相册
+    private func saveMedia(_ msg: Message) {
+        let raw = msg.text ?? msg.content ?? ""
+        guard let url = APIClient.fullURL(VoiceService.cleanPath(raw)) else {
+            flash("保存失败")
+            return
+        }
+        let isVideo = msg.type == 15
+        Task {
+            let ok = await AKMediaSaver.save(url: url, isVideo: isVideo)
+            await MainActor.run { flash(ok ? "已保存到相册" : "保存失败") }
         }
     }
 
@@ -1721,9 +1852,37 @@ struct ChatView: View {
     }
 
     private func loadPendingNotice() async {
-        guard let notice = await APIClient.shared.pendingGroupNotice(gid: convId) else { return }
+        guard let notice = await APIClient.shared.pendingGroupNotice(gid: convId), notice.id > 0 else { return }
+        /* 确认过的公告：id + 正文指纹都相同才跳过；公告被编辑后会重新弹 */
+        if let acked = UserDefaults.standard.string(forKey: groupNoticeAckKey),
+           acked == noticeFingerprint(notice) { return }
         pendingNotice = notice
         showNotice = true
+    }
+
+    private var groupNoticeAckKey: String { "groupNoticeAck_\(convId)" }
+
+    private func noticeFingerprint(_ notice: GroupNotice) -> String {
+        "\(notice.id)|\(notice.content ?? "")"
+    }
+
+    private func loadLatestNotice() async {
+        guard isGroup else { return }
+        if let data: GroupNoticeListResp = try? await APIClient.shared.get(
+            "api/v1/group/notices", query: ["gid": "\(convId)"]
+        ) {
+            latestNotice = data.list.first
+        }
+    }
+
+    /// 进群弹窗「我已知晓」：写本机 id → 服务端确认 → 刷新顶部公告条
+    private func confirmGroupNotice(_ notice: GroupNotice?) {
+        guard let notice else { return }
+        UserDefaults.standard.set(noticeFingerprint(notice), forKey: groupNoticeAckKey)
+        Task {
+            await APIClient.shared.ackGroupNotice(id: notice.id)
+            await loadLatestNotice()
+        }
     }
 
     /* ---------------- 发送 ---------------- */
@@ -1866,6 +2025,10 @@ struct ChatView: View {
         guard msg.id > 0 else { return }
         do {
             try await app.recall(convType: convType, id: msg.id)
+            /* 只有撤回者知道原文：记下来供「重新编辑」 */
+            if msg.fromUid == myId, let raw = msg.text, !raw.isEmpty, !raw.hasPrefix("{") {
+                recallOriginals[msg.id] = raw
+            }
             if let idx = messages.firstIndex(where: { $0.id == msg.id }) {
                 let label: String
                 if msg.fromUid == myId {
@@ -2013,7 +2176,12 @@ struct ChatView: View {
         case "group_top":
             if isGroup && ev.convId == convId { Task { await loadPin() } }
         case "group_notice":
-            if isGroup && ev.convId == convId { Task { await loadPendingNotice() } }
+            if isGroup && ev.convId == convId {
+                Task {
+                    await loadPendingNotice()
+                    await loadLatestNotice()
+                }
+            }
         default:
             break
         }
@@ -2054,6 +2222,10 @@ private struct ChatMessageRow: View, Equatable {
     var onOpenMoment: (Int64) -> Void = { _ in }
     var onOpenRecord: (String) -> Void = { _ in }
     var onOpenAlbum: ([String], Int) -> Void = { _, _ in }
+    var onOpenMedia: (String, Bool) -> Void = { _, _ in }
+    /// 自己撤回的文字消息原文：有值时在系统条下显示「重新编辑」
+    var reeditText: String? = nil
+    var onReedit: (String) -> Void = { _ in }
 
     private var displayName: String {
         let name = member?.name ?? message.fromName ?? ""
@@ -2089,6 +2261,7 @@ private struct ChatMessageRow: View, Equatable {
             onOpenMoment: onOpenMoment,
             onOpenRecord: onOpenRecord,
             onOpenAlbum: onOpenAlbum,
+            onOpenMedia: onOpenMedia,
             peerName: peerName,
             mentionMap: mentionMap,
             onMention: onMention,
@@ -2100,7 +2273,21 @@ private struct ChatMessageRow: View, Equatable {
         if message.type == 11 || message.recalled == 1 {
             HStack {
                 Spacer(minLength: 36)
-                bodyView
+                VStack(spacing: 3) {
+                    bodyView
+                    if let original = reeditText, mine {
+                        Button {
+                            onReedit(original)
+                        } label: {
+                            Text("重新编辑")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(AKColor.link)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
                 Spacer(minLength: 36)
             }
         } else {
@@ -2200,6 +2387,7 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.playingVoice == rhs.playingVoice
             && lhs.voicePlayed == rhs.voicePlayed
             && lhs.mentionStamp == rhs.mentionStamp
+            && lhs.reeditText == rhs.reeditText
     }
 }
 
@@ -2215,6 +2403,8 @@ private struct ChatMessageMenuSheet: View {
     let canRecall: Bool
     let canPin: Bool
     let canAddEmoji: Bool
+    /// 自己撤回的文字消息才能「重新编辑」
+    let canReedit: Bool
     let onPick: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -2267,6 +2457,12 @@ private struct ChatMessageMenuSheet: View {
             out.append(Item(key: "forward", label: "转发", icon: "arrowshape.turn.up.right"))
             out.append(Item(key: "multi", label: "多选", icon: "checklist"))
         }
+        if canReedit {
+            out.append(Item(key: "reedit", label: "重新编辑", icon: "square.and.pencil"))
+        }
+        if message.type == 5 || message.type == 15 {
+            out.append(Item(key: "save", label: "保存", icon: "square.and.arrow.down"))
+        }
         if message.type != 11 {
             out.append(Item(key: "fav", label: "收藏", icon: "star"))
         }
@@ -2276,7 +2472,7 @@ private struct ChatMessageMenuSheet: View {
         if canAddEmoji {
             out.append(Item(key: "emoji", label: "添加到表情", icon: "face.smiling"))
         }
-        if !mine {
+        if !mine && message.type != 11 {
             out.append(Item(key: "report", label: "举报", icon: "flag", danger: true))
         }
         if canRecall {
@@ -2327,7 +2523,7 @@ private struct ChatMessageMenuSheet: View {
         }
         .padding(.horizontal, 6)
         .background(AKColor.card)
-        .presentationDetents([.height(items.count > 4 ? 250 : 170)])
+        .presentationDetents([.height(items.count > 8 ? 330 : (items.count > 4 ? 250 : 170))])
         .presentationDragIndicator(.hidden)
     }
 }

@@ -179,28 +179,9 @@ struct MediaPagerView: View {
 
     private func saveCurrent() {
         guard let item = current else { return }
-        if item.isVideo {
-            Task {
-                guard let (data, _) = try? await URLSession.shared.data(from: item.url) else {
-                    showToast("保存失败")
-                    return
-                }
-                let tmp = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("ak_\(Int(Date().timeIntervalSince1970)).mp4")
-                try? data.write(to: tmp)
-                UISaveVideoAtPathToSavedPhotosAlbum(tmp.path, nil, nil, nil)
-                showToast("已保存到相册")
-            }
-            return
-        }
         Task {
-            guard let (data, _) = try? await URLSession.shared.data(from: item.url),
-                  let image = UIImage(data: data) else {
-                showToast("保存失败")
-                return
-            }
-            UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-            showToast("已保存到相册")
+            let ok = await AKMediaSaver.save(url: item.url, isVideo: item.isVideo)
+            showToast(ok ? "已保存到相册" : "保存失败")
         }
     }
 
@@ -214,6 +195,25 @@ struct MediaPagerView: View {
                 if token == toastToken { toast = nil }
             }
         }
+    }
+}
+
+/* ---------------- 保存到相册 ---------------- */
+
+/// 预览器与聊天长按菜单共用：下载后写入系统相册，失败返回 false
+enum AKMediaSaver {
+    static func save(url: URL, isVideo: Bool) async -> Bool {
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return false }
+        if isVideo {
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ak_\(UUID().uuidString).mp4")
+            guard (try? data.write(to: tmp)) != nil else { return false }
+            UISaveVideoAtPathToSavedPhotosAlbum(tmp.path, nil, nil, nil)
+            return true
+        }
+        guard let image = UIImage(data: data) else { return false }
+        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+        return true
     }
 }
 
@@ -418,11 +418,14 @@ final class PlayerContainerView: UIView {
         super.init(frame: frame)
         playerLayer.videoGravity = .resizeAspect
         backgroundColor = .black
+        /* 控制条都在 SwiftUI 层，播放器本身不接管触摸，否则点击播放/暂停失效 */
+        isUserInteractionEnabled = false
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         playerLayer.videoGravity = .resizeAspect
         backgroundColor = .black
+        isUserInteractionEnabled = false
     }
 }

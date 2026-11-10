@@ -16,9 +16,36 @@ struct LiveKitVideoTile: UIViewRepresentable {
         var track: VideoTrack?
         weak var view: LiveKit.VideoView?
         var monitor: Task<Void, Never>?
+        private var activeObserver: NSObjectProtocol?
 
         deinit {
             monitor?.cancel()
+            if let activeObserver {
+                NotificationCenter.default.removeObserver(activeObserver)
+            }
+        }
+
+        /// iOS 回前台后渲染器可能停在最后一帧：把 track 先摘掉再挂回，强制要新关键帧。
+        /// 群通话与直播间共用这个视图，所以放在这里统一处理。
+        func startForegroundRefresh() {
+            guard activeObserver == nil else { return }
+            activeObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.reattach() }
+            }
+        }
+
+        func reattach() {
+            // 不在窗口上时不能摘 track，否则可能一直挂不回去
+            guard let view, let track, view.window != nil else { return }
+            view.track = nil
+            DispatchQueue.main.async {
+                view.track = track
+                view.setNeedsLayout()
+            }
         }
 
         /// 首帧之后渲染标记掉下来（画面卡住）时重新挂一次渲染器。
@@ -62,6 +89,7 @@ struct LiveKitVideoTile: UIViewRepresentable {
         context.coordinator.token = refreshToken
         context.coordinator.track = track
         context.coordinator.view = view
+        context.coordinator.startForegroundRefresh()
         if recoversFromStall {
             context.coordinator.startMonitor()
         }
@@ -97,15 +125,26 @@ struct LiveKitVideoTile: UIViewRepresentable {
 /// 并在回调里带上当前远端视频轨，避免只靠遍历 remoteParticipants 拿不到最新轨道。
 final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
     @Published private(set) var remoteVideo: VideoTrack?
+    /// 是否收到主播的独立系统声音轨（screen_share_audio / host_system_audio）
+    @Published private(set) var screenAudioActive = false
     @Published private(set) var revision = 0
 
+    /// 主播自己的扩展音频要在本机静音，否则自己共享出去的声音会从扬声器再放一遍
+    var extensionAudioIdentityToMute: String?
+
     private weak var room: Room?
+    private let audioMuteQueue = DispatchQueue(label: "ak.live.extension-audio-mute")
+    private var mutedAudioSids = Set<String>()
 
     func attach(_ room: Room) {
-        if self.room === room { return }
+        if self.room === room {
+            refreshTracks()
+            return
+        }
         detach()
         self.room = room
         room.add(delegate: self)
+        refreshTracks()
     }
 
     func detach() {
@@ -113,31 +152,84 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
             room.remove(delegate: self)
         }
         room = nil
-        remoteVideo = nil
+        audioMuteQueue.async { [weak self] in self?.mutedAudioSids.removeAll() }
+        DispatchQueue.main.async {
+            self.remoteVideo = nil
+            self.screenAudioActive = false
+        }
     }
 
     /// 主动要求重建渲染：回前台、重连完成、换轨之后调用
     func refresh() {
+        refreshTracks()
         DispatchQueue.main.async {
             self.revision &+= 1
         }
     }
 
-    private func update(_ track: VideoTrack?) {
+    /// 重新计算远端视频与系统声音：退订/换轨/参与者断开后只靠回调容易拿到旧轨道。
+    private func refreshTracks() {
+        let participants = room.map { Array($0.remoteParticipants.values) } ?? []
+        var screenVideo: VideoTrack?
+        var anyVideo: VideoTrack?
+        var hasSystemAudio = false
+
+        for participant in participants {
+            for publication in participant.videoTracks {
+                guard let track = publication.track as? VideoTrack else { continue }
+                if anyVideo == nil { anyVideo = track }
+                if publication.source == .screenShareVideo
+                    || publication.name == Track.screenShareVideoName
+                    || publication.name == "screen" {
+                    screenVideo = track
+                }
+            }
+            let isExtensionAudioSource = participant.identity?.stringValue.hasSuffix("_bc") == true
+            for publication in participant.audioTracks {
+                guard publication.track != nil else { continue }
+                if isExtensionAudioSource
+                    || publication.name == "host_system_audio"
+                    || publication.source == .screenShareAudio {
+                    hasSystemAudio = true
+                }
+                muteIfNeeded(participant: participant, publication: publication)
+            }
+        }
+
+        let chosen = screenVideo ?? anyVideo
         DispatchQueue.main.async {
-            self.remoteVideo = track
+            self.remoteVideo = chosen
+            self.screenAudioActive = hasSystemAudio
             self.revision &+= 1
+        }
+    }
+
+    private func muteIfNeeded(participant: RemoteParticipant, publication: TrackPublication) {
+        guard let identity = extensionAudioIdentityToMute,
+              participant.identity?.stringValue == identity,
+              let track = publication.track as? RemoteAudioTrack else { return }
+        let sid = publication.sid.stringValue
+        audioMuteQueue.async { [weak self] in
+            guard let self, !self.mutedAudioSids.contains(sid) else { return }
+            self.mutedAudioSids.insert(sid)
+            track.volume = 0
         }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
-        guard let video = publication.track as? VideoTrack else { return }
-        update(video)
+        refreshTracks()
+        // SDK 的 publication.track 在回调瞬间可能还没落到 participant 列表里
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.refreshTracks() }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
-        guard publication.kind == .video else { return }
-        update(nil)
+        refreshTracks()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.refreshTracks() }
+    }
+
+    func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+        refreshTracks()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.refreshTracks() }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, trackPublication: RemoteTrackPublication,

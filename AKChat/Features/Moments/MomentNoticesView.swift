@@ -69,19 +69,24 @@ struct MomentNoticesView: View {
         }
         .refreshable { await load() }
         .task { await load() }
-        .sheet(item: $detailMoment) { m in
-            MomentDetailView(moment: m)
-                .environmentObject(app)
+        .navigationDestination(isPresented: Binding(
+            get: { detailMoment != nil },
+            set: { if !$0 { detailMoment = nil } }
+        )) {
+            if let m = detailMoment {
+                MomentDetailView(moment: m)
+                    .environmentObject(app)
+                    .restoresSwipeBack()
+            }
         }
-        .sheet(isPresented: Binding(
+        .navigationDestination(isPresented: Binding(
             get: { profileUid != nil },
             set: { if !$0 { profileUid = nil } }
         )) {
             if let uid = profileUid {
-                NavigationStack {
-                    UserProfileView(uid: uid)
-                        .environmentObject(app)
-                }
+                UserProfileView(uid: uid)
+                    .environmentObject(app)
+                    .restoresSwipeBack()
             }
         }
         .alert("该动态已不存在", isPresented: $missingTip) {

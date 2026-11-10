@@ -9,7 +9,9 @@ struct GroupNoticePopup: View {
     var groupAvatar: String? = nil
     var onOpenProfile: (() -> Void)? = nil
 
-    private var images: [String] { notice?.imageList ?? [] }
+    @State private var preview: PreviewImage? = nil
+
+    private var images: [String] { Array((notice?.imageList ?? []).prefix(9)) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,17 +41,19 @@ struct GroupNoticePopup: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text((notice?.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                         ? "暂无公告" : (notice?.content ?? ""))
-                        .font(.system(size: 14))
-                        .lineSpacing(8)
-                        .foregroundColor(AKColor.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    AKLinkText(
+                        text: (notice?.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "暂无公告" : (notice?.content ?? ""),
+                        color: AKColor.text,
+                        fontSize: 14,
+                        lineHeight: 22
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if !images.isEmpty {
-                        NoticeImageGrid(paths: Array(images.prefix(9)), size: 72, spacing: 5, corners: 8)
-                            .contentShape(Rectangle())
-                            .onTapGesture { onOpenProfile?() }
+                        NoticeImageGrid(paths: images, size: 72, spacing: 5, corners: 8) { index in
+                            openPreview(at: index)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,5 +101,17 @@ struct GroupNoticePopup: View {
         .background(AKColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 24)
+        .fullScreenCover(item: $preview) { item in
+            MediaPagerView(items: item.items, index: item.index)
+        }
+    }
+
+    private func openPreview(at index: Int) {
+        let urls = images.compactMap { APIClient.fullURL($0) }
+        guard !urls.isEmpty else { return }
+        preview = PreviewImage(
+            items: urls.map { PreviewMedia(url: $0, isVideo: false, message: nil) },
+            index: min(index, urls.count - 1)
+        )
     }
 }

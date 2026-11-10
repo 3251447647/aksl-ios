@@ -33,6 +33,8 @@ struct MessageBody: View {
     var onOpenRecord: (String) -> Void = { _ in }
     /// 多图相册点击：urls + 起点
     var onOpenAlbum: ([String], Int) -> Void = { _, _ in }
+    /// 图片/视频/表情缩略图点击：原始地址 + 是否视频，由 ChatView 组装会话预览列表
+    var onOpenMedia: (String, Bool) -> Void = { _, _ in }
     /// 会话对方名称：转账/礼物卡片收款人兜底（对齐安卓 peerName）
     var peerName: String = "对方"
     /// 群聊 @ 名字 → uid（0 表示 @全体成员，-1 表示成员信息关闭）
@@ -234,6 +236,8 @@ struct MessageBody: View {
                 }
                 .background(meta.caption.isEmpty ? Color.clear : AKColor.card)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .contentShape(Rectangle())
+                .onTapGesture { onOpenMedia(rawText, false) }
             } else {
                 Color.clear.frame(width: 1, height: 1)
             }
@@ -260,6 +264,13 @@ struct MessageBody: View {
                 }
                 .frame(width: 96, height: 96)
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            let lower = (message.text ?? message.content ?? "").lowercased()
+            let isVideo = lower.hasSuffix(".mp4") || lower.hasSuffix(".mov")
+                || lower.hasSuffix(".webm") || lower.hasSuffix(".m4v")
+            onOpenMedia(rawText, isVideo)
         }
     }
 
@@ -848,6 +859,26 @@ struct MessageBody: View {
             Spacer(minLength: 0)
         }
         .akCardSurface()
+        .contentShape(Rectangle())
+        .onTapGesture { openLocation() }
+    }
+
+    /// 位置卡片：有坐标带坐标，只有地址就按地址搜，交给系统地图
+    private func openLocation() {
+        let lat = cDbl("lat")
+        let lng = cDbl("lng")
+        let address = firstNonEmpty(cStr("address"), rawText)
+        var comps = URLComponents(string: "https://maps.apple.com/")
+        var query: [URLQueryItem] = []
+        if lat != 0 || lng != 0 {
+            query.append(URLQueryItem(name: "ll", value: "\(lat),\(lng)"))
+        }
+        if !address.isEmpty {
+            query.append(URLQueryItem(name: "q", value: address))
+        }
+        comps?.queryItems = query.isEmpty ? nil : query
+        guard let url = comps?.url else { return }
+        UIApplication.shared.open(url)
     }
 
     private var userCard: some View {
@@ -932,7 +963,9 @@ struct MessageBody: View {
             HStack(spacing: 0) {
                 Text("群邀请").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
                 Spacer(minLength: 0)
-                Text("查看 ›").font(.system(size: 10.5)).foregroundColor(AKColor.muted)
+                Text(gid > 0 ? "查看 ›" : "群名片已失效")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(AKColor.muted)
             }
             .padding(.top, 7)
         }
@@ -1080,11 +1113,7 @@ struct MessageBody: View {
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture {
-            if let url = APIClient.fullURL(VoiceService.cleanPath(message.text ?? "")) {
-                onOpenAlbum([url.absoluteString], 0)
-            }
-        }
+        .onTapGesture { onOpenMedia(message.text ?? message.content ?? "", true) }
     }
 
     private var momentCard: some View {
@@ -1387,6 +1416,17 @@ final class LoopingVideoView: UIView {
     private var player: AVQueuePlayer?
     private var looper: AVPlayerLooper?
 
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        /* 纯展示视图：不能吞掉气泡的点击（表情点开预览）与长按菜单 */
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isUserInteractionEnabled = false
+    }
+
     func load(_ url: URL) {
         let p = AVQueuePlayer()
         let item = AVPlayerItem(url: url)
@@ -1585,10 +1625,10 @@ struct RechargeDetailSheet: View {
         .background(AKColor.bg.ignoresSafeArea())
         .navigationTitle("充值申请详情")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("关闭") { dismiss() }
-                    .foregroundColor(AKColor.link)
+            ToolbarItem(placement: .navigationBarLeading) {
+                BackButton()
             }
         }
         .alert("拒绝原因", isPresented: $showReject) {

@@ -81,6 +81,7 @@ struct ChatRecordView: View {
             }
         }
         .background(AKColor.bg)
+        .toolbar(.hidden, for: .navigationBar)
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
