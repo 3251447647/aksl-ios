@@ -1471,36 +1471,9 @@ struct ChatView: View {
         return e.membersHidden == 1 || (e.hideMembers == 1 && myRole == 0)
     }
 
-    /// 气泡上方 @ 提示：按 at_uids 取当前群昵称；@全体成员用 all/-1 表示
-    private func mentionHint(for msg: Message) -> (text: String, highlight: Bool)? {
-        guard isGroup, msg.type != 11 else { return nil }
-        let tokens = (msg.atUids ?? "").split(separator: ",")
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard !tokens.isEmpty else { return nil }
-        let myId = app.user?.id ?? 0
-        var highlight = false
-        var names: [String] = []
-        for token in tokens {
-            if token == "all" || token == "-1" {
-                names.append("@全体成员")
-                highlight = true
-            } else if let uid = Int64(token) {
-                let name = (members.first(where: { $0.uid == uid })?.name ?? "")
-                    .trimmingCharacters(in: .whitespaces)
-                names.append("@" + (name.isEmpty ? "成员" : name))
-                if uid == myId { highlight = true }
-            }
-        }
-        var seen = Set<String>()
-        let unique = names.filter { seen.insert($0).inserted }
-        return unique.isEmpty ? nil : (unique.joined(separator: " "), highlight)
-    }
-
     @ViewBuilder
     private func row(_ msg: Message, member: GroupMember?, mentionMap: [String: Int64],
                      mentionStamp: Int, readHint: Int, uploadProgress: Double? = nil) -> some View {
-        let hint = mentionHint(for: msg)
         ChatMessageRow(
             message: msg,
             mine: msg.fromUid == myId,
@@ -1516,8 +1489,6 @@ struct ChatView: View {
             voicePlayed: playedVoice.contains(msg.listKey),
             mentionMap: mentionMap,
             mentionStamp: mentionStamp,
-            mentionHint: hint?.text,
-            mentionHighlight: hint?.highlight ?? false,
             onMention: { uid in
                 openProfile(uid)
             },
@@ -1604,7 +1575,7 @@ struct ChatView: View {
         switch key {
         case "reply":
             replyTo = msg
-            /* 群里回复谁就带上 @谁：at_uids 驱动气泡上方提示与对方首页 [有人@我] */
+            /* 群里回复谁就带上 @谁：at_uids 驱动对方首页 [有人@我] */
             if isGroup, msg.fromUid != (app.user?.id ?? 0) {
                 let name = (members.first(where: { $0.uid == msg.fromUid })?.name
                     ?? msg.fromName ?? "")
@@ -2732,10 +2703,6 @@ private struct ChatMessageRow: View, Equatable {
     var mentionMap: [String: Int64] = [:]
     /// @ 名单的指纹：成员变化时行会重建，但比较本身不做 O(成员数) 的字典逐项对比
     var mentionStamp: Int = 0
-    /// 气泡上方 @ 提示（at_uids 解析）
-    var mentionHint: String? = nil
-    /// @ 到自己 / 全体时用告警色
-    var mentionHighlight: Bool = false
     var onMention: (Int64) -> Void = { _ in }
     let onVoiceTap: () -> Void
     let onRetry: () -> Void
@@ -2856,15 +2823,6 @@ private struct ChatMessageRow: View, Equatable {
                         .padding(.bottom, 5)
                     }
 
-                    if let mentionHint, !mentionHint.isEmpty {
-                        Text(mentionHint)
-                            .font(.system(size: 10.5))
-                            .foregroundColor(mentionHighlight ? AKColor.red : AKColor.link)
-                            .lineLimit(1)
-                            .padding(.leading, 6)
-                            .padding(.bottom, 3)
-                    }
-
                     bodyView
                         .contentShape(Rectangle())
                         // 气泡里的 Text 链接与卡片点击手势会把普通 onLongPressGesture 吃掉，
@@ -2929,8 +2887,6 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.playingVoice == rhs.playingVoice
             && lhs.voicePlayed == rhs.voicePlayed
             && lhs.mentionStamp == rhs.mentionStamp
-            && lhs.mentionHint == rhs.mentionHint
-            && lhs.mentionHighlight == rhs.mentionHighlight
             && lhs.reeditText == rhs.reeditText
     }
 }
