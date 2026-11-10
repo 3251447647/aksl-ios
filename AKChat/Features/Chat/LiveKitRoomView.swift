@@ -10,6 +10,9 @@ struct LiveKitVideoTile: UIViewRepresentable {
     var refreshToken: Int = 0
     /// 首帧后卡住时自动重挂渲染器（直播间开启，群通话不开启避免多路重复重挂）
     var recoversFromStall: Bool = false
+    /// 回前台是否由渲染视图自己重挂。直播间由 LiveRoomView 先重连再重建，
+    /// 这里必须关掉，否则旧轨会在重连完成前先被挂回去。
+    var observesForeground: Bool = true
 
     final class Coordinator {
         var token = Int.min
@@ -89,7 +92,9 @@ struct LiveKitVideoTile: UIViewRepresentable {
         context.coordinator.token = refreshToken
         context.coordinator.track = track
         context.coordinator.view = view
-        context.coordinator.startForegroundRefresh()
+        if observesForeground {
+            context.coordinator.startForegroundRefresh()
+        }
         if recoversFromStall {
             context.coordinator.startMonitor()
         }
@@ -121,20 +126,51 @@ struct LiveKitVideoTile: UIViewRepresentable {
     }
 }
 
+/// 记录远端视频轨最近一帧的时间。
+/// 诊断面板靠它区分「收到屏幕轨但扩展没在出新帧」和「根本没收到轨」。
+final class ScreenFrameProbe: NSObject, VideoRenderer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastAt: Date?
+
+    var lastFrameAt: Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastAt
+    }
+
+    func reset() {
+        lock.lock()
+        lastAt = nil
+        lock.unlock()
+    }
+
+    var isAdaptiveStreamEnabled: Bool { false }
+    var adaptiveStreamSize: CGSize { .zero }
+
+    @objc func render(frame: VideoFrame) {
+        lock.lock()
+        lastAt = Date()
+        lock.unlock()
+    }
+}
+
 /// 房间事件桥：把订阅、退订与连接状态变化转成 SwiftUI 可观察的刷新信号，
 /// 并在回调里带上当前远端视频轨，避免只靠遍历 remoteParticipants 拿不到最新轨道。
 final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
     @Published private(set) var remoteVideo: VideoTrack?
-    /// 是否收到主播的独立系统声音轨（screen_share_audio / host_system_audio）
-    @Published private(set) var screenAudioActive = false
     @Published private(set) var revision = 0
+    /// 是否已收到 source=screenShare 的轨道（收到轨但没新帧时要分开看）
+    @Published private(set) var screenTrackReceived = false
+    /// 连接被意外断开（自动重连失败/服务端踢掉）：UI 需要给出人工重连入口
+    @Published private(set) var mediaInterrupted = false
 
-    /// 主播自己的扩展音频要在本机静音，否则自己共享出去的声音会从扬声器再放一遍
-    var extensionAudioIdentityToMute: String?
+    private let frameProbe = ScreenFrameProbe()
+    private var probedTrack: VideoTrack?
+
+    /// 远端画面最近一帧到达时间；nil 表示还没收到帧
+    var lastScreenFrameAt: Date? { frameProbe.lastFrameAt }
 
     private weak var room: Room?
-    private let audioMuteQueue = DispatchQueue(label: "ak.live.extension-audio-mute")
-    private var mutedAudioSids = Set<String>()
 
     func attach(_ room: Room) {
         if self.room === room {
@@ -152,10 +188,11 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
             room.remove(delegate: self)
         }
         room = nil
-        audioMuteQueue.async { [weak self] in self?.mutedAudioSids.removeAll() }
         DispatchQueue.main.async {
+            self.attachProbe(nil)
             self.remoteVideo = nil
-            self.screenAudioActive = false
+            self.screenTrackReceived = false
+            self.mediaInterrupted = false
         }
     }
 
@@ -167,12 +204,11 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
         }
     }
 
-    /// 重新计算远端视频与系统声音：退订/换轨/参与者断开后只靠回调容易拿到旧轨道。
+    /// 重新计算远端视频：退订/换轨/参与者断开后只靠回调容易拿到旧轨道。
     private func refreshTracks() {
         let participants = room.map { Array($0.remoteParticipants.values) } ?? []
         var screenVideo: VideoTrack?
         var anyVideo: VideoTrack?
-        var hasSystemAudio = false
 
         for participant in participants {
             for publication in participant.videoTracks {
@@ -184,36 +220,99 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
                     screenVideo = track
                 }
             }
-            let isExtensionAudioSource = participant.identity?.stringValue.hasSuffix("_bc") == true
-            for publication in participant.audioTracks {
-                guard publication.track != nil else { continue }
-                if isExtensionAudioSource
-                    || publication.name == "host_system_audio"
-                    || publication.source == .screenShareAudio {
-                    hasSystemAudio = true
-                }
-                muteIfNeeded(participant: participant, publication: publication)
-            }
         }
 
         let chosen = screenVideo ?? anyVideo
         DispatchQueue.main.async {
+            let trackChanged = self.remoteVideo !== chosen
+            self.attachProbe(chosen)
             self.remoteVideo = chosen
-            self.screenAudioActive = hasSystemAudio
-            self.revision &+= 1
+            self.screenTrackReceived = screenVideo != nil
+            // 只有轨道真的换了才重建渲染视图；音频/参与者回调也走这里，
+            // 每条都 bump 会让画面反复重挂并制造卡帧。
+            if trackChanged { self.revision &+= 1 }
         }
     }
 
-    private func muteIfNeeded(participant: RemoteParticipant, publication: TrackPublication) {
-        guard let identity = extensionAudioIdentityToMute,
-              participant.identity?.stringValue == identity,
-              let track = publication.track as? RemoteAudioTrack else { return }
-        let sid = publication.sid.stringValue
-        audioMuteQueue.async { [weak self] in
-            guard let self, !self.mutedAudioSids.contains(sid) else { return }
-            self.mutedAudioSids.insert(sid)
-            track.volume = 0
+    /// 只在主线程切换探测轨；VideoRenderer 可以和其他渲染器共存。
+    private func attachProbe(_ track: VideoTrack?) {
+        guard probedTrack !== track else { return }
+        probedTrack?.remove(videoRenderer: frameProbe)
+        frameProbe.reset()
+        track?.add(videoRenderer: frameProbe)
+        probedTrack = track
+    }
+
+    /// 诊断：卡帧时同时记录「订阅还在不在」和「有没有轨道」，
+    /// 用来区分 track 丢失（sub/track=false）与渲染器不刷新（sub/track=true 但无新帧）。
+    func videoDiagnosticsText() -> String {
+        guard let room else { return "room=nil" }
+        var parts: [String] = []
+        for participant in room.remoteParticipants.values {
+            let identity = participant.identity?.stringValue ?? "?"
+            for publication in participant.videoTracks {
+                let hasTrack = (publication.track as? VideoTrack) != nil
+                let dims = publication.dimensions.map { "\($0.width)x\($0.height)" } ?? "?"
+                parts.append("id=\(identity) sid=\(publication.sid.stringValue) "
+                             + "sub=\(publication.isSubscribed) track=\(hasTrack) muted=\(publication.isMuted) dim=\(dims)")
+            }
         }
+        return "state=\(room.connectionState) remoteVideo=\(remoteVideo != nil) "
+            + "screen=\(screenTrackReceived) pubs=[\(parts.joined(separator: "; "))]"
+    }
+
+    /// LiveKit Swift SDK 没有公开的 requestKeyFrame。
+    /// 对远端轨先退订再订阅，SFU 会按新订阅重新下发关键帧。返回是否重新拿到可渲染的轨道。
+    func resubscribeVideo() async -> Bool {
+        guard let room else { return false }
+        let targets = videoTargets(in: room)
+        guard let target = targets.first else { return false }
+        let publication = target.publication
+        let before = publication.track as? VideoTrack
+
+        do {
+            if publication.isSubscribed {
+                try await publication.set(subscribed: false)
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            try await publication.set(subscribed: true)
+        } catch {
+            return false
+        }
+
+        // 订阅协商与首帧都要时间，最多等 1.5 秒再判定失败
+        for _ in 0..<5 {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            refreshTracks()
+            if let now = publication.track as? VideoTrack {
+                if let before {
+                    if now !== before { return true }
+                } else {
+                    return true
+                }
+            }
+            if publication.isSubscribed, publication.track != nil { return true }
+        }
+        refreshTracks()
+        return publication.track != nil
+    }
+
+    private struct VideoTarget {
+        let publication: RemoteTrackPublication
+        let score: Int
+    }
+
+    private func videoTargets(in room: Room) -> [VideoTarget] {
+        var out: [VideoTarget] = []
+        for participant in room.remoteParticipants.values {
+            for publication in participant.videoTracks {
+                let isScreen = publication.source == .screenShareVideo
+                    || publication.name == Track.screenShareVideoName
+                    || publication.name == "screen"
+                out.append(VideoTarget(publication: publication, score: isScreen ? 2 : 1))
+            }
+        }
+        return out.sorted { $0.score > $1.score }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
@@ -239,6 +338,16 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
 
     func room(_ room: Room, didUpdateConnectionState connectionState: ConnectionState,
               from oldConnectionState: ConnectionState) {
+        switch connectionState {
+        case .connected:
+            DispatchQueue.main.async { self.mediaInterrupted = false }
+        case .disconnected:
+            if oldConnectionState == .connected || oldConnectionState == .reconnecting {
+                DispatchQueue.main.async { self.mediaInterrupted = true }
+            }
+        default:
+            break
+        }
         refresh()
     }
 }

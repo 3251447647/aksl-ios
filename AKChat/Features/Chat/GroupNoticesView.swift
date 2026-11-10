@@ -14,10 +14,10 @@ struct GroupNoticeItem: Decodable, Identifiable, Equatable {
     let publisherName: String?
     let createdAt: Int64
     let readCount: Int
-    let ackCount: Int
+    var ackCount: Int
     let totalMembers: Int
     let myRead: Int
-    let myAck: Int
+    var myAck: Int
     let canManage: Int
 
     enum CodingKeys: String, CodingKey {
@@ -126,6 +126,8 @@ enum GroupNoticeTime {
 /// 对齐安卓 GroupNoticeListScreen.kt / GroupNoticeDetailScreen.kt / GroupNoticeEditScreen.kt
 struct GroupNoticesView: View {
     let groupId: Int64
+    /// 本页确认过公告时通知外层（聊天页用来收起顶部公告条）
+    var onAcked: (() -> Void)? = nil
 
     @State private var notices: [GroupNoticeItem] = []
     @State private var canManage = false
@@ -183,8 +185,17 @@ struct GroupNoticesView: View {
                 GroupNoticeDetailView(
                     groupId: groupId,
                     notice: n,
-                    canManage: canManage || n.canManage == 1
-                ) { await load() }
+                    canManage: canManage || n.canManage == 1,
+                    onChanged: { await load() },
+                    onAcked: { id in
+                        /* 先本地置成已确认：返回列表时红点立即消失，不等刷新 */
+                        if let i = notices.firstIndex(where: { $0.id == id }) {
+                            notices[i].myAck = 1
+                            notices[i].ackCount += 1
+                        }
+                        onAcked?()
+                    }
+                )
                     .restoresSwipeBack()
             }
         }
@@ -438,6 +449,8 @@ struct GroupNoticeDetailView: View {
     @State var notice: GroupNoticeItem
     let canManage: Bool
     let onChanged: () async -> Void
+    /// 确认成功时回调（参数是公告 id）：外层先本地更新，再等刷新
+    var onAcked: ((Int64) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var acking = false
@@ -591,6 +604,10 @@ struct GroupNoticeDetailView: View {
         acking = true
         defer { acking = false }
         await APIClient.shared.ackGroupNotice(id: notice.id)
+        /* 对齐安卓 ackGroupNotice：先本地 myAck=1、人数+1，再拉服务端纠正 */
+        notice.myAck = 1
+        notice.ackCount += 1
+        onAcked?(notice.id)
         await reload()
         await onChanged()
     }

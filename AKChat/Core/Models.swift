@@ -585,7 +585,7 @@ struct SfuInfo: Decodable {
     let url: String?
     let token: String?
     let room: String?
-    /// iOS 屏幕共享扩展专用凭证（独立 identity，不要和主连接混用）
+    /// 历史字段：iOS 录屏扩展专用凭证。扩展已移除，字段保留不用。
     let broadcast: BroadcastSfuInfo?
 }
 

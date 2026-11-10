@@ -14,6 +14,26 @@ struct GroupRoute: Identifiable, Hashable {
     let id: Int64
 }
 
+/// 消息列表几何探针：只记录视口高度与最后一行底部，不触发视图刷新
+private final class ChatScrollProbe {
+    var listHeight: CGFloat = 0
+    var bottomEdge: CGFloat = 0
+}
+
+private struct ChatListHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ChatBottomEdgeKey: PreferenceKey {
+    static var defaultValue: CGFloat? { nil }
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
 /// 长按菜单里需要二次确认的操作
 private enum ChatConfirm: Identifiable {
     case recall(Message)
@@ -30,6 +50,7 @@ private enum ChatConfirm: Identifiable {
 struct ChatView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     let convType: String
     let convId: Int64
@@ -49,6 +70,11 @@ struct ChatView: View {
     @State private var confirm: ChatConfirm?
     @State private var replyTo: Message?
     @State private var payTarget: Message?
+    /// 卡片状态轮询：别人领取红包/转账/礼物后服务端会更新原消息或推送领取事件，
+    /// WS 漏帧时靠它兜底；3 秒一次，只在会话可见且还有未完成卡片时执行。
+    @State private var cardPollTask: Task<Void, Never>?
+    @State private var cardRefreshing = false
+    @State private var lastCardRefresh: TimeInterval = 0
     @State private var recordPayload: String?
     @State private var showRecord = false
     @State private var videoURL: URL?
@@ -67,8 +93,8 @@ struct ChatView: View {
     @State private var atUids: [Int64] = []
     @State private var pendingNotice: GroupNotice?
     @State private var showNotice = false
-    @State private var latestNotice: GroupNoticeItem?
-    @State private var showNoticeDetail = false
+    /// 已经弹过的公告指纹（id|正文）：同一条只弹一次，公告被编辑后重新弹
+    @State private var noticePopupFingerprint = ""
     @State private var scrollTarget: String?
     @State private var localSeq: Int64 = -1
     @State private var profileTarget: ProfileTarget?
@@ -115,9 +141,15 @@ struct ChatView: View {
     @State private var highlightId: Int64 = 0
     /// 自己撤回过的消息原文：只有撤回者知道原文，用于「重新编辑」
     @State private var recallOriginals: [Int64: String] = [:]
+    /// 列表是否贴底：只有贴底时才跟随键盘/面板/新消息滚动，上滑看历史不抢视口
+    @State private var atBottom = true
+    @State private var scrollProbe = ChatScrollProbe()
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
+
+    /// 会随别人操作变化、需要刷新的卡片类型：充值/提现/红包/转账/礼物
+    private let cardMessageTypes: Set<Int> = [2, 3, 7, 8, 9, 20, 21, 22, 23]
 
     /// 私聊对方在会话列表里的信息（靓号/VIP 徽章用）。缓存一份，避免每次 body 都 first(where:)
     @State private var peerConv: Conversation?
@@ -478,6 +510,11 @@ struct ChatView: View {
                         }
                     }
                 }
+                .onAppear {
+                    if let id = payTarget?.id, id > 0 {
+                        Task { @MainActor in await refreshCard(id: id) }
+                    }
+                }
                 .reportsDetailPage()
                 .restoresSwipeBack()
             }
@@ -495,14 +532,6 @@ struct ChatView: View {
         .navigationDestination(isPresented: $showNotices) {
             GroupNoticesView(groupId: convId)
                 .restoresSwipeBack()
-        }
-        .navigationDestination(isPresented: $showNoticeDetail) {
-            if let n = latestNotice {
-                GroupNoticeDetailView(groupId: convId, notice: n, canManage: n.canManage == 1) {
-                    await loadLatestNotice()
-                }
-                .restoresSwipeBack()
-            }
         }
         .fullScreenCover(isPresented: $showCamera) {
             CameraPicker(onImage: { image in
@@ -549,9 +578,32 @@ struct ChatView: View {
             /* 正在看的会话不弹本地通知 */
             LocalNotifier.shared.activeKey = LocalNotifier.shared.key(convType, convId)
             syncPeerConv()
+            startCardPolling()
         }
         .onDisappear {
             LocalNotifier.shared.activeKey = nil
+            cardPollTask?.cancel()
+            cardPollTask = nil
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                startCardPolling()
+            } else {
+                cardPollTask?.cancel()
+                cardPollTask = nil
+            }
+        }
+        .onChange(of: messages) { _ in
+            guard let target = payTarget, target.id > 0,
+                  let latest = messages.first(where: { $0.id == target.id }) else { return }
+            if latest != target { payTarget = latest }
+        }
+        /* 从群公告列表 / 群资料返回：重新问一次服务端还有没有待确认公告，确认过的横幅立即消失 */
+        .onChange(of: showNotices) { open in
+            if !open { Task { await loadPendingNotice(showPopup: false) } }
+        }
+        .onChange(of: showGroupInfo) { open in
+            if !open { Task { await loadPendingNotice(showPopup: false) } }
         }
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
@@ -575,8 +627,7 @@ struct ChatView: View {
                 Task {
                     async let members: Void = loadMembers()
                     async let notice: Void = loadPendingNotice()
-                    async let latest: Void = loadLatestNotice()
-                    _ = await (members, notice, latest)
+                    _ = await (members, notice)
                 }
                 Task {
                     async let activeReq = APIClient.shared.groupActive(gid: convId)
@@ -596,12 +647,38 @@ struct ChatView: View {
         }
         .onReceive(app.$incoming.compactMap { $0 }) { msg in
             guard msg.convType == convType, msg.convId == convId else { return }
-            if msg.id != 0, messages.contains(where: { $0.id == msg.id }) { return }
+            if msg.id != 0, let idx = messages.firstIndex(where: { $0.id == msg.id }) {
+                /* 服务端在领取/收款后会推送同 id 的更新卡片；以前这里直接 return，
+                   导致红包/转账/礼物的 status 一直停在未领取。 */
+                var latest = msg
+                latest.localId = messages[idx].localId
+                latest.isRead = max(latest.isRead, messages[idx].isRead)
+                if latest.fromName == nil { latest.fromName = messages[idx].fromName }
+                if latest.fromAvatar == nil { latest.fromAvatar = messages[idx].fromAvatar }
+                if messages[idx] != latest {
+                    messages[idx] = latest
+                    if let target = payTarget, target.id == msg.id { payTarget = latest }
+                }
+                return
+            }
             if let clientId = msg.clientId, !clientId.isEmpty,
                let idx = messages.firstIndex(where: { $0.clientId == clientId && $0.localId < 0 }) {
                 messages[idx] = msg
             } else {
                 messages.append(msg)
+            }
+            if msg.type == 11 {
+                let sysText = msg.text ?? msg.content ?? ""
+                if sysText.contains("已领取红包") || sysText.contains("已收款")
+                    || sysText.contains("已领取礼物") || sysText.contains("领取了红包")
+                    || sysText.contains("领取了转账") || sysText.contains("领取了礼物") {
+                    Task { @MainActor in
+                        if let pending = messages.last(where: { isPendingCard($0) }) {
+                            await refreshCard(id: pending.id)
+                        }
+                        await refreshCardStates(force: true)
+                    }
+                }
             }
             Task { await app.markRead(convType: convType, convId: convId, lastId: msg.id) }
         }
@@ -768,6 +845,25 @@ struct ChatView: View {
             .buttonStyle(.plain)
             .disabled(selectedKeys.isEmpty)
             Button {
+                let picked = messages.filter { selectedKeys.contains($0.listKey) && $0.id > 0 }
+                selectMode = false
+                selectedKeys.removeAll()
+                guard !picked.isEmpty else { return }
+                Task {
+                    for m in picked {
+                        await APIClient.shared.addFavorite(message: m, convName: title)
+                    }
+                    flash("已收藏 \(picked.count) 条")
+                }
+            } label: {
+                Text("收藏")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(selectedKeys.isEmpty ? AKColor.placeholder : AKColor.text)
+                    .padding(.horizontal, 10)
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedKeys.isEmpty)
+            Button {
                 let picked = messages
                     .filter { selectedKeys.contains($0.listKey) }
                     .sorted { $0.createdAt < $1.createdAt }
@@ -798,6 +894,28 @@ struct ChatView: View {
                 : ((app.user?.nickname ?? "我") + " 与 " + title + " 的聊天记录")
     }
 
+
+    /// 最后一行仍在视口内（留 24pt 容差）→ 视为贴底
+    private func refreshAtBottom() {
+        guard scrollProbe.listHeight > 0 else { return }
+        let now = scrollProbe.bottomEdge <= scrollProbe.listHeight + 24
+        if now != atBottom { atBottom = now }
+    }
+
+    /// 贴底：键盘、表情/加号面板、新消息都走这里；用户上滑看历史时不动
+    private func stickToBottom(_ proxy: ScrollViewProxy, delay: Double = 0) {
+        guard atBottom, let last = messages.last else { return }
+        let scroll = {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(last.listKey, anchor: .bottom)
+            }
+        }
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: scroll)
+        } else {
+            scroll()
+        }
+    }
 
     private var messageList: some View {
         /* 派生数据一次算好：成员索引、@映射、已读提示、时间分隔都不再逐行重算 */
@@ -861,25 +979,68 @@ struct ChatView: View {
                         }
                         .background(msg.id > 0 && msg.id == highlightId
                                     ? Color(hex: 0xFFE082).opacity(0.2) : Color.clear)
+                        .background {
+                            /* 最后一行底部位置：offset 变化时刷新，用来判断用户是否还在底部 */
+                            if index == messages.count - 1 {
+                                GeometryReader { geo in
+                                    Color.clear.preference(
+                                        key: ChatBottomEdgeKey.self,
+                                        value: geo.frame(in: .named("chat_scroll")).maxY
+                                    )
+                                }
+                            }
+                        }
                         .id(msg.listKey)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
+            .coordinateSpace(name: "chat_scroll")
+            .background(GeometryReader { geo in
+                Color.clear.preference(key: ChatListHeightKey.self, value: geo.size.height)
+            })
+            .onPreferenceChange(ChatListHeightKey.self) { height in
+                guard height > 0 else { return }
+                /* 视口高度只量不判：键盘/面板开关会让高度变化，但用户阅读位置没变 */
+                let firstMeasure = scrollProbe.listHeight == 0
+                scrollProbe.listHeight = height
+                if firstMeasure { refreshAtBottom() }
+            }
+            .onPreferenceChange(ChatBottomEdgeKey.self) { edge in
+                guard let edge else { return }
+                scrollProbe.bottomEdge = edge
+                refreshAtBottom()
+            }
             /* 只在底部出现新消息时贴底：上拉加载历史与引用跳转不会把视口甩到底 */
             .onChange(of: messages.last?.listKey) { key in
-                guard key != nil, scrollTarget == nil, let last = messages.last else { return }
+                guard key != nil, scrollTarget == nil, atBottom, let last = messages.last else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(last.listKey, anchor: .bottom)
                 }
             }
+            /* 键盘弹起/收起：输入区高度一变就贴底，用户上滑看历史时不回弹 */
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+                stickToBottom(proxy, delay: max(duration, 0.05))
+            }
+            .onChange(of: showEmoji) { _ in stickToBottom(proxy, delay: 0.08) }
+            .onChange(of: showMore) { _ in stickToBottom(proxy, delay: 0.08) }
             .onChange(of: scrollTarget) { target in
                 guard let target else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
                     proxy.scrollTo(target, anchor: .center)
                 }
                 scrollTarget = nil
+            }
+        }
+        .overlay {
+            /* 加号面板只留透明热区关闭，不加任何暗色遮罩 */
+            if showMore {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { showMore = false }
             }
         }
     }
@@ -925,18 +1086,14 @@ struct ChatView: View {
         members.first { $0.uid == myId }?.role ?? 0
     }
 
-    private var groupNoticeText: String? {
-        guard isGroup, let notice = groupInfo?.notice else { return nil }
-        let text = notice.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
-    }
-
-    /// 顶部公告条：优先用最新一条群公告的首行（点击进详情），否则回退到旧的群资料公告文本
+    /// 顶部公告条：只承载「待我确认」的公告（服务端 /group/notice/pending 返回的那一条）。
+    /// 安卓聊天页没有常驻公告条，公告只在未确认时弹层提示；iOS 用这条横幅表示同一件事，
+    /// 确认后 pendingNotice 置空、横幅立即消失。置顶公告本身仍留在群公告列表里显示。
     private var noticeBarText: String? {
-        if let text = latestNotice?.content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-            return text.split(whereSeparator: { $0.isNewline }).first.map { String($0) }
-        }
-        return groupNoticeText
+        guard isGroup, let notice = pendingNotice else { return nil }
+        let text = (notice.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "群公告待确认" }
+        return text.split(whereSeparator: { $0.isNewline }).first.map { String($0) }
     }
 
     /// 被禁言 / 群封禁 / 全员禁言时输入区置灰（对齐安卓 MutedComposerBar）
@@ -955,7 +1112,7 @@ struct ChatView: View {
 
     private func noticeBar(_ text: String) -> some View {
         Button {
-            if latestNotice != nil { showNoticeDetail = true } else { showNotices = true }
+            showNotices = true
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "megaphone.fill")
@@ -1196,6 +1353,8 @@ struct ChatView: View {
     /// 滚到指定消息并短暂高亮（对齐安卓 highlightId 的 2.4s）
     private func locateMessage(_ id: Int64, afterLoad: Bool = false) {
         highlightId = id
+        /* 主动跳到某条历史消息：不再跟随键盘/新消息贴底 */
+        if atBottom { atBottom = false }
         scrollTarget = "m_\(id)"
         Task {
             if afterLoad {
@@ -1350,7 +1509,7 @@ struct ChatView: View {
             },
             onOpenFile: { path in
                 if let u = APIClient.fullURL(VoiceService.cleanPath(path)) {
-                    UIApplication.shared.open(u)
+                    AppLinkRouter.open(u)
                 }
             },
             onOpenMoment: { uid in
@@ -1851,13 +2010,28 @@ struct ChatView: View {
         }
     }
 
-    private func loadPendingNotice() async {
-        guard let notice = await APIClient.shared.pendingGroupNotice(gid: convId), notice.id > 0 else { return }
-        /* 确认过的公告：id + 正文指纹都相同才跳过；公告被编辑后会重新弹 */
+    /// 拉「待我确认」的公告：服务端返回 nil 说明没有待确认（已确认 / 没有 popup+need_ack 公告），
+    /// 这时必须把本地横幅清掉，否则确认完回来还挂着旧公告。
+    private func loadPendingNotice(showPopup: Bool = true) async {
+        guard isGroup else { return }
+        guard let notice = await APIClient.shared.pendingGroupNotice(gid: convId), notice.id > 0 else {
+            pendingNotice = nil
+            showNotice = false
+            return
+        }
+        /* 本机确认过的公告：id + 正文指纹都相同才跳过；公告被编辑后会重新弹 */
         if let acked = UserDefaults.standard.string(forKey: groupNoticeAckKey),
-           acked == noticeFingerprint(notice) { return }
+           acked == noticeFingerprint(notice) {
+            pendingNotice = nil
+            showNotice = false
+            return
+        }
         pendingNotice = notice
-        showNotice = true
+        let fp = noticeFingerprint(notice)
+        if showPopup && noticePopupFingerprint != fp {
+            noticePopupFingerprint = fp
+            showNotice = true
+        }
     }
 
     private var groupNoticeAckKey: String { "groupNoticeAck_\(convId)" }
@@ -1866,22 +2040,15 @@ struct ChatView: View {
         "\(notice.id)|\(notice.content ?? "")"
     }
 
-    private func loadLatestNotice() async {
-        guard isGroup else { return }
-        if let data: GroupNoticeListResp = try? await APIClient.shared.get(
-            "api/v1/group/notices", query: ["gid": "\(convId)"]
-        ) {
-            latestNotice = data.list.first
-        }
-    }
-
-    /// 进群弹窗「我已知晓」：写本机 id → 服务端确认 → 刷新顶部公告条
+    /// 进群弹窗「我已知晓」：写本机指纹 → 服务端确认（ack 同时写已读）→ 清横幅
     private func confirmGroupNotice(_ notice: GroupNotice?) {
         guard let notice else { return }
         UserDefaults.standard.set(noticeFingerprint(notice), forKey: groupNoticeAckKey)
+        pendingNotice = nil
         Task {
             await APIClient.shared.ackGroupNotice(id: notice.id)
-            await loadLatestNotice()
+            /* ack 失败时会重新拿到这条公告，横幅保留但不再自动弹，提醒用户还没确认成功 */
+            await loadPendingNotice(showPopup: false)
         }
     }
 
@@ -2035,9 +2202,7 @@ struct ChatView: View {
                     label = "你撤回了一条消息"
                 } else {
                     let nickname = app.user?.nickname ?? ""
-                    let op = nickname.isEmpty ? "群成员" : nickname
-                    let author = members.first { $0.uid == msg.fromUid }?.name ?? msg.fromName ?? "群成员"
-                    label = "\(op) 撤回了 \(author) 的一条消息"
+                    label = "\(nickname.isEmpty ? "群成员" : nickname) 撤回了一条消息"
                 }
                 messages[idx].type = 11
                 messages[idx].text = label
@@ -2177,13 +2342,103 @@ struct ChatView: View {
             if isGroup && ev.convId == convId { Task { await loadPin() } }
         case "group_notice":
             if isGroup && ev.convId == convId {
-                Task {
-                    await loadPendingNotice()
-                    await loadLatestNotice()
-                }
+                Task { await loadPendingNotice() }
             }
+        case "redpacket_grab", "redpacket_receive", "transfer_receive", "gift_claim", "card_update":
+            /* 群红包领取事件目前只带 group_id/msg_id，ChatEvent 未映射这两个字段，
+               convId 会是 0；当前在群里就先刷新本会话，其他群的事件由详情页/轮询兜底。 */
+            guard ev.convId == 0 || ev.convId == convId else { return }
+            Task { @MainActor in await refreshCardStates(force: true) }
         default:
             break
+        }
+    }
+
+    /// 还有未完成的卡片：红包未领完、转账/礼物/充值未处理
+    private var hasPendingCards: Bool {
+        messages.contains { isPendingCard($0) }
+    }
+
+    private func isPendingCard(_ m: Message) -> Bool {
+        guard m.id > 0, cardMessageTypes.contains(m.type) else { return false }
+        if m.type == 7 || m.type == 21 {
+            if isGroup { return cardStatusInt(m, "finished") == 0 }
+            return cardStatusInt(m, "status") == 0
+        }
+        return cardStatusInt(m, "status") == 0
+    }
+
+    private func cardStatusInt(_ m: Message, _ key: String) -> Int {
+        if let v = m.extraMap[key]?.intValue { return v }
+        if let o = MessageBody.jsonObject(m.content) ?? MessageBody.jsonObject(m.text) {
+            if let n = o[key] as? NSNumber { return n.intValue }
+            if let s = o[key] as? String {
+                return Int(s.trimmingCharacters(in: .whitespaces)) ?? 0
+            }
+        }
+        return 0
+    }
+
+    private func startCardPolling() {
+        guard cardPollTask == nil, scenePhase == .active else { return }
+        cardPollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                guard scenePhase == .active, hasPendingCards else { continue }
+                await refreshCardStates(force: false)
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshCardStates(force: Bool = false) async {
+        guard !loading, !cardRefreshing else { return }
+        let now = Date().timeIntervalSince1970
+        if now - lastCardRefresh < (force ? 1.0 : 2.5) { return }
+        guard force || hasPendingCards else { return }
+        cardRefreshing = true
+        lastCardRefresh = now
+        defer { cardRefreshing = false }
+        guard let data = try? await APIClient.shared.history(
+            convType: convType, convId: convId, limit: 40
+        ) else { return }
+        mergeCardMessages(data.list)
+    }
+
+    /// 打开红包/转账/礼物详情时按消息 id 单独拉一次，避免旧卡片不在最近 40 条里
+    @MainActor
+    private func refreshCard(id: Int64) async {
+        guard id > 0 else { return }
+        guard let data = try? await APIClient.shared.history(
+            convType: convType, convId: convId, beforeId: id + 1, limit: 10
+        ) else { return }
+        mergeCardMessages(data.list)
+    }
+
+    private func mergeCardMessages(_ fresh: [Message]) {
+        guard !fresh.isEmpty else { return }
+        var byId: [Int64: Message] = [:]
+        for m in fresh where m.id > 0 { byId[m.id] = m }
+        guard !byId.isEmpty else { return }
+
+        var changed = false
+        for i in messages.indices {
+            let old = messages[i]
+            guard old.id > 0, let m = byId[old.id] else { continue }
+            guard cardMessageTypes.contains(old.type) || cardMessageTypes.contains(m.type) else { continue }
+            if old == m { continue }
+            var next = m
+            next.localId = old.localId
+            next.isRead = max(next.isRead, old.isRead)
+            if next.fromName == nil { next.fromName = old.fromName }
+            if next.fromAvatar == nil { next.fromAvatar = old.fromAvatar }
+            messages[i] = next
+            changed = true
+        }
+        if changed, let target = payTarget, target.id > 0,
+           let latest = messages.first(where: { $0.id == target.id }) {
+            payTarget = latest
         }
     }
 }
@@ -2447,9 +2702,6 @@ private struct ChatMessageMenuSheet: View {
 
     private var items: [Item] {
         var out: [Item] = []
-        if message.type != 11 {
-            out.append(Item(key: "reply", label: "回复", icon: "arrowshape.turn.up.left"))
-        }
         if copyable != nil {
             out.append(Item(key: "copy", label: "复制", icon: "doc.on.doc"))
         }
@@ -2457,27 +2709,28 @@ private struct ChatMessageMenuSheet: View {
             out.append(Item(key: "forward", label: "转发", icon: "arrowshape.turn.up.right"))
             out.append(Item(key: "multi", label: "多选", icon: "checklist"))
         }
-        if canReedit {
-            out.append(Item(key: "reedit", label: "重新编辑", icon: "square.and.pencil"))
+        if canPin {
+            out.append(Item(key: "pin", label: pinned ? "取消置顶" : "置顶", icon: "pin"))
+        }
+        if message.type != 11 {
+            out.append(Item(key: "reply", label: "回复", icon: "arrowshape.turn.up.left"))
+            out.append(Item(key: "fav", label: "收藏", icon: "star"))
         }
         if message.type == 5 || message.type == 15 {
             out.append(Item(key: "save", label: "保存", icon: "square.and.arrow.down"))
         }
-        if message.type != 11 {
-            out.append(Item(key: "fav", label: "收藏", icon: "star"))
-        }
-        if canPin {
-            out.append(Item(key: "pin", label: pinned ? "取消置顶" : "置顶", icon: "pin"))
-        }
         if canAddEmoji {
             out.append(Item(key: "emoji", label: "添加到表情", icon: "face.smiling"))
         }
-        if !mine && message.type != 11 {
-            out.append(Item(key: "report", label: "举报", icon: "flag", danger: true))
+        if canReedit {
+            out.append(Item(key: "reedit", label: "重新编辑", icon: "square.and.pencil"))
         }
         if canRecall {
             out.append(Item(key: "recall", label: mine ? "撤回" : "撤回该消息",
                             icon: "arrow.uturn.backward", danger: true))
+        }
+        if !mine && message.type != 11 {
+            out.append(Item(key: "report", label: "举报", icon: "flag", danger: true))
         }
         out.append(Item(key: "delete", label: "删除", icon: "trash", danger: true))
         return out

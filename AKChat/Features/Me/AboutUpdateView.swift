@@ -1,10 +1,20 @@
 import SwiftUI
 import UIKit
 
+/// 后台公开配置里「关于」页用到的字段（GET /api/v1/app-config）
+private struct AboutSiteConfig: Decodable {
+    let officialSite: String?
+
+    enum CodingKeys: String, CodingKey {
+        case officialSite = "official_site"
+    }
+}
+
 /// 关于：安卓 AboutScreen 的头部主卡 + 特性 / 简介 / 功能 / 承诺 / 联系 / 协议，不含版本检查
 struct AboutView: View {
     private let siteName = "AK商聊"
-    private let officialSite = "https://www.aksliao.cn"
+    private static let defaultSite = "https://www.aksliao.cn"
+    @State private var officialSite = AboutView.defaultSite
     private let features: [(String, UInt32, String, String)] = [
         ("💬", 0x2FBE6E, "即时通讯", "文字、图片、语音、表情、引用、转发，一个都不少。"),
         ("⭐", 0xFF4D6D, "靓号系统", "众多珍稀靓号任你挑选，让你的AK号一眼出众。"),
@@ -21,6 +31,26 @@ struct AboutView: View {
 
     private var versionName: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
+
+    private var officialURL: URL {
+        URL(string: officialSite) ?? URL(string: Self.defaultSite) ?? APIClient.base
+    }
+
+    /// 后台「设置 → 官方网站」：进入关于页拉一次，失败或未配置时保留默认站点
+    private func loadOfficialSite() async {
+        guard let cfg: AboutSiteConfig = try? await APIClient.shared.get("api/v1/app-config") else { return }
+        officialSite = Self.normalizedSite(cfg.officialSite)
+    }
+
+    private static func normalizedSite(_ raw: String?) -> String {
+        var value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return defaultSite }
+        if !value.lowercased().hasPrefix("http://") && !value.lowercased().hasPrefix("https://") {
+            value = "https://" + value
+        }
+        guard let url = URL(string: value), let host = url.host, host.contains(".") else { return defaultSite }
+        return value
     }
 
     var body: some View {
@@ -65,6 +95,7 @@ struct AboutView: View {
         .reportsDetailPage()
         .navigationTitle("关于 \(siteName)")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await loadOfficialSite() }
     }
 
     /// 标题 + 卡片分组：ScrollView 内统一 14 左右边距（与安卓 AboutScreen 同口径）
@@ -149,7 +180,9 @@ struct AboutView: View {
 
     private var linksCard: some View {
         VStack(spacing: 0) {
-            Link(destination: URL(string: officialSite)!) {
+            Button {
+                AppLinkRouter.open(officialURL)
+            } label: {
                 linkRow("🌐", 0x2FBE6E, "官方网站", officialSite)
             }
             .buttonStyle(.plain)
@@ -224,7 +257,9 @@ struct AboutView: View {
                 .padding(.top, 2)
 
             HStack(spacing: 12) {
-                Link(destination: URL(string: officialSite)!) {
+                Button {
+                    AppLinkRouter.open(officialURL)
+                } label: {
                     Text("下载 App")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color(hex: 0x1FA45B))

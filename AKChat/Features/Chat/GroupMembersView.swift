@@ -1177,7 +1177,7 @@ struct GroupMemberListView: View {
                 AvatarView(url: m.avatar, name: m.name ?? "成员", size: 40)
             } else {
                 NavigationLink {
-                    UserProfileView(uid: m.uid)
+                    UserProfileView(uid: m.uid, gid: groupId)
                 } label: {
                     AvatarView(url: m.avatar, name: m.name ?? "成员", size: 40)
                 }

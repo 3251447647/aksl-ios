@@ -102,9 +102,16 @@ struct LoginView: View {
                 Text("登录即代表同意")
                     .font(.system(size: 11))
                     .foregroundColor(AKColor.hint)
-                Link("《用户协议与隐私政策》", destination: URL(string: "https://www.aksliao.cn/register.php")!)
-                    .font(.system(size: 11))
-                    .foregroundColor(AKColor.link)
+                Button {
+                    if let url = URL(string: "https://www.aksliao.cn/register.php") {
+                        AppLinkRouter.open(url)
+                    }
+                } label: {
+                    Text("《用户协议与隐私政策》")
+                        .font(.system(size: 11))
+                        .foregroundColor(AKColor.link)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.bottom, 24)
         }

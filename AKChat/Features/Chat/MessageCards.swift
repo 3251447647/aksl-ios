@@ -1390,7 +1390,8 @@ struct AKLinkText: View {
                     if let no = url.host { onNumberTap?(no) }
                     return .handled
                 }
-                return .systemAction
+                AppLinkRouter.open(url)
+                return .handled
             })
     }
 }

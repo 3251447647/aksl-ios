@@ -32,6 +32,17 @@ struct UserProfileView: View {
     @State private var chatBg: String = ""
     @State private var showBgPicker = false
     @State private var bgItem: PhotosPickerItem?
+    /// /api/v1/user 返回的群内身份与权限（仅群内打开时有值）
+    @State private var group: ProfileGroup?
+    @State private var showGroupNick = false
+    @State private var groupNickText = ""
+    @State private var showMuteMenu = false
+    @State private var showKick = false
+    @State private var adminBusy = false
+    @State private var adminOverride: Bool?
+
+    /// 群上下文 id：群内打开用服务端下发的 gid，群外为 0
+    private var groupId: Int64 { group?.gid ?? gid }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +55,7 @@ struct UserProfileView: View {
                         if !p.bio.isEmpty { bioCard(p) }
                         momentsCell(p)
                         if p.isSelf == 0 && p.isFriend == 1 { chatSearchRow(p) }
+                        if let g = group { groupCard(p, g) }
                     } else {
                         Text(error ?? "加载失败")
                             .font(.system(size: 13))
@@ -424,6 +436,70 @@ struct UserProfileView: View {
         }
     }
 
+    /// 群资料卡（对齐安卓 UserProfileScreen 的 group 段）
+    private func groupCard(_ p: UserProfile, _ g: ProfileGroup) -> some View {
+        VStack(spacing: 0) {
+            if p.isSelf == 1 {
+                Button {
+                    showSettings = true
+                } label: {
+                    groupInfoRow("我在本群的昵称",
+                                 value: g.targetNick.isEmpty ? "未设置" : g.targetNick,
+                                 arrow: true, danger: false)
+                }
+                .buttonStyle(.plain)
+            } else {
+                groupInfoRow("群昵称",
+                             value: g.targetNick.isEmpty ? "未设置" : g.targetNick,
+                             arrow: false, danger: false)
+                if g.muteUntil > 0 {
+                    groupDivider
+                    groupInfoRow("禁言状态",
+                                 value: g.muteText.isEmpty ? "禁言中" : g.muteText,
+                                 arrow: false, danger: true)
+                }
+                if g.canNick == 1 {
+                    groupDivider
+                    Button {
+                        showSettings = true
+                    } label: {
+                        groupInfoRow("设置群昵称", value: "", arrow: true, danger: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .background(AKColor.card)
+    }
+
+    private var groupDivider: some View {
+        Rectangle().fill(AKColor.line).frame(height: 0.6)
+    }
+
+    private func groupInfoRow(_ title: String, value: String, arrow: Bool, danger: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundColor(AKColor.text)
+            Spacer(minLength: 0)
+            if !value.isEmpty {
+                Text(value)
+                    .font(.system(size: 13))
+                    .foregroundColor(danger ? AKColor.red : AKColor.muted)
+                    .lineLimit(1)
+                    .frame(maxWidth: 180, alignment: .trailing)
+            }
+            if arrow {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14))
+                    .foregroundColor(AKColor.placeholder)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 15)
+        .contentShape(Rectangle())
+    }
+
     // MARK: - 底部操作
 
     @ViewBuilder
@@ -567,6 +643,79 @@ struct UserProfileView: View {
                                 settingsRowContent("恢复默认背景", value: "", showArrow: false, destructive: true)
                             }
                             .buttonStyle(.plain)
+                        }
+                    }
+
+                    if let g = group, g.canNick == 1 || g.canMute == 1 || g.canKick == 1
+                        || (g.myRole == 1 && g.targetRole != 1) {
+                        settingsTitle("群内设置")
+                        settingsCard {
+                            /* 群主可把普通成员设为管理员，已是管理员的可取消（与安卓同样的开关） */
+                            if g.myRole == 1 && g.targetRole != 1 {
+                                adminToggleRow(g)
+                                settingsDivider
+                            }
+                            if g.canNick == 1 {
+                                settingsRow("设置群昵称",
+                                            value: g.targetNick.isEmpty ? "未设置" : g.targetNick,
+                                            showArrow: true) {
+                                    groupNickText = g.targetNick
+                                    showGroupNick = true
+                                }
+                                .alert("设置群昵称", isPresented: $showGroupNick) {
+                                    TextField("留空则显示昵称", text: $groupNickText)
+                                    Button("取消", role: .cancel) {}
+                                    Button("保存") {
+                                        Task { await saveGroupNick() }
+                                    }
+                                } message: {
+                                    Text("群昵称只在本群内显示，最多 16 个字。")
+                                }
+                                if g.canMute == 1 || g.canKick == 1 { settingsDivider }
+                            }
+                            if g.canMute == 1 {
+                                Button {
+                                    if g.muteUntil > 0 {
+                                        Task { await mute(0) }
+                                    } else {
+                                        showMuteMenu = true
+                                    }
+                                } label: {
+                                    settingsRowContent(g.muteUntil > 0 ? "解除禁言" : "禁言",
+                                                       value: g.muteUntil > 0
+                                                           ? (g.muteText.isEmpty ? "禁言中" : g.muteText) : "",
+                                                       showArrow: true, destructive: false)
+                                }
+                                .buttonStyle(.plain)
+                                .confirmationDialog("禁言", isPresented: $showMuteMenu,
+                                                    titleVisibility: .visible) {
+                                    Button("10 分钟") { Task { await mute(10) } }
+                                    Button("1 小时") { Task { await mute(60) } }
+                                    Button("1 天") { Task { await mute(1440) } }
+                                    Button("永久") { Task { await mute(-1) } }
+                                    Button("取消", role: .cancel) {}
+                                } message: {
+                                    Text("被禁言的成员在禁言期间无法在本群发言。")
+                                }
+                                if g.canKick == 1 { settingsDivider }
+                            }
+                            if g.canKick == 1 {
+                                Button {
+                                    showKick = true
+                                } label: {
+                                    settingsRowContent("踢出本群", value: "",
+                                                       showArrow: false, destructive: true)
+                                }
+                                .buttonStyle(.plain)
+                                .alert("踢出本群", isPresented: $showKick) {
+                                    Button("取消", role: .cancel) {}
+                                    Button("踢出", role: .destructive) {
+                                        Task { await kick() }
+                                    }
+                                } message: {
+                                    Text("确定把「\(profile?.displayName ?? presetName)」移出本群吗？")
+                                }
+                            }
                         }
                     }
 
@@ -737,6 +886,88 @@ struct UserProfileView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 50)
+    }
+
+    /// 群主专属：设为/取消群管理员（对齐安卓开关式交互）
+    private func adminToggleRow(_ g: ProfileGroup) -> some View {
+        HStack(spacing: 6) {
+            Text("设为群管理员")
+                .font(.system(size: 15))
+                .foregroundColor(AKColor.text)
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(
+                get: { adminOverride ?? (g.targetRole == 2) },
+                set: { want in
+                    guard !adminBusy else { return }
+                    adminBusy = true
+                    adminOverride = want
+                    Task { await setAdmin(want) }
+                }
+            ))
+            .labelsHidden()
+            .tint(AKColor.brand)
+            .disabled(adminBusy)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+    }
+
+    // MARK: - 群内管理
+
+    private func setAdmin(_ on: Bool) async {
+        do {
+            let msg = try await APIClient.shared.postRaw(
+                "api/v1/group/set-admin",
+                body: ["id": groupId, "uid": uid, "role": on ? 2 : 0]
+            )
+            showToast(msg.isEmpty ? (on ? "已设为管理员" : "已取消管理员") : msg)
+            await load()
+        } catch let err {
+            adminOverride = !on
+            showToast(err.localizedDescription)
+        }
+        adminBusy = false
+    }
+
+    private func mute(_ minutes: Int) async {
+        do {
+            let msg = try await APIClient.shared.postRaw(
+                "api/v1/group/member/mute",
+                body: ["gid": groupId, "user_id": uid, "minutes": minutes]
+            )
+            showToast(msg.isEmpty ? (minutes == 0 ? "已解除禁言" : "已禁言") : msg)
+            await load()
+        } catch let err {
+            showToast(err.localizedDescription)
+        }
+    }
+
+    private func kick() async {
+        do {
+            let msg = try await APIClient.shared.postRaw(
+                "api/v1/group/member/kick",
+                body: ["gid": groupId, "user_id": uid]
+            )
+            showToast(msg.isEmpty ? "已移出群聊" : msg)
+            showSettings = false
+            await load()
+        } catch let err {
+            showToast(err.localizedDescription)
+        }
+    }
+
+    private func saveGroupNick() async {
+        let nick = String(groupNickText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(16))
+        do {
+            let msg = try await APIClient.shared.postRaw(
+                "api/v1/group/member/nick",
+                body: ["gid": groupId, "user_id": uid, "nickname": nick]
+            )
+            showToast(msg.isEmpty ? "群昵称已保存" : msg)
+            await load()
+        } catch let err {
+            showToast(err.localizedDescription)
+        }
     }
 
     // MARK: - 分享好友名片
@@ -972,10 +1203,13 @@ struct UserProfileView: View {
         loading = true
         defer { loading = false }
         do {
-            profile = try await APIClient.shared.get(
+            let payload: UserProfilePayload = try await APIClient.shared.get(
                 "api/v1/user",
                 query: ["uid": "\(uid)", "gid": "\(gid)"]
             )
+            profile = payload.profile
+            group = payload.group
+            adminOverride = nil
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -983,5 +1217,57 @@ struct UserProfileView: View {
         if let r = try? await APIClient.shared.chatBg(convType: "private", convId: uid) {
             chatBg = r.bg ?? ""
         }
+    }
+}
+
+/// /api/v1/user 的 group 段（对齐安卓 UserProfileGroupDto）
+private struct ProfileGroup: Decodable {
+    let gid: Int64
+    let myRole: Int
+    let targetRole: Int
+    let targetNick: String
+    let muteUntil: Int64
+    let muteText: String
+    let canNick: Int
+    let canMute: Int
+    let canKick: Int
+
+    enum CodingKeys: String, CodingKey {
+        case gid
+        case myRole = "my_role"
+        case targetRole = "target_role"
+        case targetNick = "target_nick"
+        case muteUntil = "mute_until"
+        case muteText = "mute_text"
+        case canNick = "can_nick"
+        case canMute = "can_mute"
+        case canKick = "can_kick"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        gid = (try? c.decode(Int64.self, forKey: .gid)) ?? 0
+        myRole = (try? c.decode(Int.self, forKey: .myRole)) ?? 0
+        targetRole = (try? c.decode(Int.self, forKey: .targetRole)) ?? 0
+        targetNick = (try? c.decode(String.self, forKey: .targetNick)) ?? ""
+        muteUntil = (try? c.decode(Int64.self, forKey: .muteUntil)) ?? 0
+        muteText = (try? c.decode(String.self, forKey: .muteText)) ?? ""
+        canNick = (try? c.decode(Int.self, forKey: .canNick)) ?? 0
+        canMute = (try? c.decode(Int.self, forKey: .canMute)) ?? 0
+        canKick = (try? c.decode(Int.self, forKey: .canKick)) ?? 0
+    }
+}
+
+/// 一次 /api/v1/user 请求同时解出资料与群内身份（Core 的 UserProfile 不含 group 字段）
+private struct UserProfilePayload: Decodable {
+    let profile: UserProfile
+    let group: ProfileGroup?
+
+    enum CodingKeys: String, CodingKey { case group }
+
+    init(from decoder: Decoder) throws {
+        profile = try UserProfile(from: decoder)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        group = try? c.decode(ProfileGroup.self, forKey: .group)
     }
 }

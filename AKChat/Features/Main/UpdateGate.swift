@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 强制更新弹窗：只认服务端 iOS 专用版本字段（ios_*），ios_force=1 才拦截
 struct UpdateGate: ViewModifier {
@@ -37,7 +38,9 @@ struct UpdateGate: ViewModifier {
                     }
                     .frame(maxHeight: 220)
                     if let u = URL(string: info?.iosUrl ?? ""), (info?.iosUrl ?? "").hasPrefix("http") {
-                        Link(destination: u) {
+                        Button {
+                            UIApplication.shared.open(u)
+                        } label: {
                             Text("前往下载")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.white)
@@ -46,6 +49,7 @@ struct UpdateGate: ViewModifier {
                                 .background(AKColor.brand)
                                 .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(22)

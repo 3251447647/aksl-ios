@@ -1214,6 +1214,16 @@ private func payDetailTime(_ ts: Int64) -> String {
     return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
 }
 
+/// 按消息 id 重新拉一次卡片：`before_id = id + 1` 能精确命中这条旧消息，
+/// 不依赖它是否还在最近 40 条会话记录里。
+private func payCardLatest(_ message: Message, convType: String, convId: Int64) async -> Message? {
+    guard message.id > 0 else { return nil }
+    guard let data = try? await APIClient.shared.history(
+        convType: convType, convId: convId, beforeId: message.id + 1, limit: 10
+    ) else { return nil }
+    return data.list.first(where: { $0.id == message.id })
+}
+
 /// 红包详情：总额/祝福语/领取记录 + 开红包（对齐安卓 RpDetailDialog）
 struct RedPacketDetailSheet: View {
     let infoId: Int64
@@ -1722,15 +1732,19 @@ struct TransferClaimSheet: View {
     @State private var done = false
     @State private var errorText: String?
     @State private var okText: String?
+    /// 打开详情时重新拉到的最新卡片（别人已收款时 status 会变成 1）
+    @State private var current: Message?
+
+    private var shown: Message { current ?? message }
 
     private var tid: Int64 {
-        let v = payCardInt(message, "tid")
-        return v > 0 ? Int64(v) : message.id
+        let v = payCardInt(shown, "tid")
+        return v > 0 ? Int64(v) : shown.id
     }
 
     var body: some View {
         PayDetailCard(
-            message: message,
+            message: shown,
             isGift: false,
             myId: myId,
             myName: app.user?.displayName ?? "我",
@@ -1749,6 +1763,13 @@ struct TransferClaimSheet: View {
                 BackButton()
             }
         }
+        .task { await refreshCard() }
+    }
+
+    @MainActor
+    private func refreshCard() async {
+        guard let latest = await payCardLatest(shown, convType: convType, convId: convId) else { return }
+        if latest != shown { current = latest }
     }
 
     private func receive() async {
@@ -1792,15 +1813,19 @@ struct GiftClaimSheet: View {
     @State private var done = false
     @State private var errorText: String?
     @State private var okText: String?
+    /// 打开详情时重新拉到的最新卡片（别人已领取时 status 会变成 1）
+    @State private var current: Message?
+
+    private var shown: Message { current ?? message }
 
     private var giftLogId: Int64 {
-        let v = payCardInt(message, "gift_log_id")
-        return v > 0 ? Int64(v) : message.id
+        let v = payCardInt(shown, "gift_log_id")
+        return v > 0 ? Int64(v) : shown.id
     }
 
     var body: some View {
         PayDetailCard(
-            message: message,
+            message: shown,
             isGift: true,
             myId: myId,
             myName: app.user?.displayName ?? "我",
@@ -1819,6 +1844,13 @@ struct GiftClaimSheet: View {
                 BackButton()
             }
         }
+        .task { await refreshCard() }
+    }
+
+    @MainActor
+    private func refreshCard() async {
+        guard let latest = await payCardLatest(shown, convType: convType, convId: convId) else { return }
+        if latest != shown { current = latest }
     }
 
     private func claim() async {

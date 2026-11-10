@@ -16,6 +16,8 @@ struct RegisterView: View {
     @State private var info: String?
     @State private var error: String?
     @State private var sending = false
+    @State private var showPolicy = false
+    @State private var policyKind: PolicyDetailView.Kind = .terms
 
     private var canSubmit: Bool {
         !nickname.isEmpty && !email.isEmpty && !code.isEmpty &&
@@ -64,17 +66,45 @@ struct RegisterView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    Button {
-                        agreed.toggle()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: agreed ? "checkmark.square.fill" : "square")
-                                .foregroundColor(agreed ? AKColor.brand : AKColor.muted)
-                            Text("我已阅读并同意《用户协议》与《隐私政策》")
-                                .font(.system(size: 12))
-                                .foregroundColor(AKColor.sub)
-                            Spacer(minLength: 0)
+                    HStack(spacing: 2) {
+                        Button {
+                            agreed.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: agreed ? "checkmark.square.fill" : "square")
+                                    .foregroundColor(agreed ? AKColor.brand : AKColor.muted)
+                                Text("我已阅读并同意")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AKColor.sub)
+                            }
                         }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            policyKind = .terms
+                            showPolicy = true
+                        } label: {
+                            Text("《用户协议》")
+                                .font(.system(size: 12))
+                                .foregroundColor(AKColor.link)
+                        }
+                        .buttonStyle(.plain)
+
+                        Text("与")
+                            .font(.system(size: 12))
+                            .foregroundColor(AKColor.sub)
+
+                        Button {
+                            policyKind = .privacy
+                            showPolicy = true
+                        } label: {
+                            Text("《隐私政策》")
+                                .font(.system(size: 12))
+                                .foregroundColor(AKColor.link)
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 0)
                     }
 
                     Button {
@@ -107,6 +137,11 @@ struct RegisterView: View {
                 }
             }
             .onAppear { app.errorText = nil }
+            .sheet(isPresented: $showPolicy) {
+                NavigationStack {
+                    PolicyDetailView(kind: policyKind)
+                }
+            }
         }
     }
 

@@ -8,6 +8,7 @@ struct ChatRecordView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var toast: String?
     @State private var toastToken = 0
+    @State private var preview: PreviewImage?
 
     private struct RecordItem: Identifiable {
         let id = UUID()
@@ -160,6 +161,9 @@ struct ChatRecordView: View {
             .padding(.vertical, 7)
             Rectangle().fill(AKColor.line).frame(height: 0.5).padding(.leading, 57)
         }
+        .fullScreenCover(item: $preview) { item in
+            MediaPagerView(items: item.items, index: item.index)
+        }
     }
 
     private func imageRow(_ path: String) -> some View {
@@ -176,8 +180,9 @@ struct ChatRecordView: View {
                 .frame(maxHeight: 160)
                 .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .contentShape(Rectangle())
                 .onTapGesture {
-                    Task { await saveImage(url) }
+                    preview = PreviewImage(items: [PreviewMedia(url: url, isVideo: false, message: nil)], index: 0)
                 }
             }
         }

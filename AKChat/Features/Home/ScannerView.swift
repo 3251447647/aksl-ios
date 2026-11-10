@@ -69,7 +69,6 @@ enum QrTarget {
 /// 扫一扫：相机预览 + 相册识别 + 结果卡（对齐安卓 ScanScreen）
 struct ScannerView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
 
     /// 保留外部回调：用户二维码交给调用方打开资料页
     var onResult: (String) -> Void = { _ in }
@@ -269,7 +268,9 @@ struct ScannerView: View {
         case .url(let url):
             if let u = URL(string: url) {
                 dismiss()
-                openURL(u)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    AppLinkRouter.open(u)
+                }
             } else {
                 showToast("无法打开链接")
             }
