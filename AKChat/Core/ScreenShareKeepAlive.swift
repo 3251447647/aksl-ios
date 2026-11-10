@@ -11,7 +11,8 @@ final class ScreenShareKeepAlive {
     private init() {}
 
     func start() {
-        guard player == nil, let data = Self.silentWAV() else { return }
+        guard player == nil else { return }
+        let data = Self.silentWAV()
         let session = AVAudioSession.sharedInstance()
         // 主播开麦时 LiveKit 已经设成 playAndRecord，不要覆盖，否则会打断采集
         if session.category != .playAndRecord {
