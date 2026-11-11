@@ -169,17 +169,12 @@ struct ChatRecordView: View {
     private func imageRow(_ path: String) -> some View {
         Group {
             if let url = APIClient.fullURL(path) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFit()
-                    } else {
-                        AKColor.fill
-                    }
-                }
-                .frame(width: 120)
-                .frame(maxHeight: 160)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                AKImage(url: url.absoluteString, size: CGSize(width: 120, height: 160),
+                        contentMode: .fit, placeholder: AKColor.fill)
+                    .frame(width: 120)
+                    .frame(maxHeight: 160)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     preview = PreviewImage(items: [PreviewMedia(url: url, isVideo: false, message: nil)], index: 0)

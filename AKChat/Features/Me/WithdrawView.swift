@@ -200,13 +200,9 @@ struct WithdrawView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(AKColor.card)
                 if let url = APIClient.fullURL(qrURL) {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else {
-                            Color.clear
-                        }
-                    }
+                    AKImage(url: url.absoluteString, size: 58, placeholder: .clear)
+                        .frame(width: 58, height: 58)
+                        .clipped()
                 } else if uploading {
                     ProgressView().scaleEffect(0.7)
                 } else {

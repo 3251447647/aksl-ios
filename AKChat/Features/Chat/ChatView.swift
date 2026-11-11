@@ -45,10 +45,17 @@ private struct ChatBottomEdgeKey: PreferenceKey {
 /// 已落到临时文件的待发视频：发送失败后重试直接重传，不用再选一次相册
 private struct PendingVideo {
     let fileURL: URL
-    let duration: Int
+    var duration: Int
     var cover: String
-    let width: Double
-    let height: Double
+    var width: Double
+    var height: Double
+    /// 本地抽出的首帧：pending 气泡立刻能显示，不等封面上传
+    var coverImage: UIImage?
+}
+
+/// 输入框文字单独持有：@Published 只被输入子视图订阅，打字不会带着整个 ChatView 与消息列表重算
+private final class ChatComposerState: ObservableObject {
+    @Published var text = ""
 }
 
 /// 长按菜单里需要二次确认的操作
@@ -75,7 +82,7 @@ struct ChatView: View {
     let title: String
 
     @State private var messages: [Message] = []
-    @State private var text = ""
+    @StateObject private var composer = ChatComposerState()
     @State private var showEmoji = false
     @StateObject private var voice = VoiceService()
     @State private var sending = false
@@ -263,7 +270,7 @@ struct ChatView: View {
                     HStack(spacing: 8) {
                         ForEach(app.botQuick, id: \.self) { q in
                             Button {
-                                text = q
+                                composer.text = q
                                 Task { await send() }
                             } label: {
                                 Text(q)
@@ -992,7 +999,8 @@ struct ChatView: View {
                             }
                             row(msg, member: memberLookup[msg.fromUid], mentionMap: mentions,
                                 mentionStamp: mentionStamp, readHint: hints[msg.listKey] ?? 0,
-                                uploadProgress: uploadProgress[msg.listKey])
+                                uploadProgress: uploadProgress[msg.listKey],
+                                pendingVideoCover: pendingVideos[msg.listKey]?.coverImage)
                         }
                         .background(msg.id > 0 && msg.id == highlightId
                                     ? Color(hex: 0xFFE082).opacity(0.2) : Color.clear)
@@ -1525,7 +1533,8 @@ struct ChatView: View {
 
     @ViewBuilder
     private func row(_ msg: Message, member: GroupMember?, mentionMap: [String: Int64],
-                     mentionStamp: Int, readHint: Int, uploadProgress: Double? = nil) -> some View {
+                     mentionStamp: Int, readHint: Int, uploadProgress: Double? = nil,
+                     pendingVideoCover: UIImage? = nil) -> some View {
         ChatMessageRow(
             message: msg,
             mine: msg.fromUid == myId,
@@ -1537,6 +1546,7 @@ struct ChatView: View {
             peerName: title,
             readHint: readHint,
             uploadProgress: uploadProgress,
+            pendingVideoCover: pendingVideoCover,
             playingVoice: voice.playingURL == VoiceService.cleanPath(msg.text ?? msg.content ?? ""),
             voicePlayed: playedVoice.contains(msg.listKey),
             mentionMap: mentionMap,
@@ -1606,7 +1616,7 @@ struct ChatView: View {
             },
             reeditText: recallOriginals[msg.id],
             onReedit: { original in
-                text = original
+                composer.text = original
                 inputFocused = true
             }
         )
@@ -1654,7 +1664,7 @@ struct ChatView: View {
             saveMedia(msg)
         case "reedit":
             if let original = recallOriginals[msg.id] {
-                text = original
+                composer.text = original
                 inputFocused = true
             }
         case "pin":
@@ -1698,19 +1708,19 @@ struct ChatView: View {
     }
 
     private func insertText(_ value: String) {
-        text += value
+        composer.text += value
     }
 
     /// @ 某人：替换光标前刚输入的 @关键字，不重复拼 @@
     private func insertMention(name: String, uid: Int64) {
-        var base = text
+        var base = composer.text
         if let at = base.lastIndex(of: "@") {
             let tail = base[base.index(after: at)...]
             if !tail.contains(where: { $0.isWhitespace }) {
                 base = String(base[..<at])
             }
         }
-        text = base + "@\(name) "
+        composer.text = base + "@\(name) "
         if !atUids.contains(uid) { atUids.append(uid) }
         inputFocused = true
     }
@@ -1798,10 +1808,6 @@ struct ChatView: View {
         .background(AKColor.card)
     }
 
-    private var hasText: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private var placeholder: String {
         "发消息…"
     }
@@ -1838,22 +1844,17 @@ struct ChatView: View {
                     .contentShape(Rectangle())
                     .gesture(recordGesture)
             } else {
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .focused($inputFocused)
-                    .lineLimit(1...4)
-                    .font(.system(size: 14))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(AKColor.fill)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .onChange(of: text) { value in
-                        handleInputChange(value)
-                    }
-                    .onTapGesture {
+                ChatTextInput(
+                    composer: composer,
+                    placeholder: placeholder,
+                    inputFocused: $inputFocused,
+                    onChanged: handleInputChange,
+                    onTap: {
                         showMore = false
                         showEmoji = false
                         voiceMode = false
                     }
+                )
             }
 
             Button {
@@ -1874,33 +1875,14 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
 
-            if hasText {
-                Button {
-                    Task { await send() }
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .background(AKColor.brand)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("发送")
-            } else {
-                Button {
-                    showMore.toggle()
-                    showEmoji = false
-                    voiceMode = false
-                    inputFocused = false
-                } label: {
-                    Image(systemName: showMore ? "xmark" : "plus")
-                        .font(.system(size: 22))
-                        .foregroundColor(AKColor.sub)
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.plain)
-            }
+            ChatComposerToggle(
+                composer: composer,
+                showMore: $showMore,
+                showEmoji: $showEmoji,
+                voiceMode: $voiceMode,
+                inputFocused: $inputFocused,
+                onSend: { Task { await send() } }
+            )
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
@@ -2180,12 +2162,12 @@ struct ChatView: View {
     }
 
     private func send() async {
-        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else { return }
         let at = atUids.map { $0 == -1 ? "all" : String($0) }.joined(separator: ",")
         let quote = replyTo
         /* 输入框立刻清空、本机气泡立刻落位：网络与会话列表刷新都不挡输入 */
-        text = ""
+        composer.text = ""
         atUids = []
         replyTo = nil
         errorText = nil
@@ -2269,13 +2251,21 @@ struct ChatView: View {
         }
 
         let local = makeLocal(type: 15, content: "")
-        let meta = await videoMeta(fileURL)
         messages.append(local)
         pendingVideos[local.listKey] = PendingVideo(
-            fileURL: fileURL, duration: meta.duration, cover: "",
-            width: meta.width, height: meta.height
+            fileURL: fileURL, duration: 0, cover: "",
+            width: 0, height: 0, coverImage: nil
         )
         uploadProgress[local.listKey] = 0
+
+        /* 首帧在本地抽，抽完直接给待发气泡用：不等封面上传，也不阻塞气泡出现 */
+        let meta = await videoMeta(fileURL)
+        pendingVideos[local.listKey]?.duration = meta.duration
+        pendingVideos[local.listKey]?.width = meta.width
+        pendingVideos[local.listKey]?.height = meta.height
+        if let data = meta.cover, let image = UIImage(data: data) {
+            pendingVideos[local.listKey]?.coverImage = image
+        }
 
         /* 首帧封面先传（kind=chat 落 uploads/chat；服务端的 cover 是朋友圈封面，不能复用）：
            两端气泡直接显示封面，不为每个视频起播放器 */
@@ -2729,6 +2719,76 @@ private final class ChatDerivedCache: ObservableObject {
     }
 }
 
+/// 输入框：文字状态只在本视图读取，打字不会让 ChatView 与消息列表重算
+private struct ChatTextInput: View {
+    @ObservedObject var composer: ChatComposerState
+    let placeholder: String
+    @FocusState.Binding var inputFocused: Bool
+    var onChanged: (String) -> Void
+    var onTap: () -> Void
+
+    var body: some View {
+        TextField(placeholder, text: $composer.text, axis: .vertical)
+            .focused($inputFocused)
+            .lineLimit(1...4)
+            .font(.system(size: 14))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(AKColor.fill)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .onChange(of: composer.text) { value in
+                onChanged(value)
+            }
+            .onTapGesture {
+                onTap()
+            }
+    }
+}
+
+/// 输入栏右侧的发送/加号切换：只订阅输入文字，不带动父视图
+private struct ChatComposerToggle: View {
+    @ObservedObject var composer: ChatComposerState
+    @Binding var showMore: Bool
+    @Binding var showEmoji: Bool
+    @Binding var voiceMode: Bool
+    @FocusState.Binding var inputFocused: Bool
+    var onSend: () -> Void
+
+    private var hasText: Bool {
+        !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        if hasText {
+            Button {
+                onSend()
+            } label: {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.white)
+                    .frame(width: 36, height: 36)
+                    .background(AKColor.brand)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("发送")
+        } else {
+            Button {
+                showMore.toggle()
+                showEmoji = false
+                voiceMode = false
+                inputFocused = false
+            } label: {
+                Image(systemName: showMore ? "xmark" : "plus")
+                    .font(.system(size: 22))
+                    .foregroundColor(AKColor.sub)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 private struct ChatMessageRow: View, Equatable {
     let message: Message
     let mine: Bool
@@ -2741,6 +2801,8 @@ private struct ChatMessageRow: View, Equatable {
     let readHint: Int
     /// 视频上传百分比（仅本机待发视频有值）
     var uploadProgress: Double? = nil
+    /// 待发视频的本地首帧（发送中显示，上传完成后换成服务端封面）
+    var pendingVideoCover: UIImage? = nil
     let playingVoice: Bool
     var voicePlayed: Bool = true
     var mentionMap: [String: Int64] = [:]
@@ -2807,7 +2869,8 @@ private struct ChatMessageRow: View, Equatable {
             mentionMap: mentionMap,
             onMention: onMention,
             voicePlayed: voicePlayed,
-            uploadProgress: uploadProgress
+            uploadProgress: uploadProgress,
+            pendingVideoCover: pendingVideoCover
         )
     }
 
@@ -2927,6 +2990,7 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.peerName == rhs.peerName
             && lhs.readHint == rhs.readHint
             && lhs.uploadProgress == rhs.uploadProgress
+            && lhs.pendingVideoCover === rhs.pendingVideoCover
             && lhs.playingVoice == rhs.playingVoice
             && lhs.voicePlayed == rhs.voicePlayed
             && lhs.mentionStamp == rhs.mentionStamp

@@ -105,8 +105,8 @@ struct WalletView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             } else {
-                ForEach(shownLogs.indices, id: \.self) { index in
-                    logRow(shownLogs[index], last: index == shownLogs.count - 1)
+                ForEach(Array(shownLogs.enumerated()), id: \.element.id) { index, log in
+                    logRow(log, last: index == shownLogs.count - 1)
                         .akCardRow(bottom: index == shownLogs.count - 1)
                         .listRowInsets(EdgeInsets(top: 0, leading: 14,
                                                   bottom: index == shownLogs.count - 1 ? 24 : 0,

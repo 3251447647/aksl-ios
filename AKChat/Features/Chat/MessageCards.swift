@@ -44,6 +44,8 @@ struct MessageBody: View {
     var voicePlayed: Bool = true
     /// 本机视频上传百分比：气泡上显示「视频 N%」
     var uploadProgress: Double? = nil
+    /// 待发视频的本地首帧：上传完成前先显示，不用等服务端封面
+    var pendingVideoCover: UIImage? = nil
 
     private var ex: [String: JSONValue] { message.extraMap }
     private var rawText: String { message.text ?? message.content ?? "" }
@@ -220,13 +222,8 @@ struct MessageBody: View {
                     Color.clear
                         .frame(width: boxW, height: boxH)
                         .overlay {
-                            AsyncImage(url: url) { phase in
-                                if let image = phase.image {
-                                    image.resizable().scaledToFit()
-                                } else {
-                                    AKColor.fill
-                                }
-                            }
+                            AKImage(url: url.absoluteString, size: CGSize(width: boxW, height: boxH),
+                                    contentMode: .fit, placeholder: AKColor.fill)
                         }
                         .clipped()
                     if !meta.caption.isEmpty {
@@ -303,13 +300,8 @@ struct MessageBody: View {
                                 ForEach(0..<cols, id: \.self) { col in
                                     let idx = row * cols + col
                                     if idx < n {
-                                        AsyncImage(url: APIClient.fullURL(VoiceService.cleanPath(urls[idx]))) { phase in
-                                            if let image = phase.image {
-                                                image.resizable().scaledToFill()
-                                            } else {
-                                                AKColor.fill
-                                            }
-                                        }
+                                        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(urls[idx]))?.absoluteString,
+                                                size: CGSize(width: cell, height: cell), placeholder: AKColor.fill)
                                         .frame(width: cell, height: cell)
                                         .clipped()
                                         .contentShape(Rectangle())
@@ -1089,13 +1081,8 @@ struct MessageBody: View {
         let boxH: CGFloat = ratio >= 1 ? 210 / ratio : 300
         return ZStack(alignment: .topLeading) {
             if let url = APIClient.fullURL(cover.isEmpty ? nil : cover) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Color(hex: 0x202329)
-                    }
-                }
+                AKImage(url: url.absoluteString, size: CGSize(width: boxW, height: boxH),
+                        placeholder: Color(hex: 0x202329))
             } else {
                 Color(hex: 0x202329)
             }
@@ -1126,11 +1113,23 @@ struct MessageBody: View {
         .onTapGesture { onOpenMedia(message.text ?? message.content ?? "", true) }
     }
 
-    /// 本机待发视频：上传中显示百分比 + 底部进度条（对齐安卓 PendingMediaBubble）
+    /// 本机待发视频：本地首帧 + 百分比 + 底部进度条（对齐安卓 PendingMediaBubble）
     private var pendingVideoBubble: some View {
         let pct = min(max(uploadProgress ?? 0, 0), 1)
         return ZStack(alignment: .bottom) {
-            Color(hex: 0x202329)
+            if let cover = pendingVideoCover {
+                GeometryReader { geo in
+                    Image(uiImage: cover)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                }
+                /* 压暗一层，进度文字在浅色画面上也看得清 */
+                Color.black.opacity(0.35)
+            } else {
+                Color(hex: 0x202329)
+            }
             Text(message.status == 2 ? "点击重发" : "视频 \(Int(pct * 100))%")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.8))
@@ -1146,6 +1145,7 @@ struct MessageBody: View {
             .frame(height: 2)
         }
         .frame(width: 225, height: 300)
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -1178,16 +1178,10 @@ struct MessageBody: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if !firstImage.isEmpty {
-                    AsyncImage(url: APIClient.fullURL(firstImage)) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else {
-                            AKColor.fill
-                        }
-                    }
-                    .frame(width: 96, height: 96)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    AKImage(url: firstImage, size: 96, placeholder: AKColor.fill)
+                        .frame(width: 96, height: 96)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
             }
             .padding(.top, 8)

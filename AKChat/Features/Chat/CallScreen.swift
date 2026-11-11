@@ -20,13 +20,9 @@ struct CallScreen: View {
                     .ignoresSafeArea()
             } else {
                 VStack(spacing: 14) {
-                    AsyncImage(url: APIClient.fullURL(call.peerAvatar)) { img in
-                        img.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.white.opacity(0.12)
-                    }
-                    .frame(width: 96, height: 96)
-                    .clipShape(Circle())
+                    AKImage(url: call.peerAvatar, size: 96, placeholder: Color.white.opacity(0.12))
+                        .frame(width: 96, height: 96)
+                        .clipShape(Circle())
 
                     Text(call.peerName.isEmpty ? "通话中" : call.peerName)
                         .font(.system(size: 20, weight: .semibold))
@@ -95,13 +91,9 @@ struct CallScreen: View {
         ZStack {
             Color(hex: 0x121417).ignoresSafeArea()
             VStack(spacing: 14) {
-                AsyncImage(url: APIClient.fullURL(c.avatar)) { img in
-                    img.resizable().scaledToFill()
-                } placeholder: {
-                    Color.white.opacity(0.12)
-                }
-                .frame(width: 96, height: 96)
-                .clipShape(Circle())
+                AKImage(url: c.avatar, size: 96, placeholder: Color.white.opacity(0.12))
+                    .frame(width: 96, height: 96)
+                    .clipShape(Circle())
 
                 Text(c.name.isEmpty ? "来电" : c.name)
                     .font(.system(size: 20, weight: .semibold))

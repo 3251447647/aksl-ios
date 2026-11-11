@@ -254,16 +254,10 @@ struct FavoritesView: View {
     private func summary(_ item: FavoriteItem) -> some View {
         switch item.type {
         case 5:
-            AsyncImage(url: Self.mediaURL(content(item))) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    AKColor.fill
-                }
-            }
-            .frame(width: 110, height: 110)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            AKImage(url: Self.mediaURL(content(item))?.absoluteString, size: 110, placeholder: AKColor.fill)
+                .frame(width: 110, height: 110)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         case 6:
             Text("语音消息")
                 .font(.system(size: 13))
@@ -428,19 +422,15 @@ private struct FavoriteDetailView: View {
                     .padding(.vertical, 12)
 
                 if item.type == 5 {
-                    AsyncImage(url: FavoritesView.mediaURL(text)) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFit()
-                        } else {
-                            AKColor.fill
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 260)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .contentShape(Rectangle())
-                    .onTapGesture { preview = true }
+                    AKImage(url: FavoritesView.mediaURL(text)?.absoluteString,
+                            size: CGSize(width: UIScreen.main.bounds.width, height: 260),
+                            contentMode: .fit, placeholder: AKColor.fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 260)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .contentShape(Rectangle())
+                        .onTapGesture { preview = true }
                 } else if item.type == 6 {
                     Text("语音消息")
                         .font(.system(size: 14))

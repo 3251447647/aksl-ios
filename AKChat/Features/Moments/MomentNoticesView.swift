@@ -158,16 +158,10 @@ struct MomentNoticesView: View {
             }
 
             if !item.momentThumb.isEmpty {
-                AsyncImage(url: APIClient.fullURL(item.momentThumb)) { phase in
-                    if let img = phase.image {
-                        img.resizable().scaledToFill()
-                    } else {
-                        AKColor.fill
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                AKImage(url: item.momentThumb, size: 44, placeholder: AKColor.fill)
+                    .frame(width: 44, height: 44)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         }
         .padding(.horizontal, 16)

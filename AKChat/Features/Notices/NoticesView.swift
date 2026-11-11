@@ -217,17 +217,11 @@ struct NoticeDetailView: View {
             if !detail.images.isEmpty {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3),
                           spacing: 6) {
-                    ForEach(Array(detail.images.prefix(9).enumerated()), id: \.offset) { _, path in
+                    ForEach(Array(detail.images.prefix(9).enumerated()), id: \.element) { _, path in
                         Color.clear
                             .aspectRatio(1, contentMode: .fit)
                             .overlay(
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.fill
-                                    }
-                                }
+                                AKImage(url: path, size: 120, placeholder: AKColor.fill)
                             )
                             .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -417,17 +411,11 @@ struct SystemNoticePopup: View {
 
     private var imageGrid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-            ForEach(Array(images.enumerated()), id: \.offset) { index, path in
+            ForEach(Array(images.enumerated()), id: \.element) { index, path in
                 Color.clear
                     .aspectRatio(1, contentMode: .fit)
                     .overlay(
-                        AsyncImage(url: APIClient.fullURL(path)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                AKColor.fill
-                            }
-                        }
+                        AKImage(url: path, size: 120, placeholder: AKColor.fill)
                     )
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

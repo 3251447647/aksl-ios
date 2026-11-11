@@ -407,10 +407,10 @@ struct MomentImagePager: View {
         ZStack {
             Color.black.ignoresSafeArea()
             TabView(selection: $index) {
-                ForEach(images.indices, id: \.self) { i in
+                ForEach(Array(images.enumerated()), id: \.element) { i, path in
                     ZStack {
                         ProgressView().tint(.white)
-                        AKImage(url: images[i],
+                        AKImage(url: path,
                                 size: UIScreen.main.bounds.size,
                                 contentMode: .fit,
                                 placeholder: .clear)
@@ -570,7 +570,7 @@ struct MomentCard: View {
             let cols = images.count <= 4 ? 2 : 3
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: cols),
                       spacing: 3) {
-                ForEach(Array(images.enumerated()), id: \.offset) { idx, path in
+                ForEach(Array(images.enumerated()), id: \.element) { idx, path in
                     Color.clear
                         .aspectRatio(1, contentMode: .fit)
                         .overlay(tile(path: path, index: idx, side: cols == 2 ? 170 : 110))

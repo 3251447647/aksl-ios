@@ -96,17 +96,11 @@ struct RepostMomentSheet: View {
             }
             if !moment.images.isEmpty {
                 HStack(spacing: 4) {
-                    ForEach(Array(moment.images.prefix(3).enumerated()), id: \.offset) { _, path in
-                        AsyncImage(url: APIClient.fullURL(path)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFill()
-                            } else {
-                                AKColor.fill
-                            }
-                        }
-                        .frame(width: 56, height: 56)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    ForEach(Array(moment.images.prefix(3).enumerated()), id: \.element) { _, path in
+                        AKImage(url: path, size: 56, placeholder: AKColor.fill)
+                            .frame(width: 56, height: 56)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                 }
             }

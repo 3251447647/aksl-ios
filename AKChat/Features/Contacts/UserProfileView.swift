@@ -398,17 +398,11 @@ struct UserProfileView: View {
 
     @ViewBuilder
     private func momentThumb(_ m: ProfileMoment) -> some View {
-        if !m.img.isEmpty, let url = APIClient.fullURL(m.img) {
-            AsyncImage(url: url) { phase in
-                if let img = phase.image {
-                    img.resizable().scaledToFill()
-                } else {
-                    AKColor.line
-                }
-            }
-            .frame(width: 44, height: 44)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        if !m.img.isEmpty, APIClient.fullURL(m.img) != nil {
+            AKImage(url: m.img, size: 44, placeholder: AKColor.line)
+                .frame(width: 44, height: 44)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         } else {
             Text(m.text)
                 .font(.system(size: 8))

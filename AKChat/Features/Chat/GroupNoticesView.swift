@@ -410,7 +410,7 @@ struct NoticeImageGrid: View {
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: spacing) {
-            ForEach(Array(paths.prefix(9).enumerated()), id: \.offset) { index, path in
+            ForEach(Array(paths.prefix(9).enumerated()), id: \.element) { index, path in
                 Group {
                     if flexible {
                         Color.clear
@@ -433,13 +433,8 @@ struct NoticeImageGrid: View {
 
     @ViewBuilder
     private func thumbnail(_ path: String) -> some View {
-        AsyncImage(url: APIClient.fullURL(path)) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFill()
-            } else {
-                AKColor.fill
-            }
-        }
+        /* flexible 时单元格按屏宽均分，固定取不小于 120 的解码尺寸 */
+        AKImage(url: path, size: max(size, 120), placeholder: AKColor.fill)
     }
 }
 
@@ -689,16 +684,10 @@ private struct GroupNoticeEditor: View {
                     ) {
                         ForEach(images, id: \.self) { path in
                             ZStack(alignment: .topTrailing) {
-                                AsyncImage(url: APIClient.fullURL(path)) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        AKColor.fill
-                                    }
-                                }
-                                .frame(width: cell, height: cell)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                AKImage(url: path, size: cell, placeholder: AKColor.fill)
+                                    .frame(width: cell, height: cell)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 Button {
                                     images.removeAll { $0 == path }
                                 } label: {
