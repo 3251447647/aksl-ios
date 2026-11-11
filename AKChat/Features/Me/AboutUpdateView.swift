@@ -14,6 +14,8 @@ private struct AboutSiteConfig: Decodable {
 struct AboutView: View {
     private let siteName = "AK商聊"
     private static let defaultSite = "https://www.aksliao.cn"
+    /// App 下载页：企业签名分发只走这里，不跟随后台「官方网站」配置
+    private static let downloadPage = URL(string: "https://aksliao.cn/")!
     @State private var officialSite = AboutView.defaultSite
     private let features: [(String, UInt32, String, String)] = [
         ("💬", 0x2FBE6E, "即时通讯", "文字、图片、语音、表情、引用、转发，一个都不少。"),
@@ -262,7 +264,7 @@ struct AboutView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    AppLinkRouter.open(officialURL)
+                    UIApplication.shared.open(Self.downloadPage)
                 } label: {
                     Text("下载 App")
                         .font(.system(size: 14, weight: .medium))

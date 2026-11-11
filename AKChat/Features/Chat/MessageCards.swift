@@ -1360,12 +1360,42 @@ struct AKLinkText: View {
                 out.append(Hit(range: match.range, kind: .url(url)))
             }
         }
-        if !mentionMap.isEmpty, let re = try? NSRegularExpression(pattern: "@([^\\s@，,。：:]{1,24})") {
-            re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
-                guard let match else { return }
-                let name = ns.substring(with: match.range(at: 1))
-                guard let uid = mentionMap[name] ?? mentionMap["*"] else { return }
-                out.append(Hit(range: match.range, kind: .mention(uid)))
+        if !mentionMap.isEmpty {
+            /* 按成员名字面匹配（长的优先）：昵称含空格也能整体高亮，不能按空白分词 */
+            let names = mentionMap.keys
+                .filter { $0 != "*" && !$0.isEmpty }
+                .sorted { $0.utf16.count > $1.utf16.count }
+            var cursor = 0
+            while cursor < ns.length, !names.isEmpty {
+                let atRange = ns.range(of: "@", options: [], range: NSRange(location: cursor, length: ns.length - cursor))
+                if atRange.location == NSNotFound { break }
+                var matchedLength = 0
+                var matchedUid: Int64 = 0
+                for name in names {
+                    let candidate = "@" + name
+                    let len = (candidate as NSString).length
+                    guard atRange.location + len <= ns.length else { continue }
+                    let candidateRange = NSRange(location: atRange.location, length: len)
+                    guard ns.substring(with: candidateRange) == candidate, let uid = mentionMap[name] else { continue }
+                    matchedLength = len
+                    matchedUid = uid
+                    break
+                }
+                if matchedLength > 0 {
+                    out.append(Hit(range: NSRange(location: atRange.location, length: matchedLength),
+                                   kind: .mention(matchedUid > 0 ? matchedUid : -1)))
+                    cursor = atRange.location + matchedLength
+                } else {
+                    cursor = atRange.location + 1
+                }
+            }
+            /* 群成员不可见时没有名字表：沿用按词识别，只蓝色不跳转 */
+            if mentionMap["*"] != nil, let re = try? NSRegularExpression(pattern: "@([^\\s@，,。：:]{1,24})") {
+                re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+                    guard let match else { return }
+                    guard !out.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) else { return }
+                    out.append(Hit(range: match.range, kind: .mention(-1)))
+                }
             }
         }
         if onNumberTap != nil, let re = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z])[0-9]{5,}(?![0-9A-Za-z])") {

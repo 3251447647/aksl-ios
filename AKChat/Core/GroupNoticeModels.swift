@@ -75,4 +75,11 @@ struct GroupNoticesData: Decodable {
 struct CreateGroupResult: Decodable {
     let id: Int64
     let name: String?
+    let pending: Int?
+    let pendingNote: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, pending
+        case pendingNote = "pending_note"
+    }
 }

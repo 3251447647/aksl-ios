@@ -28,6 +28,13 @@ struct RegisterView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
+                    Image("BrandLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .padding(.top, 8)
+
                     VStack(spacing: 12) {
                         field(icon: "person.fill", placeholder: "昵称（2-20 个字符）", text: $nickname)
                         field(icon: "envelope.fill", placeholder: "邮箱", text: $email, keyboard: .emailAddress)

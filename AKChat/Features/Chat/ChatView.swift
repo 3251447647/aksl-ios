@@ -11,6 +11,12 @@ struct ProfileTarget: Identifiable {
     var gid: Int64 = 0
 }
 
+/// 定位请求：seq 变化保证同一条消息连点也能重新触发 ScrollViewReader 的滚动
+private struct ChatScrollLocate: Equatable {
+    let key: String
+    let seq: Int
+}
+
 /// 群名片/群资料跳转：gid 随路由一起传递，不再先写状态再翻 isPresented
 struct GroupRoute: Identifiable, Hashable {
     let id: Int64
@@ -109,7 +115,9 @@ struct ChatView: View {
     @State private var showNotice = false
     /// 已经弹过的公告指纹（id|正文）：同一条只弹一次，公告被编辑后重新弹
     @State private var noticePopupFingerprint = ""
-    @State private var scrollTarget: String?
+    @State private var scrollTarget: ChatScrollLocate?
+    /// 定位请求序号：同一条消息连点也要能重新触发 onChange
+    @State private var locateSeq = 0
     @State private var localSeq: Int64 = -1
     @State private var profileTarget: ProfileTarget?
     @State private var showForward = false
@@ -1055,9 +1063,8 @@ struct ChatView: View {
             .onChange(of: scrollTarget) { target in
                 guard let target else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(target, anchor: .center)
+                    proxy.scrollTo(target.key, anchor: .center)
                 }
-                scrollTarget = nil
             }
         }
         .overlay {
@@ -1096,7 +1103,7 @@ struct ChatView: View {
         .overlay(Rectangle().fill(AKColor.line).frame(height: 0.5), alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
-            if pinMsgId > 0 { locateMessage(pinMsgId) }
+            if pinMsgId > 0 { jumpToMessage(pinMsgId) }
         }
     }
 
@@ -1353,43 +1360,84 @@ struct ChatView: View {
         return false
     }
 
-    /// 引用块点击：本地找不到就往前翻页（最多 8 页），找到后滚动并短暂高亮
+    /// 引用块点击：与置顶条共用同一套定位
     private func jumpToQuote(_ id: Int64) {
+        jumpToMessage(id)
+    }
+
+    /// 置顶条 / 引用块共用：目标不在本地列表时先按 anchor 拉取它前后各 20 条，
+    /// 合并进列表后再分帧滚动。第一次 scrollTo 往往目标行还没布局，所以要多帧校正。
+    private func jumpToMessage(_ id: Int64) {
         guard id > 0 else { return }
+        highlightId = id
+        /* 主动跳到某条历史消息：不再跟随键盘/新消息贴底 */
+        if atBottom { atBottom = false }
         if messages.contains(where: { $0.id == id }) {
-            locateMessage(id)
+            scheduleLocate(id)
+            clearHighlightLater(id)
             return
         }
         Task {
-            var pages = 0
-            while pages < 8, !messages.contains(where: { $0.id == id }) {
-                let before = messages.count
-                await loadMore()
-                if messages.count == before { break }
-                pages += 1
+            var found = false
+            if let data = try? await APIClient.shared.history(
+                convType: convType, convId: convId, anchorId: id
+            ) {
+                await MainActor.run { mergeHistory(data.list) }
+                found = messages.contains(where: { $0.id == id })
             }
-            if messages.contains(where: { $0.id == id }) {
-                locateMessage(id, afterLoad: pages > 0)
-            } else {
-                flash("原消息已不在聊天记录中")
+            if !found { found = await loadUntilFound(id, maxPages: 8) }
+            await MainActor.run {
+                if found {
+                    scheduleLocate(id)
+                    clearHighlightLater(id)
+                } else {
+                    flash("原消息已不在聊天记录中")
+                }
             }
         }
     }
 
-    /// 滚到指定消息并短暂高亮（对齐安卓 highlightId 的 2.4s）
-    private func locateMessage(_ id: Int64, afterLoad: Bool = false) {
-        highlightId = id
-        /* 主动跳到某条历史消息：不再跟随键盘/新消息贴底 */
-        if atBottom { atBottom = false }
-        scrollTarget = "m_\(id)"
-        Task {
-            if afterLoad {
-                /* 刚拖下来的历史消息要等 LazyVStack 布局完才能滚到位 */
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                await MainActor.run {
-                    if highlightId == id { scrollTarget = "m_\(id)" }
-                }
+    /// anchor 拉回来的是目标前后一段消息：按 id 去重合并，未发出的本地消息保持在末尾
+    private func mergeHistory(_ list: [Message]) {
+        guard !list.isEmpty else { return }
+        let known = Set(messages.map { $0.id })
+        let fresh = list.filter { $0.id > 0 && !known.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        let local = messages.filter { $0.id <= 0 }
+        messages = (messages.filter { $0.id > 0 } + fresh).sorted { $0.id < $1.id } + local
+    }
+
+    /// 服务端没返回目标时的兜底：继续向前翻页，直到找到或翻完
+    private func loadUntilFound(_ id: Int64, maxPages: Int) async -> Bool {
+        var pages = 0
+        while pages < maxPages, !messages.contains(where: { $0.id == id }) {
+            let before = messages.count
+            await loadMore()
+            if messages.count == before { break }
+            pages += 1
+        }
+        return messages.contains(where: { $0.id == id })
+    }
+
+    /// 分帧多次滚动：第 1 次让 LazyVStack 把目标纳入布局，后几次校正到视口中央
+    private func scheduleLocate(_ id: Int64) {
+        let key = "m_\(id)"
+        locateSeq += 1
+        let base = locateSeq * 10
+        for (i, delay) in [0.0, 0.06, 0.16, 0.32, 0.6].enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard highlightId == id else { return }
+                scrollTarget = ChatScrollLocate(key: key, seq: base + i)
             }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+            if let t = scrollTarget, t.seq >= base, t.seq <= base + 4 { scrollTarget = nil }
+        }
+    }
+
+    /// 高亮保持 2.4s（对齐安卓 highlightId）；期间又点了别的消息就不清
+    private func clearHighlightLater(_ id: Int64) {
+        Task {
             try? await Task.sleep(nanoseconds: 2_400_000_000)
             await MainActor.run {
                 if highlightId == id { highlightId = 0 }
@@ -2060,13 +2108,8 @@ struct ChatView: View {
             showNotice = false
             return
         }
-        /* 本机确认过的公告：id + 正文指纹都相同才跳过；公告被编辑后会重新弹 */
-        if let acked = UserDefaults.standard.string(forKey: groupNoticeAckKey),
-           acked == noticeFingerprint(notice) {
-            pendingNotice = nil
-            showNotice = false
-            return
-        }
+        /* 以服务端为准：pending 返回的就是「我还没确认」的公告，
+           不再用本地指纹隐藏，避免服务端要求确认而客户端永不弹。 */
         pendingNotice = notice
         let fp = noticeFingerprint(notice)
         if showPopup && noticePopupFingerprint != fp {
@@ -2075,14 +2118,12 @@ struct ChatView: View {
         }
     }
 
-    private var groupNoticeAckKey: String { "groupNoticeAck_\(convId)" }
-
     private func noticeFingerprint(_ notice: GroupNotice) -> String {
         "\(notice.id)|\(notice.content ?? "")"
     }
 
-    /// 进群弹窗「我已知晓」：先收起横幅/弹层，服务端确认成功后才落本机指纹。
-    /// 确认失败时 loadPendingNotice 会把横幅重新挂回来，用户点横幅可以重试。
+    /// 进群弹窗「我已知晓」：先收起横幅/弹层，再以服务端 pending 是否清空判断成功。
+    /// 失败时 loadPendingNotice 会把横幅重新挂回来，用户点横幅可以重试。
     private func confirmGroupNotice(_ notice: GroupNotice?) {
         guard let notice else { return }
         pendingNotice = nil
@@ -2092,8 +2133,6 @@ struct ChatView: View {
             await loadPendingNotice(showPopup: false)
             if pendingNotice?.id == notice.id {
                 flash("公告确认失败，请重试")
-            } else {
-                UserDefaults.standard.set(noticeFingerprint(notice), forKey: groupNoticeAckKey)
             }
         }
     }

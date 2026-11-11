@@ -382,14 +382,17 @@ struct ForwardPickerView: View {
         }
     }
 
-    /// 单条转发：与安卓 forwardOne 一致（文本原样、记录重发、媒体重发、其余 [消息]）
+    /// 单条转发：与安卓 forwardOne 一致（文本去掉网页端署名后重发、记录重发、媒体重发、其余 [消息]）
     private func forwardOne(_ m: Message, convType: String, convId: Int64) async throws -> Message? {
         let text = m.text ?? ""
         switch m.type {
         case 1, 10:
-            guard !text.isEmpty else { return nil }
+            // 引用消息只重发正文（不带 quote_*），并去掉网页端转发追加上来的发送者署名
+            let stripped = ForwardByline.strip(text)
+            let content = stripped.isEmpty ? text : stripped
+            guard !content.isEmpty else { return nil }
             let res = try await APIClient.shared.sendTypedMessage(
-                convType: convType, convId: convId, type: m.type, content: text,
+                convType: convType, convId: convId, type: 1, content: content,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
             return res.message
@@ -452,9 +455,11 @@ struct ForwardPickerView: View {
                 case 17: return "[聊天记录]"
                 case 18: return "[文件]"
                 case 19: return "[直播]"
-                default: return m.text ?? ""
+                default: return ForwardByline.strip(m.text ?? "")
                 }
             }()
+            /* 整条内容就是一条署名的消息，合并转发时直接丢掉，别把署名带进记录 */
+            guard !body.isEmpty else { continue }
             items.append([
                 "u": name,
                 "a": m.fromAvatar ?? "",

@@ -198,8 +198,8 @@ final class AppState: ObservableObject {
         return data.message
     }
 
-    func loadHistory(convType: String, convId: Int64, beforeId: Int64 = 0) async throws -> [Message] {
-        let data = try await api.history(convType: convType, convId: convId, beforeId: beforeId)
+    func loadHistory(convType: String, convId: Int64, beforeId: Int64 = 0, anchorId: Int64 = 0) async throws -> [Message] {
+        let data = try await api.history(convType: convType, convId: convId, beforeId: beforeId, anchorId: anchorId)
         return data.list
     }
 

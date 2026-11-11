@@ -16,6 +16,31 @@ enum APIError: LocalizedError {
     }
 }
 
+/// 网页端转发会在正文末尾追加「—— 来自:「昵称」」（图片/视频为「—— 以上图片来自:「昵称」」）。
+/// 转发是二次传播：App 再转发时去掉这行署名，避免一路带下去。
+enum ForwardByline {
+    private static let regex = try? NSRegularExpression(
+        pattern: #"——\s*(?:以上(?:图片|视频)来自|来自)\s*[:：]\s*「[^」\n]*」\s*\z"#
+    )
+
+    static func strip(_ text: String) -> String {
+        guard let regex else { return text }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let replaced = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        var end = replaced.endIndex
+        while end > replaced.startIndex {
+            let prev = replaced.index(before: end)
+            let ch = replaced[prev]
+            if ch == " " || ch == "\n" || ch == "\r" || ch == "\t" {
+                end = prev
+            } else {
+                break
+            }
+        }
+        return String(replaced[..<end])
+    }
+}
+
 final class APIClient {
     static let shared = APIClient()
     static let base = URL(string: "https://www.aksliao.cn/")!
@@ -143,13 +168,16 @@ final class APIClient {
 
     func conversations() async throws -> ConversationList { try await get("api/v1/conversations") }
 
-    func history(convType: String, convId: Int64, beforeId: Int64 = 0, limit: Int = 40) async throws -> HistoryData {
-        try await get("api/v1/messages", query: [
+    func history(convType: String, convId: Int64, beforeId: Int64 = 0, limit: Int = 40, anchorId: Int64 = 0) async throws -> HistoryData {
+        var query: [String: String] = [
             "conv_type": convType,
             "conv_id": String(convId),
             "before_id": String(beforeId),
             "limit": String(limit)
-        ])
+        ]
+        /* anchor_id：取该条前后各 20 条，置顶/引用定位未加载的历史消息时用 */
+        if anchorId > 0 { query["anchor_id"] = String(anchorId) }
+        return try await get("api/v1/messages", query: query)
     }
 
     func sendText(convType: String, convId: Int64, text: String, clientId: String, atUids: String = "") async throws -> SendData {
@@ -184,11 +212,16 @@ final class APIClient {
         ])
     }
 
-    /// 转发：原 type 与 content 原样重发，卡片由服务端重新下发
+    /// 转发：与安卓 forwardOne 一致，引用消息只重发正文，并去掉网页端追加的发送者署名
     func forwardMessage(message: Message, convType: String, convId: Int64) async throws {
-        let content = message.content ?? message.text ?? ""
+        let quoted = message.type == 10
+        var content = quoted ? (message.text ?? "") : (message.content ?? message.text ?? "")
+        if quoted || message.type == 1 {
+            let stripped = ForwardByline.strip(content)
+            content = stripped.isEmpty ? content : stripped
+        }
         guard !content.isEmpty else { return }
-        let type = message.type == 11 ? 1 : message.type
+        let type = (quoted || message.type == 11) ? 1 : message.type
         _ = try await postRaw("api/v1/messages", body: [
             "conv_type": convType,
             "conv_id": convId,

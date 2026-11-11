@@ -388,9 +388,14 @@ struct CreateGroupView: View {
                 "members": Array(selected),
                 "avatar": avatarUrl,
             ])
-            created = result
             await app.refreshConversations()
             await app.loadContacts()
+            if let note = result.pendingNote, !note.isEmpty {
+                creating = false
+                showToast(note)
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+            }
+            created = result
         } catch {
             showToast(error.localizedDescription)
         }

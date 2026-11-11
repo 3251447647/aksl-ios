@@ -16,7 +16,7 @@ struct LoginView: View {
             Spacer().frame(height: 72)
 
             VStack(spacing: 10) {
-                Image("Logo")
+                Image("BrandLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 76, height: 76)
