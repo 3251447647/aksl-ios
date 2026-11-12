@@ -109,6 +109,16 @@ final class APIClient {
             if text.contains("账号已被封禁") { throw APIError.server("账号已被封禁") }
         }
 
+        /* 校准设备时钟：撤回时限这类规则以服务端时间为准，设备时间偏差不能把入口藏掉 */
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let payload = obj["data"] as? [String: Any] {
+            if let n = payload["server_time"] as? NSNumber {
+                ServerClock.sync(n.int64Value)
+            } else if let s = payload["server_time"] as? String, let v = Int64(s) {
+                ServerClock.sync(v)
+            }
+        }
+
         let decoded: APIResp<T>
         do {
             decoded = try JSONDecoder().decode(APIResp<T>.self, from: data)

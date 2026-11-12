@@ -58,6 +58,12 @@ private final class ChatComposerState: ObservableObject {
     @Published var text = ""
 }
 
+/// 直播间入口：gid 与呈现动作放在同一个值里，避免 isPresented + 独立 @State 在呈现瞬间取到旧值
+private struct LiveRoute: Identifiable {
+    let gid: Int64
+    var id: Int64 { gid }
+}
+
 /// 长按菜单里需要二次确认的操作
 private enum ChatConfirm: Identifiable {
     case recall(Message)
@@ -97,6 +103,8 @@ struct ChatView: View {
     @State private var showGroupInfo = false
     @State private var reportTarget: Message?
     @State private var confirm: ChatConfirm?
+    /// 菜单弹层收起后再弹二次确认：在 sheet 消失动画期间直接改 confirm，alert 会被系统丢掉
+    @State private var pendingConfirm: ChatConfirm?
     @State private var replyTo: Message?
     @State private var payTarget: Message?
     /// 卡片状态轮询：别人领取红包/转账/礼物后服务端会更新原消息或推送领取事件，
@@ -134,8 +142,7 @@ struct ChatView: View {
     @State private var showForward = false
     @State private var forwardMessages: [Message] = []
     @State private var chatBg: String?
-    @State private var showLive = false
-    @State private var liveGid: Int64 = 0
+    @State private var liveRoute: LiveRoute?
     @State private var active: GroupActiveData?
     @State private var groupInfo: GroupInfo?
     /// /group 里 Core 模型没映射的字段（成员信息可见性）：仅用于拦截进他人主页
@@ -203,8 +210,7 @@ struct ChatView: View {
     private var activeBar: some View {
         if let live = active?.live, live.liveId > 0 {
             Button {
-                liveGid = convId
-                showLive = true
+                liveRoute = LiveRoute(gid: convId)
             } label: {
                 barContent(icon: "dot.radiowaves.left.and.right",
                            title: live.title.isEmpty ? "群直播进行中" : live.title,
@@ -335,8 +341,7 @@ struct ChatView: View {
                         },
                         onGroupLive: {
                             showMore = false
-                            liveGid = convId
-                            showLive = true
+                            liveRoute = LiveRoute(gid: convId)
                         }
                     )
                 }
@@ -408,7 +413,7 @@ struct ChatView: View {
                 .transition(.opacity)
             }
         }
-        .fullScreenCover(item: $previewImage) { item in
+        .fullScreenCover(item: $previewImage, onDismiss: { flushPendingConfirm() }) { item in
             MediaPagerView(
                 items: item.items,
                 index: item.index,
@@ -423,8 +428,8 @@ struct ChatView: View {
                         flash("已收藏")
                     }
                 },
-                onRecall: { msg in confirm = .recall(msg) },
-                onDelete: { msg in deleteLocal(msg) },
+                onRecall: { msg in pendingConfirm = .recall(msg) },
+                onDelete: { msg in pendingConfirm = .delete(msg) },
                 canRecall: { msg in msg.fromUid == myId && canRecall(msg) }
             )
         }
@@ -442,7 +447,10 @@ struct ChatView: View {
                 appendForwarded(convType: ctype, convId: cid, message: sent)
             }
         }
-        .sheet(item: $menuTarget) { msg in
+        .sheet(item: $menuTarget, onDismiss: {
+            /* 菜单是 sheet，撤回/删除的 alert 必须等 sheet 真正收起后再弹 */
+            flushPendingConfirm()
+        }) { msg in
             ChatMessageMenuSheet(
                 message: msg,
                 isGroup: isGroup,
@@ -573,8 +581,8 @@ struct ChatView: View {
             }
             .restoresSwipeBack()
         }
-        .fullScreenCover(isPresented: $showLive) {
-            NavigationStack { LiveRoomView(gid: liveGid) }
+        .fullScreenCover(item: $liveRoute) { route in
+            NavigationStack { LiveRoomView(gid: route.gid) }
         }
         .navigationDestination(isPresented: Binding(
             get: { groupRoute != nil },
@@ -1378,8 +1386,10 @@ struct ChatView: View {
     /// 撤回权限：本人 2 分钟（私聊 3 分钟）；群主可撤任意人；管理员可撤普通成员
     private func canRecall(_ m: Message) -> Bool {
         guard m.id > 0, m.type != 11, m.recalled == 0 else { return false }
-        let now = Int64(Date().timeIntervalSince1970)
+        /* 服务端下发的时间戳缺失时不拦，最终时限仍由服务端校验 */
+        let now = ServerClock.nowSec
         if m.fromUid == myId {
+            if m.createdAt <= 0 { return true }
             if isGroup { return myRole == 1 || myRole == 2 || now - m.createdAt <= 120 }
             return now - m.createdAt <= 180
         }
@@ -1599,8 +1609,10 @@ struct ChatView: View {
                 if selectMode { toggleSelect(msg) } else { menuTarget = msg }
             },
             onOpenLive: { gid in
-                liveGid = gid
-                showLive = true
+                /* 直播卡片未带群 ID 时退回当前会话，避免 /group/live/room?id=0 报参数错误 */
+                let target = gid > 0 ? gid : convId
+                guard target > 0 else { return }
+                liveRoute = LiveRoute(gid: target)
             },
             onOpenGroup: { gid in
                 guard gid > 0 else { return }
@@ -1711,12 +1723,19 @@ struct ChatView: View {
         case "report":
             reportTarget = msg
         case "recall":
-            confirm = .recall(msg)
+            pendingConfirm = .recall(msg)
         case "delete":
-            confirm = .delete(msg)
+            pendingConfirm = .delete(msg)
         default:
             break
         }
+    }
+
+    /// 菜单/预览层完全收起后再弹二次确认，否则 alert 会被正在收起的面板挡住
+    private func flushPendingConfirm() {
+        guard let next = pendingConfirm else { return }
+        pendingConfirm = nil
+        confirm = next
     }
 
     /// 长按菜单「保存」：图片/视频下载后写入系统相册

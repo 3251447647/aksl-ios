@@ -1452,6 +1452,11 @@ struct LiveRoomView: View {
         // 不在这里收广播：App 被系统杀掉时扩展可能仍在推流，
         // 等知道自己是主播还是观众后再决定恢复还是收掉（见 attach）。
         phase = "loading"
+        guard gid > 0 else {
+            blockedMsg = "直播间参数缺失，请返回群聊后重新进入"
+            phase = "blocked"
+            return
+        }
         do {
             let data = try await APIClient.shared.liveRoom(gid: gid)
             if let info = try? await APIClient.shared.groupInfo(id: gid) {
@@ -1461,19 +1466,27 @@ struct LiveRoomView: View {
             if let live = data.live {
                 await attach(live: live)
             } else if data.liveAllowed == 0 {
-                blockedMsg = (data.msg ?? "").isEmpty ? "该群未开通直播间（仅靓号群可开播）" : (data.msg ?? "")
+                blockedMsg = liveText(data.msg, fallback: "该群未开通直播间（仅靓号群可开播）")
                 phase = "blocked"
             } else if data.canStart == 1 {
                 startTitle = groupName
                 phase = "prestart"
             } else {
-                blockedMsg = (data.msg ?? "").isEmpty ? "直播已结束" : (data.msg ?? "")
+                blockedMsg = liveText(data.msg, fallback: "直播已结束")
                 phase = "blocked"
             }
         } catch {
-            blockedMsg = error.localizedDescription
+            blockedMsg = liveText(error.localizedDescription, fallback: "进入直播间失败，请稍后重试")
             phase = "blocked"
         }
+    }
+
+    /// 服务端缺参时只回“参数错误”，直播间场景下改成能指导操作的文案
+    private func liveText(_ raw: String?, fallback: String) -> String {
+        let t = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return fallback }
+        if t == "参数错误" { return "直播间参数缺失，请返回群聊后重新进入" }
+        return t
     }
 
     private func attach(live: LiveInfo) async {
@@ -1539,12 +1552,15 @@ struct LiveRoomView: View {
             data = try await APIClient.shared.get("api/v1/group/live/room", query: query)
         } catch {
             guard attempt == connectAttempt, !left, !closing else { return }
-            connectError = "进入直播间失败：\(error.localizedDescription)"
+            let raw = error.localizedDescription
+            connectError = raw == "参数错误"
+                ? "直播间参数缺失，请返回群聊后重新进入"
+                : "进入直播间失败：\(raw)"
             return
         }
         guard attempt == connectAttempt, !left, !closing else { return }
 
-        let serverMsg = (data.msg ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverMsg = liveText(data.msg, fallback: "")
         guard let sfu = data.sfu else {
             connectError = serverMsg.isEmpty ? "媒体服务未启用（服务端未返回 SFU 配置）" : serverMsg
             return
@@ -1928,6 +1944,7 @@ struct LiveRoomView: View {
     }
 
     private func startLive() async {
+        guard gid > 0 else { showTip("直播间参数缺失，请返回群聊后重试"); return }
         let t = startTitle.trimmingCharacters(in: .whitespaces)
         guard t.count >= 2 else { showTip("直播标题需 2~30 个字"); return }
         starting = true
@@ -1939,11 +1956,11 @@ struct LiveRoomView: View {
             if let live = data.live {
                 await attach(live: live)
             } else {
-                blockedMsg = (data.msg ?? "").isEmpty ? "开播失败，请稍后重试" : (data.msg ?? "")
+                blockedMsg = liveText(data.msg, fallback: "开播失败，请稍后重试")
                 phase = "blocked"
             }
         } catch {
-            showTip(error.localizedDescription)
+            showTip(liveText(error.localizedDescription, fallback: "开播失败，请稍后重试"))
         }
     }
 

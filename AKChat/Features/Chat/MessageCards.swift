@@ -979,7 +979,9 @@ struct MessageBody: View {
     private var liveCard: some View {
         let name = firstNonEmpty(cStr("name"), "群直播")
         let title = firstNonEmpty(cStr("title"), name)
-        let gid = Int64(cInt("gid"))
+        /* 卡片字段缺失时退回本会话的群 ID，避免点进去传 0 */
+        let rawGid = cInt("gid") > 0 ? cInt("gid") : cInt("group_id")
+        let gid = rawGid > 0 ? Int64(rawGid) : (message.convType == "group" ? message.convId : 0)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 AvatarView(url: cStr("avatar"), name: name, size: 44)
@@ -1014,7 +1016,7 @@ struct MessageBody: View {
         .frame(width: 242, alignment: .leading)
         .background(AKColor.card)
         .contentShape(Rectangle())
-        .onTapGesture { if gid > 0 { onOpenLive(gid) } }
+        .onTapGesture { onOpenLive(gid) }
     }
 
     /// 通话记录：与 v1_call_digest 同一套文案（[群]视频/语音通话 + 状态）
