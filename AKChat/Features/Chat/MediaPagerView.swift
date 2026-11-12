@@ -298,6 +298,9 @@ private struct PagerVideoView: View {
     @State private var playing = false
     @State private var progress: Double = 0
     @State private var duration: Double = 0
+    @Environment(\.scenePhase) private var scenePhase
+    /// 进后台前是否在播：回前台恢复，但用户手动暂停的不能被自动放开
+    @State private var resumeAfterBackground = false
 
     private let ticker = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
 
@@ -363,6 +366,24 @@ private struct PagerVideoView: View {
         }
         .onDisappear {
             player?.pause()
+        }
+        /*
+         * 工程开了 audio 后台模式（通话/直播要用），AVPlayer 不会因为进后台就停：
+         * 预览视频会继续出声、继续解码。这里和安卓 PausePlayerWhenHidden 同口径：
+         * 进后台暂停，回前台只恢复本来在播的那一条。
+         */
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                if resumeAfterBackground {
+                    resumeAfterBackground = false
+                    player?.play()
+                    playing = true
+                }
+            } else {
+                resumeAfterBackground = playing
+                player?.pause()
+                playing = false
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 final class AppState: ObservableObject {
@@ -10,8 +11,13 @@ final class AppState: ObservableObject {
     @Published var moments: [Moment] = []
     @Published var momentCover: String = ""
     @Published var emojis: [EmojiItem] = []
-    @Published var incoming: Message?
-    @Published var chatEvent: ChatEvent?
+    /*
+     * 逐条消息与 WS 事件不走 @Published：赋值会让每个持有 AppState 的视图
+     * （4 个常驻 tab、所有 EnvironmentObject 页面）都重算一次 body，
+     * 消息越多越明显。改成独立管道后只有聊天页订阅，其他页面不受影响。
+     */
+    let inbox = PassthroughSubject<Message, Never>()
+    let events = PassthroughSubject<ChatEvent, Never>()
     @Published var incomingCall: IncomingCall?
     @Published var unreadTotal: Int = 0
     @Published var isLoggedIn: Bool
@@ -383,7 +389,7 @@ final class AppState: ObservableObject {
                 let payloadData = try? JSONSerialization.data(withJSONObject: payload),
                 let message = try? JSONDecoder().decode(Message.self, from: payloadData)
             else { return }
-            incoming = message
+            inbox.send(message)
             /* 本地通知兜底：不是自己发的、会话未免打扰时提醒；消息本身照常入库 */
             if message.fromUid != (user?.id ?? 0), message.recalled != 1 {
                 if !isConvMuted(convType: message.convType, convId: message.convId) {
@@ -424,7 +430,7 @@ final class AppState: ObservableObject {
             }
         }
 
-        chatEvent = ChatEvent(
+        events.send(ChatEvent(
             kind: type,
             convType: eventConvType,
             convId: convId,
@@ -433,7 +439,7 @@ final class AppState: ObservableObject {
             fromUid: i64("from_uid"),
             name: str("from_name"),
             atUids: str("at_uids")
-        )
+        ))
 
         if type != "typing" {
             Task { await refreshConversations() }

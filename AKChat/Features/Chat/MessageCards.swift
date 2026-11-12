@@ -39,6 +39,8 @@ struct MessageBody: View {
     var peerName: String = "对方"
     /// 群聊 @ 名字 → uid（0 表示 @全体成员，-1 表示成员信息关闭）
     var mentionMap: [String: Int64] = [:]
+    /// @ 名单指纹（ChatView 派生缓存算好）：@ 高亮缓存的键，不用逐次比较整个字典
+    var mentionStamp: Int = 0
     var onMention: (Int64) -> Void = { _ in }
     /// 语音是否已播放过：对方发来的语音没播过显示红点
     var voicePlayed: Bool = true
@@ -157,7 +159,7 @@ struct MessageBody: View {
 
     private var textBubble: some View {
         AKLinkText(text: rawText, color: textColor, fontSize: 14.5, lineHeight: 20,
-                   mentionMap: mentionMap, onMention: onMention)
+                   mentionMap: mentionMap, mentionStamp: mentionStamp, onMention: onMention)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
             .background(mine ? AKColor.bubbleSelf : AKColor.bubbleOther)
@@ -446,7 +448,7 @@ struct MessageBody: View {
             .buttonStyle(.plain)
 
             AKLinkText(text: quoteBodyText, color: textColor, fontSize: 14.5, lineHeight: 20,
-                       mentionMap: mentionMap, onMention: onMention)
+                       mentionMap: mentionMap, mentionStamp: mentionStamp, onMention: onMention)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -1278,17 +1280,39 @@ struct MessageBody: View {
 
     static func shortDateTime(_ ts: Int64) -> String {
         guard ts > 0 else { return "" }
+        return shortFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
+    /* DateFormatter 构建一次是毫秒级开销：卡片里的提交时间每行都要用，必须复用 */
+    private static let shortFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)
         f.dateFormat = "MM-dd HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
-    }
+        return f
+    }()
 
     static func jsonObject(_ raw: String?) -> [String: Any]? {
-        guard let raw, let data = raw.data(using: .utf8) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard let raw, !raw.isEmpty else { return nil }
+        let key = raw as NSString
+        /* 同一段正文会在气泡、引用块、卡片里被解析 2~4 次，滚动时每个行首次出现又各解析一遍 */
+        if let hit = jsonCache.object(forKey: key) { return hit.value }
+        guard let data = raw.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        jsonCache.setObject(JSONBox(obj), forKey: key)
+        return obj
     }
+
+    private final class JSONBox: NSObject {
+        let value: [String: Any]
+        init(_ value: [String: Any]) { self.value = value }
+    }
+
+    private static let jsonCache: NSCache<NSString, JSONBox> = {
+        let c = NSCache<NSString, JSONBox>()
+        c.countLimit = 400
+        return c
+    }()
 
     static func sizeText(_ bytes: Int) -> String {
         if bytes <= 0 { return "文件" }
@@ -1324,6 +1348,8 @@ struct AKLinkText: View {
     var fontSize: CGFloat = 14.5
     var lineHeight: CGFloat = 20
     var mentionMap: [String: Int64] = [:]
+    /// @ 名单指纹：ChatView 已按成员表算好，缓存键用它代替整个字典比较
+    var mentionStamp: Int = 0
     var onMention: (Int64) -> Void = { _ in }
     var onNumberTap: ((String) -> Void)? = nil
 
@@ -1338,21 +1364,46 @@ struct AKLinkText: View {
         let kind: HitKind
     }
 
+    /// 命中区间的缓存：滚动时 LazyVStack 会反复销毁重建行，
+    /// 每次重建都要跑一遍 NSDataDetector 与正则；文本与 @名单没变就直接复用。
+    private final class HitsBox: NSObject {
+        let hits: [Hit]
+        init(_ hits: [Hit]) { self.hits = hits }
+    }
+
+    private static let hitsCache: NSCache<NSString, HitsBox> = {
+        let c = NSCache<NSString, HitsBox>()
+        c.countLimit = 400
+        return c
+    }()
+
+    /* 三个正则/探测器只建一次：原来每次 body 重算都新建一个 */
+    private static let linkDetector: NSDataDetector? =
+        try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    private static let mentionRegex = try? NSRegularExpression(pattern: "@([^\\s@，,。：:]{1,24})")
+    private static let numberRegex = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z])[0-9]{5,}(?![0-9A-Za-z])")
+
     private var hits: [Hit] {
+        let key = "\(text)\u{1}\(mentionStamp)\u{1}\(onNumberTap == nil ? 0 : 1)" as NSString
+        if let box = Self.hitsCache.object(forKey: key) { return box.hits }
+        let parsed = parseHits()
+        Self.hitsCache.setObject(HitsBox(parsed), forKey: key)
+        return parsed
+    }
+
+    private func parseHits() -> [Hit] {
         let ns = text as NSString
         guard ns.length > 0 else { return [] }
         var out: [Hit] = []
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
-            detector.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
-                guard let match, let found = match.url else { return }
-                var url = found
-                // 裸域名被 NSDataDetector 补成 http，内置浏览器受 ATS 限制会白屏，改补 https
-                let raw = ns.substring(with: match.range)
-                if !raw.lowercased().hasPrefix("http"), let fixed = URL(string: "https://" + raw) {
-                    url = fixed
-                }
-                out.append(Hit(range: match.range, kind: .url(url)))
+        Self.linkDetector?.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
+            guard let match, let found = match.url else { return }
+            var url = found
+            // 裸域名被 NSDataDetector 补成 http，内置浏览器受 ATS 限制会白屏，改补 https
+            let raw = ns.substring(with: match.range)
+            if !raw.lowercased().hasPrefix("http"), let fixed = URL(string: "https://" + raw) {
+                url = fixed
             }
+            out.append(Hit(range: match.range, kind: .url(url)))
         }
         if !mentionMap.isEmpty {
             /* 按成员名字面匹配（长的优先）：昵称含空格也能整体高亮，不能按空白分词 */
@@ -1384,7 +1435,7 @@ struct AKLinkText: View {
                 }
             }
             /* 群成员不可见时没有名字表：沿用按词识别，只蓝色不跳转 */
-            if mentionMap["*"] != nil, let re = try? NSRegularExpression(pattern: "@([^\\s@，,。：:]{1,24})") {
+            if mentionMap["*"] != nil, let re = Self.mentionRegex {
                 re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
                     guard let match else { return }
                     guard !out.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) else { return }
@@ -1392,7 +1443,7 @@ struct AKLinkText: View {
                 }
             }
         }
-        if onNumberTap != nil, let re = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z])[0-9]{5,}(?![0-9A-Za-z])") {
+        if onNumberTap != nil, let re = Self.numberRegex {
             re.enumerateMatches(in: text, options: [], range: NSRange(location: 0, length: ns.length)) { match, _, _ in
                 guard let match else { return }
                 out.append(Hit(range: match.range, kind: .number(ns.substring(with: match.range))))

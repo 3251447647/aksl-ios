@@ -209,12 +209,17 @@ enum TimeText {
     private static let tz = TimeZone(identifier: "Asia/Shanghai") ?? TimeZone(secondsFromGMT: 8 * 3600)!
 
     private static func formatter(_ format: String) -> DateFormatter {
+        /* DateFormatter 构建是毫秒级开销：会话列表每行都要取时间文本，按格式复用 */
+        if let cached = formatters[format] { return cached }
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.timeZone = tz
         f.dateFormat = format
+        formatters[format] = f
         return f
     }
+
+    private static var formatters: [String: DateFormatter] = [:]
 
     private static func date(_ ts: Int64) -> Date {
         Date(timeIntervalSince1970: TimeInterval(ts))

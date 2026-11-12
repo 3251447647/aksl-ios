@@ -678,7 +678,7 @@ struct ChatView: View {
                 })
             }
         }
-        .onReceive(app.$incoming.compactMap { $0 }) { msg in
+        .onReceive(app.inbox) { msg in
             guard msg.convType == convType, msg.convId == convId else { return }
             if msg.id != 0, let idx = messages.firstIndex(where: { $0.id == msg.id }) {
                 /* 服务端在领取/收款后会推送同 id 的更新卡片；以前这里直接 return，
@@ -710,7 +710,7 @@ struct ChatView: View {
             }
             Task { await app.markRead(convType: convType, convId: convId, lastId: msg.id) }
         }
-        .onReceive(app.$chatEvent.compactMap { $0 }) { ev in
+        .onReceive(app.events) { ev in
             handle(ev)
         }
         .onChange(of: app.conversations) { _ in syncPeerConv() }
@@ -979,7 +979,9 @@ struct ChatView: View {
                         }
                         .padding(.vertical, 6)
                     }
-                    ForEach(Array(messages.enumerated()), id: \.element.listKey) { index, msg in
+                    ForEach(derived.indexed, id: \.message.listKey) { item in
+                        let index = item.index
+                        let msg = item.message
                         if index == firstUnread {
                             unreadDivider(count: unreadCount)
                         }
@@ -2617,6 +2619,9 @@ struct ChatView: View {
         value.dividers = dividerLabels
         value.firstUnread = firstUnreadIndex
         value.unreadCount = unreadMessageCount
+        value.indexed = messages.enumerated().map {
+            ChatDerivedCache.IndexedMessage(index: $0.offset, message: $0.element)
+        }
         return value
     }
 
@@ -2703,6 +2708,14 @@ private final class ChatDerivedCache: ObservableObject {
         var dividers: [String: String] = [:]
         var firstUnread = -1
         var unreadCount = 0
+        /// 预展开的「下标 + 消息」：ForEach 每次重算 body 都要 enumerate 一遍全量消息，
+        /// 消息不变时跟着派生缓存一起复用，不再每帧新建一个元组数组
+        var indexed: [IndexedMessage] = []
+    }
+
+    struct IndexedMessage {
+        let index: Int
+        let message: Message
     }
 
     private var key: Key?
@@ -2867,6 +2880,7 @@ private struct ChatMessageRow: View, Equatable {
             onOpenMedia: onOpenMedia,
             peerName: peerName,
             mentionMap: mentionMap,
+            mentionStamp: mentionStamp,
             onMention: onMention,
             voicePlayed: voicePlayed,
             uploadProgress: uploadProgress,
