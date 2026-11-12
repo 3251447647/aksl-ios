@@ -45,6 +45,9 @@ struct GroupInfo: Decodable {
     let isBanned: Int
     let banReason: String?
     let myRole: Int
+    let isMember: Int
+    let isPlatformAdmin: Int
+    let canManage: Int
     let myMuteUntil: Int64
     let allowInvite: Int
     let myNickname: String
@@ -61,6 +64,9 @@ struct GroupInfo: Decodable {
         case isBanned = "is_banned"
         case banReason = "ban_reason"
         case myRole = "my_role"
+        case isMember = "is_member"
+        case isPlatformAdmin = "is_platform_admin"
+        case canManage = "can_manage"
         case myMuteUntil = "my_mute_until"
         case allowInvite = "allow_invite"
         case myNickname = "my_nickname"
@@ -82,6 +88,9 @@ struct GroupInfo: Decodable {
         isBanned = (try? c.decode(Int.self, forKey: .isBanned)) ?? 0
         banReason = try? c.decode(String.self, forKey: .banReason)
         myRole = (try? c.decode(Int.self, forKey: .myRole)) ?? 0
+        isMember = (try? c.decode(Int.self, forKey: .isMember)) ?? 0
+        isPlatformAdmin = (try? c.decode(Int.self, forKey: .isPlatformAdmin)) ?? 0
+        canManage = (try? c.decode(Int.self, forKey: .canManage)) ?? 0
         myMuteUntil = (try? c.decode(Int64.self, forKey: .myMuteUntil)) ?? 0
         allowInvite = (try? c.decode(Int.self, forKey: .allowInvite)) ?? 1
         myNickname = (try? c.decode(String.self, forKey: .myNickname)) ?? ""

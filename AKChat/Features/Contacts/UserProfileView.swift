@@ -37,6 +37,7 @@ struct UserProfileView: View {
     @State private var groupNickText = ""
     @State private var showMuteMenu = false
     @State private var showKick = false
+    @State private var showGroupBlock = false
     @State private var adminBusy = false
     @State private var adminOverride: Bool?
 
@@ -721,6 +722,22 @@ struct UserProfileView: View {
                                 } message: {
                                     Text("确定把「\(profile?.displayName ?? presetName)」移出本群吗？")
                                 }
+                                settingsDivider
+                                Button {
+                                    showGroupBlock = true
+                                } label: {
+                                    settingsRowContent("拉黑", value: "",
+                                                       showArrow: false, destructive: true)
+                                }
+                                .buttonStyle(.plain)
+                                .alert("拉黑", isPresented: $showGroupBlock) {
+                                    Button("取消", role: .cancel) {}
+                                    Button("拉黑", role: .destructive) {
+                                        Task { await blockGroup() }
+                                    }
+                                } message: {
+                                    Text("拉黑后「\(profile?.displayName ?? presetName)」将被移出本群，且无法再次加入。确定拉黑吗？")
+                                }
                             }
                         }
                     }
@@ -955,6 +972,17 @@ struct UserProfileView: View {
                 body: ["gid": groupId, "user_id": uid]
             )
             showToast(msg.isEmpty ? "已移出群聊" : msg)
+            showSettings = false
+            await load()
+        } catch let err {
+            showToast(err.localizedDescription)
+        }
+    }
+
+    private func blockGroup() async {
+        do {
+            let msg = try await APIClient.shared.blockGroupMember(gid: groupId, uid: uid)
+            showToast(msg.isEmpty ? "已拉黑" : msg)
             showSettings = false
             await load()
         } catch let err {

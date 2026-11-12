@@ -294,40 +294,41 @@ private struct PagerVideoView: View {
     let url: URL
     let active: Bool
 
-    @State private var player: AVPlayer?
-    @State private var playing = false
-    @State private var progress: Double = 0
-    @State private var duration: Double = 0
+    @StateObject private var playback = VideoPlayback()
     @Environment(\.scenePhase) private var scenePhase
     /// 进后台前是否在播：回前台恢复，但用户手动暂停的不能被自动放开
     @State private var resumeAfterBackground = false
-
-    private let ticker = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
+    /// 拖动进度条时的临时值；松手才真正 seek
+    @State private var scrub: Double?
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let player {
-                PlayerLayerView(player: player)
+
+            if let player = playback.player {
+                AKVideoSurface(player: player)
                     .ignoresSafeArea()
             }
 
-            if !playing {
-                Text("▶")
-                    .font(.system(size: 26))
-                    .foregroundColor(.white)
-                    .frame(width: 64, height: 64)
-                    .background(Color.black.opacity(0.4))
-                    .clipShape(Circle())
+            if playback.state == .failed {
+                failedHint
+            } else if playback.state == .paused {
+                playBadge
+            }
+
+            if playback.buffering || playback.state == .loading {
+                ProgressView()
+                    .scaleEffect(1.1)
+                    .tint(.white)
             }
 
             VStack {
                 Spacer()
                 HStack(spacing: 8) {
                     Button {
-                        togglePlay()
+                        playback.toggle()
                     } label: {
-                        Text(playing ? "⏸" : "▶")
+                        Text(playback.state == .playing ? "⏸" : "▶")
                             .font(.system(size: 14))
                             .foregroundColor(.white)
                             .frame(width: 34, height: 34)
@@ -335,13 +336,22 @@ private struct PagerVideoView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    Slider(value: $progress, in: 0...1) { editing in
-                        if !editing, duration > 0 {
-                            player?.seek(to: CMTime(seconds: progress * duration, preferredTimescale: 600))
+
+                    Slider(
+                        value: Binding(
+                            get: { scrub ?? (playback.duration > 0 ? playback.position / playback.duration : 0) },
+                            set: { scrub = $0 }
+                        ),
+                        in: 0...1
+                    ) { editing in
+                        if !editing, let value = scrub {
+                            playback.seek(to: value * playback.duration)
+                            scrub = nil
                         }
                     }
                     .tint(AKColor.brand)
-                    Text(fmt(duration))
+
+                    Text(fmt(playback.duration))
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.8))
                 }
@@ -349,24 +359,21 @@ private struct PagerVideoView: View {
                 .padding(.vertical, 84)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { togglePlay() }
+        .onTapGesture {
+            if playback.state == .failed {
+                playback.retry()
+            } else {
+                playback.toggle()
+            }
+        }
         .onAppear {
-            setup()
-            if active { player?.play(); playing = true }
+            playback.load(url)
+            if active { playback.play() }
         }
         .onChange(of: active) { on in
-            if on { player?.play(); playing = true }
-            else { player?.pause(); playing = false }
+            if on { playback.play() } else { playback.pause() }
         }
-        .onReceive(ticker) { _ in
-            guard let p = player, duration > 0 else { return }
-            progress = min(max(p.currentTime().seconds / duration, 0), 1)
-            if p.rate == 0 { playing = false }
-        }
-        .onDisappear {
-            player?.pause()
-        }
+        .onDisappear { playback.pause() }
         /*
          * 工程开了 audio 后台模式（通话/直播要用），AVPlayer 不会因为进后台就停：
          * 预览视频会继续出声、继续解码。这里和安卓 PausePlayerWhenHidden 同口径：
@@ -376,77 +383,44 @@ private struct PagerVideoView: View {
             if phase == .active {
                 if resumeAfterBackground {
                     resumeAfterBackground = false
-                    player?.play()
-                    playing = true
+                    playback.play()
                 }
             } else {
-                resumeAfterBackground = playing
-                player?.pause()
-                playing = false
+                resumeAfterBackground = playback.state == .playing
+                playback.pause()
             }
         }
     }
 
-    private func setup() {
-        guard player == nil else { return }
-        let p = AVPlayer(url: url)
-        player = p
-        Task {
-            if let item = p.currentItem, let d = try? await item.asset.load(.duration) {
-                await MainActor.run { duration = d.seconds.isFinite ? d.seconds : 0 }
-            }
+    /// 失败不静默：给明确文案，点画面任意位置重建 item 重试
+    private var failedHint: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 22))
+            Text("视频无法播放，点击重试")
+                .font(.system(size: 13))
         }
+        .foregroundColor(.white)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(Color.black.opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .allowsHitTesting(false)
     }
 
-    private func togglePlay() {
-        if playing {
-            player?.pause()
-        } else {
-            player?.play()
-        }
-        playing.toggle()
+    private var playBadge: some View {
+        Image(systemName: "play.fill")
+            .font(.system(size: 22))
+            .foregroundColor(.white)
+            .frame(width: 64, height: 64)
+            .background(Color.black.opacity(0.4))
+            .clipShape(Circle())
+            .allowsHitTesting(false)
     }
 
     private func fmt(_ seconds: Double) -> String {
         guard seconds > 0 else { return "00:00" }
         let s = Int(seconds)
         return String(format: "%02d:%02d", s / 60, s % 60)
-    }
-}
-
-private struct PlayerLayerView: UIViewRepresentable {
-    let player: AVPlayer
-
-    func makeUIView(context: Context) -> PlayerContainerView {
-        let view = PlayerContainerView()
-        view.playerLayer.player = player
-        return view
-    }
-
-    func updateUIView(_ uiView: PlayerContainerView, context: Context) {
-        uiView.playerLayer.player = player
-    }
-}
-
-final class PlayerContainerView: UIView {
-    override class var layerClass: AnyClass { AVPlayerLayer.self }
-
-    var playerLayer: AVPlayerLayer {
-        layer as! AVPlayerLayer
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        playerLayer.videoGravity = .resizeAspect
-        backgroundColor = .black
-        /* 控制条都在 SwiftUI 层，播放器本身不接管触摸，否则点击播放/暂停失效 */
-        isUserInteractionEnabled = false
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        playerLayer.videoGravity = .resizeAspect
-        backgroundColor = .black
-        isUserInteractionEnabled = false
     }
 }

@@ -21,7 +21,9 @@ struct MomentsView: View {
     /** 点赞乐观状态：调用接口期间先按本地状态渲染，列表刷新后以服务端为准 */
     @State private var likeOverrides: [Int64: MomentLikeOverride] = [:]
     @State private var liking: Set<Int64> = []
-    @State private var repostTarget: Moment?
+    @State private var reportTarget: Moment?
+    /** 举报提交结果提示 */
+    @State private var reportResult: String?
     /** 0=全部动态 1=我的动态 */
     @State private var tab = 0
     @State private var mineMoments: [Moment] = []
@@ -189,7 +191,8 @@ struct MomentsView: View {
                     ForEach(shownMoments) { moment in
                         MomentCard(
                             moment: moment,
-                            isMine: moment.userId == (app.user?.id ?? 0),
+                            isMine: moment.userId == (app.user?.id ?? 0)
+                                || moment.canDelete == 1 || (app.user?.isPlatformAdmin == 1),
                             onLike: { Task { await like(moment) } },
                             onComment: { commentTarget = moment },
                             onDelete: { deleteTarget = moment },
@@ -197,7 +200,7 @@ struct MomentsView: View {
                                 previewBox = MomentImageBox(images: moment.images, index: index)
                             },
                             likeOverride: likeOverrides[moment.id],
-                            onRepost: { repostTarget = moment }
+                            onReport: { reportTarget = moment }
                         )
                         .padding(.horizontal, 12)
                     }
@@ -264,11 +267,18 @@ struct MomentsView: View {
             MomentReplySheet(moment: m)
                 .environmentObject(app)
         }
-        .sheet(item: $repostTarget) { m in
-            RepostMomentSheet(moment: m) {
-                await app.loadMoments()
-                if tab == 1 { await loadMine() }
-                if isOtherFeed { await loadOther() }
+        .sheet(item: $reportTarget) { m in
+            NavigationStack {
+                ReportSheet(title: "举报动态", preview: m.reportPreview) { reason, note in
+                    Task {
+                        do {
+                            _ = try await APIClient.shared.reportMoment(id: m.id, reason: reason, content: note)
+                            showReportResult("举报已提交，感谢反馈")
+                        } catch let err {
+                            showReportResult(err.localizedDescription)
+                        }
+                    }
+                }
             }
         }
         .navigationDestination(isPresented: $showPublish) {
@@ -295,6 +305,30 @@ struct MomentsView: View {
             Button("取消", role: .cancel) { deleteTarget = nil }
         } message: {
             Text("确定删除这条动态吗？点赞和评论将一并清除，此操作不可恢复。")
+        }
+        .overlay(alignment: .bottom) { reportToast }
+    }
+
+    /// 底部轻提示：举报提交结果（对齐安卓 Toast）
+    private var reportToast: some View {
+        Group {
+            if let reportResult {
+                Text(reportResult)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.bottom, 90)
+            }
+        }
+    }
+
+    private func showReportResult(_ text: String) {
+        reportResult = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if reportResult == text { reportResult = nil }
         }
     }
 
@@ -470,6 +504,17 @@ struct MomentLikeOverride: Equatable {
     }
 }
 
+/// 举报弹窗预览：正文前 60 字，无正文时按媒体类型占位（与安卓 momentReportPreview 一致）
+extension Moment {
+    var reportPreview: String {
+        let text = (content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { return String(text.prefix(60)) }
+        if !videoUrl.isEmpty { return "[视频动态]" }
+        if !images.isEmpty { return "[图片动态]" }
+        return "[动态]"
+    }
+}
+
 /// 一条动态：头像 40 + 右侧整列（名字、时间、正文、图片、视频、操作行、互动块），与安卓 MomentItem 同构
 struct MomentCard: View {
     let moment: Moment
@@ -481,7 +526,7 @@ struct MomentCard: View {
     var onPreview: ((Int) -> Void)? = nil
     /// 点赞乐观覆盖：列表与详情共用
     var likeOverride: MomentLikeOverride? = nil
-    var onRepost: (() -> Void)? = nil
+    var onReport: (() -> Void)? = nil
 
     @State private var expanded = false
     @State private var playVideo = false
@@ -632,21 +677,21 @@ struct MomentCard: View {
         }
     }
 
-    /// 操作行：转发 / 评论 / 点赞 / 更多（自己的动态），右对齐
+    /// 操作行：举报 / 评论 / 点赞 / 更多（自己的动态），右对齐
     private var actionRow: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
             Button {
-                onRepost?()
+                onReport?()
             } label: {
-                Text("转发")
+                Text("举报")
                     .font(.system(size: 12))
                     .foregroundColor(AKColor.link)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
             }
             .buttonStyle(.plain)
-            .disabled(onRepost == nil)
+            .disabled(onReport == nil)
             Button(action: onComment) {
                 HStack(spacing: 3) {
                     Image(systemName: "bubble.left")
@@ -1246,19 +1291,46 @@ private struct MomentReplySheet: View {
     }
 }
 
-/// 朋友圈视频播放：全屏播放，点击关闭
+/// 朋友圈视频：全屏自动播放，失败给重试
 struct MomentVideoPlayer: View {
     let url: URL?
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var playback = VideoPlayback()
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if let url {
-                VideoPlayer(player: AVPlayer(url: url))
+                .contentShape(Rectangle())
+                .onTapGesture { playback.toggle() }
+            if let player = playback.player {
+                AKVideoSurface(player: player)
                     .ignoresSafeArea()
-            } else {
+            }
+            if url == nil {
                 Text("视频地址无效").foregroundColor(.white)
+            } else if playback.state == .failed {
+                Button {
+                    playback.retry()
+                } label: {
+                    Text("视频无法播放，点击重试")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.16))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            } else if playback.buffering || playback.state == .loading {
+                ProgressView().scaleEffect(1.1).tint(.white)
+            } else if playback.state == .paused {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.white)
+                    .frame(width: 56, height: 56)
+                    .background(Color.black.opacity(0.4))
+                    .clipShape(Circle())
+                    .allowsHitTesting(false)
             }
             VStack {
                 HStack {
@@ -1278,5 +1350,9 @@ struct MomentVideoPlayer: View {
                 Spacer()
             }
         }
+        .onAppear {
+            if let url { playback.load(url, autoplay: true) }
+        }
+        .onDisappear { playback.stop() }
     }
 }

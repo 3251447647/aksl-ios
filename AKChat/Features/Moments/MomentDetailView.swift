@@ -15,14 +15,18 @@ struct MomentDetailView: View {
     @State private var gone = false
     @State private var likeOverride: MomentLikeOverride?
     @State private var liking = false
-    @State private var repostTarget: Moment?
+    @State private var reportTarget: Moment?
+    /** 举报提交结果提示 */
+    @State private var reportResult: String?
 
     /// 点赞/评论后 AppState 会重新拉列表，这里始终渲染最新一条
     private var current: Moment {
         app.moments.first { $0.id == moment.id } ?? moment
     }
 
-    private var mine: Bool { current.userId == (app.user?.id ?? 0) }
+    private var mine: Bool {
+        current.userId == (app.user?.id ?? 0) || current.canDelete == 1 || (app.user?.isPlatformAdmin == 1)
+    }
 
     private var canSend: Bool {
         !sending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -44,7 +48,7 @@ struct MomentDetailView: View {
                             previewBox = MomentImageBox(images: current.images, index: idx)
                         },
                         likeOverride: likeOverride,
-                        onRepost: { repostTarget = current }
+                        onReport: { reportTarget = current }
                     )
                     .padding(12)
                 }
@@ -66,9 +70,18 @@ struct MomentDetailView: View {
         .fullScreenCover(item: $previewBox) { box in
             MomentImagePager(images: box.images, start: box.index)
         }
-        .sheet(item: $repostTarget) { m in
-            RepostMomentSheet(moment: m) {
-                await app.loadMoments()
+        .sheet(item: $reportTarget) { m in
+            NavigationStack {
+                ReportSheet(title: "举报动态", preview: m.reportPreview) { reason, note in
+                    Task {
+                        do {
+                            _ = try await APIClient.shared.reportMoment(id: m.id, reason: reason, content: note)
+                            showReportResult("举报已提交，感谢反馈")
+                        } catch let err {
+                            showReportResult(err.localizedDescription)
+                        }
+                    }
+                }
             }
         }
         .alert("删除动态", isPresented: $showDelete) {
@@ -82,6 +95,30 @@ struct MomentDetailView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("确定删除这条动态吗？点赞和评论将一并清除，此操作不可恢复。")
+        }
+        .overlay(alignment: .bottom) { reportToast }
+    }
+
+    /// 底部轻提示：举报提交结果（对齐安卓 Toast）
+    private var reportToast: some View {
+        Group {
+            if let reportResult {
+                Text(reportResult)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.bottom, 70)
+            }
+        }
+    }
+
+    private func showReportResult(_ text: String) {
+        reportResult = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if reportResult == text { reportResult = nil }
         }
     }
 

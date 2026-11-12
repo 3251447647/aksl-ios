@@ -66,6 +66,7 @@ struct GroupMembersView: View {
     let groupId: Int64
     let myRole: Int
     let myUid: Int64
+    let isPlatformAdmin: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @State private var members: [GroupMember] = []
@@ -80,6 +81,7 @@ struct GroupMembersView: View {
     @State private var confirmDissolve = false
     @State private var confirmUpgrade = false
     @State private var confirmQuit = false
+    @State private var blockTarget: GroupMember?
     @State private var adminKeyword = ""
     @State private var overrides: [String: Bool] = [:]
     @State private var chatBg = ""
@@ -87,8 +89,8 @@ struct GroupMembersView: View {
     @State private var bgMenu = false
     @State private var bgPicker = false
 
-    private var canManage: Bool { myRole == 1 || myRole == 2 }
-    private var isOwner: Bool { myRole == 1 }
+    private var canManage: Bool { myRole == 1 || myRole == 2 || isPlatformAdmin }
+    private var isOwner: Bool { myRole == 1 || isPlatformAdmin }
     private var admins: [GroupMember] { (settings?.members ?? members).filter { $0.role == 2 } }
     private var memberCount: Int { settings?.memberCount ?? members.count }
 
@@ -166,6 +168,20 @@ struct GroupMembersView: View {
             Button("退出群聊", role: .destructive) { Task { await quit() } }
         } message: {
             Text("退出后将不再接收「\(groupName)」的消息，聊天记录会一并清除。确定退出吗？")
+        }
+        .alert("拉黑", isPresented: Binding(
+            get: { blockTarget != nil },
+            set: { if !$0 { blockTarget = nil } }
+        )) {
+            Button("取消", role: .cancel) { blockTarget = nil }
+            Button("拉黑", role: .destructive) {
+                if let m = blockTarget {
+                    blockTarget = nil
+                    Task { await block(m) }
+                }
+            }
+        } message: {
+            Text("拉黑后「\(blockTarget?.name ?? "该成员")」将被移出群聊，且无法再次加入。确定拉黑吗？")
         }
         .overlay(alignment: .bottom) {
             if let tipText {
@@ -254,7 +270,7 @@ struct GroupMembersView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                if s.isOwner == 1 {
+                if s.isOwner == 1 || isPlatformAdmin {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12))
                         .foregroundColor(AKColor.placeholder)
@@ -264,7 +280,7 @@ struct GroupMembersView: View {
             .frame(minHeight: 50)
             .contentShape(Rectangle())
             .onTapGesture {
-                if s.isOwner == 1 { showAdminPicker = true }
+                if s.isOwner == 1 || isPlatformAdmin { showAdminPicker = true }
             }
 
             if s.requestPending > 0 || s.needAudit == 1 {
@@ -292,12 +308,34 @@ struct GroupMembersView: View {
             }
 
             divider()
+            NavigationLink {
+                GroupBlocklistView(groupId: groupId)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("黑名单")
+                        .font(.system(size: 15))
+                        .foregroundColor(AKColor.text)
+                    Spacer(minLength: 6)
+                    Text("查看与解除")
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.hint)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12))
+                        .foregroundColor(AKColor.placeholder)
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 50)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            divider()
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("聊天背景")
                         .font(.system(size: 15))
                         .foregroundColor(AKColor.text)
-                    Text(s.isOwner == 1 ? "群内全员可见，可随时恢复默认" : "由群主设置，全员可见")
+                    Text(s.isOwner == 1 || isPlatformAdmin ? "群内全员可见，可随时恢复默认" : "由群主设置，全员可见")
                         .font(.system(size: 12))
                         .foregroundColor(AKColor.hint)
                         .lineLimit(1)
@@ -306,7 +344,7 @@ struct GroupMembersView: View {
                 Text(chatBg.isEmpty ? "默认" : "已设置")
                     .font(.system(size: 13))
                     .foregroundColor(chatBg.isEmpty ? AKColor.hint : AKColor.brand)
-                if s.isOwner == 1 {
+                if s.isOwner == 1 || isPlatformAdmin {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12))
                         .foregroundColor(AKColor.placeholder)
@@ -316,7 +354,7 @@ struct GroupMembersView: View {
             .frame(minHeight: 50)
             .contentShape(Rectangle())
             .onTapGesture {
-                if s.isOwner == 1 { bgMenu = true }
+                if s.isOwner == 1 || isPlatformAdmin { bgMenu = true }
             }
         }
     }
@@ -584,6 +622,9 @@ struct GroupMembersView: View {
                 } else {
                     Button("设为管理员") { Task { await setRole(m, 2) } }
                 }
+            }
+            if isOwner || m.role == 0 {
+                Button("拉黑", role: .destructive) { blockTarget = m }
             }
             Button("移出群聊", role: .destructive) { Task { await kick(m) } }
         } label: {
@@ -878,6 +919,16 @@ struct GroupMembersView: View {
         await APIClient.shared.kickMember(gid: groupId, uid: m.uid)
         await load()
     }
+
+    private func block(_ m: GroupMember) async {
+        do {
+            _ = try await APIClient.shared.blockGroupMember(gid: groupId, uid: m.uid)
+            tipText = "已拉黑"
+            await load()
+        } catch {
+            tipText = error.localizedDescription
+        }
+    }
 }
 
 /// 入群申请页：搜索 + 同意 / 拒绝（可填理由）
@@ -1051,6 +1102,7 @@ struct GroupMemberListView: View {
     let groupId: Int64
     let myRole: Int
     let myUid: Int64
+    let isPlatformAdmin: Bool = false
     /// 群主关闭了成员信息查看：列表仍可见，但不能进主页
     var hidden: Bool = false
 
@@ -1199,7 +1251,7 @@ struct GroupMemberListView: View {
                 }
             }
             Spacer(minLength: 6)
-            if myRole == 1 && m.role != 1 {
+            if (myRole == 1 || isPlatformAdmin) && m.role != 1 {
                 Toggle("", isOn: Binding(
                     get: { isAdmin },
                     set: { next in setAdmin(m, next) }

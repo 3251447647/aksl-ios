@@ -5,9 +5,9 @@ final class VoiceService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var recording = false
     @Published var playingURL: String?
 
-    /// 语音正文是「url|#|{"duration":n}」，播放前只取 url
+    /// 语音/图片/视频正文是「url|#|{json}」，播放前只取 url（对齐安卓 cleanMediaUrl）
     static func cleanPath(_ raw: String) -> String {
-        raw.components(separatedBy: "|#|").first ?? raw
+        MediaURLPath.clean(raw)
     }
 
     private var recorder: AVAudioRecorder?

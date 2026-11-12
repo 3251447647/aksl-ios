@@ -1518,7 +1518,9 @@ struct LoopingVideo: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: LoopingVideoView, context: Context) {}
+    func updateUIView(_ uiView: LoopingVideoView, context: Context) {
+        uiView.load(url)
+    }
 }
 
 final class LoopingVideoView: UIView {
@@ -1526,6 +1528,7 @@ final class LoopingVideoView: UIView {
 
     private var player: AVQueuePlayer?
     private var looper: AVPlayerLooper?
+    private var currentURL: URL?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1539,8 +1542,11 @@ final class LoopingVideoView: UIView {
     }
 
     func load(_ url: URL) {
+        guard currentURL != url else { return }
+        currentURL = url
         let p = AVQueuePlayer()
         let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 1
         looper = AVPlayerLooper(player: p, templateItem: item)
         p.isMuted = true
         p.play()
@@ -1548,6 +1554,7 @@ final class LoopingVideoView: UIView {
             layer.player = p
             layer.videoGravity = .resizeAspect
         }
+        player?.pause()
         player = p
     }
 

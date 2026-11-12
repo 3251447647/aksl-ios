@@ -75,11 +75,13 @@ struct GroupInfoView: View {
     @State private var showShareCard = false
 
     private var isOwner: Bool { (info?.myRole ?? 0) == 1 }
-    private var isManager: Bool { isOwner || (info?.myRole ?? 0) == 2 }
+    private var isPlatformAdmin: Bool { (info?.isPlatformAdmin ?? 0) == 1 }
+    private var isManager: Bool { isOwner || (info?.myRole ?? 0) == 2 || isPlatformAdmin }
     private var myUid: Int64 { app.user?.id ?? 0 }
-    private var canInvite: Bool { (info?.allowInvite ?? 1) == 1 || isManager }
+    private var canInvite: Bool { (info?.isMember ?? 0) == 1 && ((info?.allowInvite ?? 1) == 1 || isManager) }
     private var membersHidden: Bool {
         guard let g = info else { return false }
+        if isPlatformAdmin { return false }
         let hidden = (extras?.membersHidden ?? 0) == 1
             || ((extras?.hideMembers ?? 0) == 1 && g.myRole != 1 && g.myRole != 2)
         return hidden
@@ -323,7 +325,7 @@ struct GroupInfoView: View {
         let shown = Array(g.members.prefix(15))
         return card {
             NavigationLink {
-                GroupMemberListView(groupId: groupId, myRole: g.myRole, myUid: myUid, hidden: membersHidden)
+                GroupMemberListView(groupId: groupId, myRole: g.myRole, myUid: myUid, isPlatformAdmin: isPlatformAdmin, hidden: membersHidden)
             } label: {
                 HStack(spacing: 6) {
                     Text("群成员")
@@ -469,7 +471,8 @@ struct GroupInfoView: View {
 
     private var managerCard: some View {
         NavigationLink {
-            GroupMembersView(groupId: groupId, myRole: info?.myRole ?? 0, myUid: myUid)
+            GroupMembersView(groupId: groupId, myRole: info?.myRole ?? 0, myUid: myUid,
+                             isPlatformAdmin: (info?.isPlatformAdmin ?? 0) == 1)
         } label: {
             HStack(spacing: 6) {
                 Text("群管理")
@@ -536,7 +539,7 @@ struct GroupInfoView: View {
             }
             .buttonStyle(.plain)
 
-            if g.myRole != 1 {
+            if g.isMember == 1 && g.myRole != 1 {
                 divider
                 Button {
                     confirmLeave = true
@@ -976,7 +979,8 @@ struct GroupCardProfileView: View {
     private func memberCard(_ g: GroupInfo) -> some View {
         VStack(spacing: 0) {
             NavigationLink {
-                GroupMemberListView(groupId: groupId, myRole: g.myRole, myUid: myUid, hidden: false)
+                GroupMemberListView(groupId: groupId, myRole: g.myRole, myUid: myUid,
+                                   isPlatformAdmin: (g.isPlatformAdmin == 1), hidden: false)
             } label: {
                 HStack(spacing: 6) {
                     Text("成员情况")

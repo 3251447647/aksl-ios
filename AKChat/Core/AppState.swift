@@ -204,9 +204,13 @@ final class AppState: ObservableObject {
         return data.message
     }
 
+    /// 整页历史（含服务端 has_more）：分页到底与否由服务端说了算，调用方不能靠条数猜
+    func loadHistoryPage(convType: String, convId: Int64, beforeId: Int64 = 0, anchorId: Int64 = 0) async throws -> HistoryData {
+        try await api.history(convType: convType, convId: convId, beforeId: beforeId, anchorId: anchorId)
+    }
+
     func loadHistory(convType: String, convId: Int64, beforeId: Int64 = 0, anchorId: Int64 = 0) async throws -> [Message] {
-        let data = try await api.history(convType: convType, convId: convId, beforeId: beforeId, anchorId: anchorId)
-        return data.list
+        try await loadHistoryPage(convType: convType, convId: convId, beforeId: beforeId, anchorId: anchorId).list
     }
 
     func markRead(convType: String, convId: Int64, lastId: Int64) async {
@@ -360,7 +364,12 @@ final class AppState: ObservableObject {
             guard let self else { return }
             Task { @MainActor in self.handleSocket(text) }
         }
-        ws.onState = { _ in }
+        ws.onState = { ok in
+            if ok {
+                /* 断线期间的消息不会重放：通知聊天页立刻按 after_id 补拉 */
+                NotificationCenter.default.post(name: .akWsReconnected, object: nil)
+            }
+        }
         ws.start()
     }
 

@@ -83,6 +83,7 @@ struct GroupPreviewView: View {
     var onJoined: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var app: AppState
     @State private var info: GroupPreviewInfo?
     @State private var errorText: String?
     @State private var loading = true
@@ -295,28 +296,48 @@ struct GroupPreviewView: View {
 
     private func bottomBar(_ g: GroupPreviewInfo) -> some View {
         let enabled = canTap(g)
-        return Button {
-            Task { await primaryAction(g) }
-        } label: {
-            Text(buttonText(g))
-                .font(.system(size: 15.5, weight: .semibold))
-                .foregroundColor(enabled ? .white : AKColor.hint)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(
-                    LinearGradient(
-                        colors: enabled ? [AKColor.brand, Color(hex: 0x06AD56)] : [AKColor.line, AKColor.line],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        return Group {
+            if app.user?.isPlatformAdmin == 1 {
+                NavigationLink {
+                    GroupInfoView(groupId: g.id)
+                } label: {
+                    Text("群管理")
+                        .font(.system(size: 15.5, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(AKColor.brand)
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(AKColor.card)
+            } else {
+                Button {
+                    Task { await primaryAction(g) }
+                } label: {
+                    Text(buttonText(g))
+                        .font(.system(size: 15.5, weight: .semibold))
+                        .foregroundColor(enabled ? .white : AKColor.hint)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(
+                            LinearGradient(
+                                colors: enabled ? [AKColor.brand, Color(hex: 0x06AD56)] : [AKColor.line, AKColor.line],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(!enabled || busy)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(AKColor.card)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled || busy)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(AKColor.card)
     }
 
     // MARK: - 操作

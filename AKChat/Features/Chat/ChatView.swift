@@ -89,6 +89,10 @@ struct ChatView: View {
     @State private var loading = false
     @State private var loadingMore = false
     @State private var hasMore = false
+    /// 上滑翻页的游标：这一串历史已经翻到的服务端最小 id
+    @State private var historyCursor: Int64 = 0
+    /// 已经翻到这一串历史的开头（服务端 has_more=0）：之后不再请求更早的消息
+    @State private var reachedHistoryStart = false
     @State private var errorText: String?
     @State private var showGroupInfo = false
     @State private var reportTarget: Message?
@@ -610,11 +614,15 @@ struct ChatView: View {
             pageTasks.removeAll()
         }
         .onChange(of: tabIsActive) { active in
-            if active { activatePage() } else { pausePage() }
+            if active {
+                activatePage()
+                Task { await pollNewMessages() }
+            } else { pausePage() }
         }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
                 startCardPolling()
+                Task { await pollNewMessages() }
             } else {
                 cardPollTask?.cancel()
                 cardPollTask = nil
@@ -631,6 +639,16 @@ struct ChatView: View {
         }
         .onChange(of: showGroupInfo) { open in
             if !open { Task { await loadPendingNotice(showPopup: false) } }
+        }
+        /* 前台兜底轮询：WS 漏帧或断线重连期间，每 5 秒补拉当前会话 afterId 之后的消息。 */
+        .task(id: "poll-\(convType)-\(convId)") {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { break }
+                let active = await MainActor.run { UIApplication.shared.applicationState == .active }
+                guard active else { continue }
+                await pollNewMessages()
+            }
         }
         .task {
             /* 先用本地缓存立刻上背景（不等网络），再用服务端结果校正 */
@@ -709,6 +727,10 @@ struct ChatView: View {
                 }
             }
             Task { await app.markRead(convType: convType, convId: convId, lastId: msg.id) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .akWsReconnected).receive(on: RunLoop.main)) { _ in
+            /* WS 重连：立刻补拉断线期间漏掉的群/私聊消息 */
+            Task { await pollNewMessages() }
         }
         .onReceive(app.events) { ev in
             handle(ev)
@@ -1478,7 +1500,10 @@ struct ChatView: View {
     /// 找不到（表情包、相册图等）退回单张查看
     private func openMediaPager(_ raw: String, isVideo: Bool) {
         let target = VoiceService.cleanPath(raw)
-        guard !target.isEmpty else { return }
+        guard !target.isEmpty, let targetURL = APIClient.fullURL(target) else {
+            flash(isVideo ? "视频地址无效" : "图片地址无效")
+            return
+        }
         var items: [PreviewMedia] = []
         var at = -1
         for m in messages {
@@ -1489,9 +1514,8 @@ struct ChatView: View {
             items.append(PreviewMedia(url: u, isVideo: m.type == 15, message: m))
         }
         guard at >= 0 else {
-            guard let u = APIClient.fullURL(target) else { return }
             previewImage = PreviewImage(
-                items: [PreviewMedia(url: u, isVideo: isVideo, message: nil)], index: 0
+                items: [PreviewMedia(url: targetURL, isVideo: isVideo, message: nil)], index: 0
             )
             return
         }
@@ -1986,20 +2010,63 @@ struct ChatView: View {
         UserDefaults.standard.set(url ?? "", forKey: bgKey)
     }
 
+    /** 只补拉 afterId 之后的新消息；按 id 合并，WS 已收到的不会重复。 */
+    @MainActor
+    private func pollNewMessages() async {
+        guard !loading, !loadingMore else { return }
+        guard let afterId = messages.last(where: { $0.id > 0 })?.id else { return }
+        guard let list = try? await APIClient.shared.historyAfter(
+            convType: convType, convId: convId, afterId: afterId
+        ), !list.isEmpty else { return }
+
+        var changed = false
+        for msg in list where msg.id > 0 {
+            if let idx = messages.firstIndex(where: { $0.id == msg.id }) {
+                var latest = msg
+                latest.localId = messages[idx].localId
+                latest.isRead = max(latest.isRead, messages[idx].isRead)
+                if latest.fromName == nil { latest.fromName = messages[idx].fromName }
+                if latest.fromAvatar == nil { latest.fromAvatar = messages[idx].fromAvatar }
+                if messages[idx] != latest {
+                    messages[idx] = latest
+                    changed = true
+                }
+                if let target = payTarget, target.id == msg.id { payTarget = latest }
+            } else if let clientId = msg.clientId, !clientId.isEmpty,
+                      let pending = messages.firstIndex(where: { $0.clientId == clientId && $0.localId < 0 }) {
+                /* 本机发送中的临时行：用服务端消息替换，避免轮询后出现两条 */
+                messages[pending] = msg
+                changed = true
+            } else {
+                messages.append(msg)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        /* 本地待发消息 id<=0：必须留在列表末尾，否则会被排到最前面，
+           既显示错位，也会让上滑翻页的游标取到 0 而永远加载不出更早的消息 */
+        messages.sort { a, b in
+            if a.id <= 0 || b.id <= 0 { return a.id > b.id }
+            return a.id < b.id
+        }
+        if let maxId = list.map({ $0.id }).max() {
+            await app.markRead(convType: convType, convId: convId, lastId: maxId)
+        }
+    }
+
     private func load() async {
         loading = true
         defer { loading = false }
         do {
-            let list = try await app.loadHistory(convType: convType, convId: convId)
-            messages = list.sorted { $0.id < $1.id }
-            hasMore = list.count >= 40
+            let page = try await app.loadHistoryPage(convType: convType, convId: convId)
+            mergeHistoryPage(page)
             if unreadAnchor == 0, let c = peerConv, c.unread > 0 {
                 let incoming = messages.filter { $0.fromUid != myId && $0.id > 0 }
                 if incoming.count >= c.unread {
                     unreadAnchor = incoming[incoming.count - c.unread].id
                 }
             }
-            if let last = messages.last {
+            if let last = messages.last(where: { $0.id > 0 }) {
                 await app.markRead(convType: convType, convId: convId, lastId: last.id)
             }
         } catch {
@@ -2007,21 +2074,59 @@ struct ChatView: View {
         }
     }
 
+    /// 把服务端一页历史并进列表：比这一页更早的已加载消息原样保留。
+    /// 旧实现直接用这一页覆盖 messages，重进会话 / 转发面板关闭 / 发卡片后的 reloadAfterPay
+    /// 都会把上滑翻出来的历史静默丢掉、游标退回最新一页。
+    /// 到底与否只看服务端 has_more，不用「条数 < limit」猜。
+    private func mergeHistoryPage(_ page: HistoryData) {
+        let fresh = page.list.filter { $0.id > 0 }.sorted { $0.id < $1.id }
+        let pageMin = fresh.first?.id ?? 0
+        let pending = messages.filter { $0.id <= 0 }
+        let kept = pageMin > 0 ? messages.filter { $0.id > 0 && $0.id < pageMin }
+                               : messages.filter { $0.id > 0 }
+        var seen = Set<Int64>()
+        var merged: [Message] = []
+        for m in kept + fresh where seen.insert(m.id).inserted { merged.append(m) }
+        messages = merged + pending
+        /* 游标只往前挪：重拉第一页不能把已经翻到的位置退回去 */
+        if pageMin > 0 { historyCursor = historyCursor == 0 ? pageMin : min(historyCursor, pageMin) }
+        if page.hasMore == 0 { reachedHistoryStart = true }
+        hasMore = !reachedHistoryStart
+    }
+
     private func loadMore() async {
-        guard !loadingMore, let first = messages.first, first.id > 0 else { return }
+        guard !loadingMore, hasMore else { return }
+        /* 游标是「翻页走到哪」而不是「列表第一条」：本地待发消息（id<=0）和
+           定位置顶时插进来的旧消息都不该参与，否则一）游标取到 0 直接无法翻页，
+           二）被旧块拉到很远的位置、中间那段历史永远补不回来 */
+        let cursor = historyCursor > 0
+            ? historyCursor
+            : (messages.first(where: { $0.id > 0 })?.id ?? 0)
+        guard cursor > 0 else { return }
         loadingMore = true
         defer { loadingMore = false }
         do {
-            let list = try await app.loadHistory(convType: convType, convId: convId, beforeId: first.id)
+            let page = try await app.loadHistoryPage(
+                convType: convType, convId: convId, beforeId: cursor
+            )
+            let list = page.list.filter { $0.id > 0 }
             if list.isEmpty {
+                reachedHistoryStart = true
                 hasMore = false
                 return
             }
             let known = Set(messages.map { $0.id })
             let older = list.filter { !known.contains($0.id) }.sorted { $0.id < $1.id }
-            messages = older + messages
-            if list.count < 40 { hasMore = false }
+            if !older.isEmpty { messages = older + messages }
+            /* 用服务端这一页的最小 id 续翻；游标没前进说明服务端没按 before_id 切，直接收敛防死循环 */
+            let pageMin = list.map(\.id).min() ?? 0
+            if pageMin > 0 { historyCursor = pageMin }
+            if page.hasMore == 0 || pageMin <= 0 || pageMin >= cursor {
+                reachedHistoryStart = true
+                hasMore = false
+            }
         } catch {
+            /* 失败不当成到底：保留 hasMore，用户再点还能重试 */
             errorText = error.localizedDescription
         }
     }
@@ -3431,9 +3536,10 @@ private enum ChatClock {
     }
 }
 
-/// 举报消息：选原因 + 补充说明（对齐安卓 ReportDialog）
-private struct ReportMessageSheet: View {
-    let message: Message
+/// 举报：选原因 + 补充说明（对齐安卓 ReportDialog）；消息与动态共用
+struct ReportSheet: View {
+    let title: String
+    var preview: String? = nil
     let onSubmit: (String, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -3442,20 +3548,15 @@ private struct ReportMessageSheet: View {
 
     private let reasons = ["色情低俗", "诈骗/赌博", "骚扰广告", "侵权内容"]
 
-    private var preview: String {
-        let raw = message.text ?? message.content ?? ""
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.isEmpty || t.hasPrefix("{") { return "[消息]" }
-        return String(t.prefix(60))
-    }
-
     var body: some View {
         Form {
-            Section("举报内容") {
-                Text(preview)
-                    .font(.system(size: 13))
-                    .foregroundColor(AKColor.sub)
-                    .lineLimit(3)
+            if let preview, !preview.isEmpty {
+                Section("举报内容") {
+                    Text(preview)
+                        .font(.system(size: 13))
+                        .foregroundColor(AKColor.sub)
+                        .lineLimit(3)
+                }
             }
             Section("请选择举报原因") {
                 ForEach(reasons.indices, id: \.self) { i in
@@ -3476,7 +3577,7 @@ private struct ReportMessageSheet: View {
                     .lineLimit(2...4)
             }
         }
-        .navigationTitle("举报该消息")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -3491,6 +3592,23 @@ private struct ReportMessageSheet: View {
                 .disabled(picked < 0)
             }
         }
+    }
+}
+
+/// 举报消息：复用 ReportSheet
+private struct ReportMessageSheet: View {
+    let message: Message
+    let onSubmit: (String, String) -> Void
+
+    private var preview: String {
+        let raw = message.text ?? message.content ?? ""
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || t.hasPrefix("{") { return "[消息]" }
+        return String(t.prefix(60))
+    }
+
+    var body: some View {
+        ReportSheet(title: "举报该消息", preview: preview, onSubmit: onSubmit)
     }
 }
 

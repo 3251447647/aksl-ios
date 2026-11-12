@@ -2,6 +2,12 @@ import Foundation
 
 /// 群设置 / 群等级（GET /api/v1/group/settings）
 struct GroupSettings: Decodable {
+    let myRole: Int
+    let isMember: Int
+    let isOwner: Int
+    let isAdmin: Int
+    let isPlatformAdmin: Int
+    let canManage: Int
     let memberCount: Int
     let maxMember: Int
     let groupMaxMember: Int
@@ -13,6 +19,12 @@ struct GroupSettings: Decodable {
     let canUpgrade: Int
 
     enum CodingKeys: String, CodingKey {
+        case myRole = "my_role"
+        case isMember = "is_member"
+        case isOwner = "is_owner"
+        case isAdmin = "is_admin"
+        case isPlatformAdmin = "is_platform_admin"
+        case canManage = "can_manage"
         case memberCount = "member_count"
         case maxMember = "max_member"
         case groupMaxMember = "group_max_member"
@@ -26,6 +38,12 @@ struct GroupSettings: Decodable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        myRole = (try? c.decode(Int.self, forKey: .myRole)) ?? 0
+        isMember = (try? c.decode(Int.self, forKey: .isMember)) ?? 0
+        isOwner = (try? c.decode(Int.self, forKey: .isOwner)) ?? 0
+        isAdmin = (try? c.decode(Int.self, forKey: .isAdmin)) ?? 0
+        isPlatformAdmin = (try? c.decode(Int.self, forKey: .isPlatformAdmin)) ?? 0
+        canManage = (try? c.decode(Int.self, forKey: .canManage)) ?? 0
         memberCount = (try? c.decode(Int.self, forKey: .memberCount)) ?? 0
         maxMember = (try? c.decode(Int.self, forKey: .maxMember)) ?? 0
         groupMaxMember = (try? c.decode(Int.self, forKey: .groupMaxMember)) ?? 0

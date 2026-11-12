@@ -20,9 +20,11 @@ struct User: Codable, Identifiable, Equatable {
     var bio: String?
     var email: String?
     var phone: String?
+    var isPlatformAdmin: Int
 
     enum CodingKeys: String, CodingKey {
         case id, account, nickname, avatar, coin, bio, email, phone
+        case isPlatformAdmin = "is_platform_admin"
         case yxId = "yx_id"
         case prettyYxid = "pretty_yxid"
         case showYxid = "show_yxid"
@@ -45,6 +47,7 @@ struct User: Codable, Identifiable, Equatable {
         bio = try? c.decode(String.self, forKey: .bio)
         email = try? c.decode(String.self, forKey: .email)
         phone = try? c.decode(String.self, forKey: .phone)
+        isPlatformAdmin = (try? c.decode(Int.self, forKey: .isPlatformAdmin)) ?? 0
     }
 
     var displayName: String { (nickname?.isEmpty == false ? nickname! : (account ?? "用户")) }
@@ -488,6 +491,7 @@ struct Moment: Decodable, Identifiable, Equatable {
     let images: [String]
     let likeCount: Int
     let commentCount: Int
+    let canDelete: Int
     let liked: Int
     let vipLevel: Int
     let prettyYxid: String?
@@ -505,6 +509,7 @@ struct Moment: Decodable, Identifiable, Equatable {
         case videoCover = "cover"
         case likeCount = "like_count"
         case commentCount = "comment_count"
+        case canDelete = "can_delete"
         case vipLevel = "vip_level"
         case prettyYxid = "pretty_yxid"
         case createdAt = "created_at"
@@ -520,6 +525,7 @@ struct Moment: Decodable, Identifiable, Equatable {
         images = (try? c.decode([String].self, forKey: .images)) ?? []
         likeCount = (try? c.decode(Int.self, forKey: .likeCount)) ?? 0
         commentCount = (try? c.decode(Int.self, forKey: .commentCount)) ?? 0
+        canDelete = (try? c.decode(Int.self, forKey: .canDelete)) ?? 0
         liked = (try? c.decode(Int.self, forKey: .liked)) ?? 0
         vipLevel = (try? c.decode(Int.self, forKey: .vipLevel)) ?? 0
         prettyYxid = try? c.decode(String.self, forKey: .prettyYxid)

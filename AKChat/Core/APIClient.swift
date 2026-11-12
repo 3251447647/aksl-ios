@@ -57,10 +57,9 @@ final class APIClient {
         session = URLSession(configuration: cfg)
     }
 
+    /// 相对路径拼绝对地址；顺带清洗「URL|」「URL|#|{json}」历史形态并对中文/空格编码
     static func fullURL(_ path: String?) -> URL? {
-        guard let path, !path.isEmpty else { return nil }
-        if path.hasPrefix("http://") || path.hasPrefix("https://") { return URL(string: path) }
-        return URL(string: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")), relativeTo: base)
+        MediaURLPath.url(path)
     }
 
     func get<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
@@ -375,6 +374,16 @@ final class APIClient {
         await postIgnore("api/v1/report/message", body: [
             "conv_type": convType,
             "msg_id": msgId,
+            "reason": reason,
+            "content": content
+        ])
+    }
+
+    /// 举报动态：与用户/群举报同一个接口，target_type=moment
+    func reportMoment(id: Int64, reason: String, content: String) async throws -> String {
+        try await postRaw("api/v1/report", body: [
+            "target_type": "moment",
+            "target_id": id,
             "reason": reason,
             "content": content
         ])
