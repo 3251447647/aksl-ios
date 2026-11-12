@@ -430,7 +430,7 @@ struct ChatView: View {
                 },
                 onRecall: { msg in pendingConfirm = .recall(msg) },
                 onDelete: { msg in pendingConfirm = .delete(msg) },
-                canRecall: { msg in msg.fromUid == myId && canRecall(msg) }
+                canRecall: { msg in canRecall(msg) }
             )
         }
         .navigationDestination(isPresented: Binding(
@@ -1158,6 +1158,11 @@ struct ChatView: View {
         members.first { $0.uid == myId }?.role ?? 0
     }
 
+    /// 平台管理员：不受群内「禁止查看成员信息」限制，可撤回任意成员的消息
+    private var isPlatformAdmin: Bool {
+        (groupInfo?.isPlatformAdmin ?? 0) == 1 || app.user?.isPlatformAdmin == 1
+    }
+
     /// 顶部公告条：只承载「待我确认」的公告（服务端 /group/notice/pending 返回的那一条）。
     /// 安卓聊天页没有常驻公告条，公告只在未确认时弹层提示；iOS 用这条横幅表示同一件事，
     /// 确认后 pendingNotice 置空、横幅立即消失。置顶公告本身仍留在群公告列表里显示。
@@ -1394,6 +1399,7 @@ struct ChatView: View {
             return now - m.createdAt <= 180
         }
         guard isGroup else { return false }
+        if isPlatformAdmin { return true }
         if myRole == 1 { return true }
         if myRole == 2 {
             let authorRole = members.first { $0.uid == m.fromUid }?.role ?? m.fromRole
@@ -1563,7 +1569,7 @@ struct ChatView: View {
     }
 
     private var isMembersHidden: Bool {
-        guard isGroup, let e = groupExtras else { return false }
+        guard isGroup, !isPlatformAdmin, let e = groupExtras else { return false }
         return e.membersHidden == 1 || (e.hideMembers == 1 && myRole == 0)
     }
 
