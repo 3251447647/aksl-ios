@@ -66,7 +66,7 @@ struct GroupMembersView: View {
     let groupId: Int64
     let myRole: Int
     let myUid: Int64
-    let isPlatformAdmin: Bool = false
+    var isPlatformAdmin: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @State private var members: [GroupMember] = []
@@ -1102,7 +1102,7 @@ struct GroupMemberListView: View {
     let groupId: Int64
     let myRole: Int
     let myUid: Int64
-    let isPlatformAdmin: Bool = false
+    var isPlatformAdmin: Bool = false
     /// 群主关闭了成员信息查看：列表仍可见，但不能进主页
     var hidden: Bool = false
 

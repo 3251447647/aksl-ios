@@ -2034,9 +2034,10 @@ struct ChatView: View {
     private func pollNewMessages() async {
         guard !loading, !loadingMore else { return }
         guard let afterId = messages.last(where: { $0.id > 0 })?.id else { return }
-        guard let list = try? await APIClient.shared.historyAfter(
+        guard let data = try? await APIClient.shared.historyAfter(
             convType: convType, convId: convId, afterId: afterId
-        ), !list.isEmpty else { return }
+        ), !data.list.isEmpty else { return }
+        let list = data.list
 
         var changed = false
         for msg in list where msg.id > 0 {
