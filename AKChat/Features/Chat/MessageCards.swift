@@ -278,42 +278,90 @@ struct MessageBody: View {
     }
 
     /// 多图相册（type=31）：content 里是 {"imgs":[{"url":...}],"caption":...}
+    private struct AlbumImg {
+        let url: String
+        let ratio: CGFloat
+    }
+
+    /// 网格格子：固定边长 + 填充裁切，未加载时由 AKImage 的 placeholder 保持同尺寸浅灰
+    private func albumCell(_ item: AlbumImg, size: CGFloat, index: Int, urls: [String]) -> some View {
+        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(item.url))?.absoluteString,
+                size: CGSize(width: size, height: size), placeholder: AKColor.fill)
+        .frame(width: size, height: size)
+        .clipped()
+        .background(AKColor.fill)
+        .contentShape(Rectangle())
+        .onTapGesture { onOpenAlbum(urls, index) }
+    }
+
     private var albumBubble: some View {
-        let urls: [String] = {
+        let items: [AlbumImg] = {
             guard let arr = cardJSON["imgs"] as? [Any] else { return [] }
-            return arr.compactMap { item in
-                if let o = item as? [String: Any], let u = o["url"] as? String, !u.isEmpty { return u }
-                if let s = item as? String, !s.isEmpty { return s }
+            return arr.compactMap { item -> AlbumImg? in
+                if let o = item as? [String: Any], let u = o["url"] as? String, !u.isEmpty {
+                    let w = (o["w"] as? NSNumber)?.doubleValue ?? 0
+                    let h = (o["h"] as? NSNumber)?.doubleValue ?? 0
+                    let ratio = (w > 0 && h > 0)
+                        ? min(max(CGFloat(w / h), 0.4), 2.5)
+                        : 4.0 / 3.0
+                    return AlbumImg(url: u, ratio: ratio)
+                }
+                if let s = item as? String, !s.isEmpty { return AlbumImg(url: s, ratio: 4.0 / 3.0) }
                 return nil
             }
         }()
+        let urls = items.map(\.url)
         let caption = cStr("caption")
-        let n = urls.count
-        let cols = n == 1 ? 1 : (n == 2 || n == 4 ? 2 : 3)
-        let cell: CGFloat = n == 1 ? 200 : (cols == 2 ? 112 : 74)
+        let n = items.count
         let gap: CGFloat = 3
-        let width = cell * CGFloat(cols) + gap * CGFloat(cols - 1)
+        let singleRatio = items.first?.ratio ?? 4.0 / 3.0
+        let singleW = singleRatio >= 1 ? 220 : 220 * singleRatio
+        let singleH = singleRatio >= 1 ? 220 / singleRatio : 220
+        let width: CGFloat = {
+            if n == 1 { return singleW }
+            if n == 3 { return 157 + gap + 77 }
+            if n <= 4 { return 118 * 2 + gap }
+            return 78 * 3 + gap * 2
+        }()
         return Group {
             if n > 0 {
                 VStack(alignment: .leading, spacing: 0) {
-                    VStack(spacing: gap) {
-                        ForEach(0..<((n + cols - 1) / cols), id: \.self) { row in
-                            HStack(spacing: gap) {
-                                ForEach(0..<cols, id: \.self) { col in
-                                    let idx = row * cols + col
-                                    if idx < n {
-                                        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(urls[idx]))?.absoluteString,
-                                                size: CGSize(width: cell, height: cell), placeholder: AKColor.fill)
-                                        .frame(width: cell, height: cell)
-                                        .clipped()
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { onOpenAlbum(urls, idx) }
-                                    } else {
-                                        Color.clear.frame(width: cell, height: cell)
+                    if n == 1 {
+                        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(items[0].url))?.absoluteString,
+                                size: CGSize(width: singleW, height: singleH),
+                                contentMode: .fit, placeholder: AKColor.fill)
+                        .frame(width: singleW, height: singleH)
+                        .clipped()
+                        .background(AKColor.fill)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onOpenAlbum(urls, 0) }
+                    } else if n == 3 {
+                        HStack(spacing: gap) {
+                            albumCell(items[0], size: 157, index: 0, urls: urls)
+                            VStack(spacing: gap) {
+                                albumCell(items[1], size: 77, index: 1, urls: urls)
+                                albumCell(items[2], size: 77, index: 2, urls: urls)
+                            }
+                        }
+                        .background(AKColor.fill)
+                    } else {
+                        let cols = (n == 2 || n == 4) ? 2 : 3
+                        let cell: CGFloat = cols == 2 ? 118 : 78
+                        VStack(spacing: gap) {
+                            ForEach(0..<((n + cols - 1) / cols), id: \.self) { row in
+                                HStack(spacing: gap) {
+                                    ForEach(0..<cols, id: \.self) { col in
+                                        let idx = row * cols + col
+                                        if idx < n {
+                                            albumCell(items[idx], size: cell, index: idx, urls: urls)
+                                        } else {
+                                            Color.clear.frame(width: cell, height: cell)
+                                        }
                                     }
                                 }
                             }
                         }
+                        .background(AKColor.fill)
                     }
                     if !caption.isEmpty {
                         Text(caption)
