@@ -1339,7 +1339,9 @@ struct ChatView: View {
         case 7, 21: return "[红包]"
         case 8, 22: return "[转账]"
         case 9, 23: return "[礼物]"
-        case 10: return "[引用] " + plain(m.text ?? "", 18)
+        case 10:
+            if ForwardRules.isLocationPayload(m.content, m.text) { return "[位置]" }
+            return "[引用] " + plain(m.text ?? "", 18)
         case 11: return systemDigest(m)
         case 12: return "[名片]"
         case 13: return "[群名片]"
@@ -3203,7 +3205,9 @@ private struct ChatMessageMenuSheet: View {
             out.append(Item(key: "copy", label: "复制", icon: "doc.on.doc"))
         }
         if message.type != 11 {
-            out.append(Item(key: "forward", label: "转发", icon: "arrowshape.turn.up.right"))
+            if ForwardRules.canForward(message.type) {
+                out.append(Item(key: "forward", label: "转发", icon: "arrowshape.turn.up.right"))
+            }
             out.append(Item(key: "multi", label: "多选", icon: "checklist"))
         }
         if canPin {

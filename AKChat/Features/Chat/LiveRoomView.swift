@@ -191,7 +191,22 @@ struct LiveRoomView: View {
     let gid: Int64
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var room = Room()
+    /// 主播发布开 simulcast 三层（180p/360p/720p）：UDP 不可用时媒体走 TCP 7881，
+    /// 单流 720p 每个观众都要独立转发全码率，人数一多上行就打满；分层后观众只收中层。
+    /// dynacast 让主播没被订阅的层不编码。adaptiveStream 保持关闭：与手动 set(videoQuality:) 互斥。
+    @StateObject private var room = Room(roomOptions: RoomOptions(
+        defaultVideoPublishOptions: VideoPublishOptions(
+            screenShareEncoding: VideoEncoding(maxBitrate: 1_200_000, maxFps: 15),
+            simulcast: true,
+            screenShareSimulcastLayers: [
+                VideoParameters(dimensions: .h180_169, encoding: VideoEncoding(maxBitrate: 150_000, maxFps: 15)),
+                VideoParameters(dimensions: .h360_169, encoding: VideoEncoding(maxBitrate: 450_000, maxFps: 15))
+            ],
+            preferredCodec: .vp8
+        ),
+        adaptiveStream: false,
+        dynacast: true
+    ))
     @StateObject private var kitObserver = LiveKitRoomObserver()
 
     @State private var phase = "loading"          // loading / prestart / room / blocked
@@ -1602,6 +1617,7 @@ struct LiveRoomView: View {
                 return
             }
             connectError = nil
+            kitObserver.capRemoteVideoQuality = true
             kitObserver.attach(room)
             kitObserver.refresh()
             localIdentity = room.localParticipant.identity?.stringValue ?? ""

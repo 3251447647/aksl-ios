@@ -1,5 +1,41 @@
 import SwiftUI
 
+/// 转发策略：与安卓 canForwardMessage / forwardBlockedHint 逐条对应。
+/// 红包/转账/礼物/充值/提现/通话绑定原会话的业务单号与当事人，不能跨会话转发。
+enum ForwardRules {
+    static func canForward(_ type: Int) -> Bool {
+        switch type {
+        case 1, 5, 6, 10, 12, 13, 15, 16, 17, 18, 19, 31: return true
+        default: return false
+        }
+    }
+
+    static func blockedHint(_ type: Int) -> String {
+        switch type {
+        case 2, 20: return "充值申请不支持转发"
+        case 3: return "提现申请不支持转发"
+        case 7, 21: return "红包不支持转发"
+        case 8, 22: return "转账不支持转发"
+        case 9, 23: return "礼物不支持转发"
+        case 14: return "通话记录不支持转发"
+        case 30: return "该消息类型已下线"
+        default: return "该类型消息不支持转发"
+        }
+    }
+
+    /// 位置消息复用 type=10，但 content 只有 {lat,lng,address}，没有引用段的 |#|
+    static func isLocationPayload(_ content: String?, _ text: String?) -> Bool {
+        let raw = ((content ?? "").isEmpty ? (text ?? "") : (content ?? ""))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.hasPrefix("{"), !raw.contains("|#|") else { return false }
+        return raw.contains("\"lat\"") || raw.contains("\"lng\"") || raw.contains("\"address\"")
+    }
+}
+
+enum ForwardError: Error {
+    case blocked(String)
+}
+
 /// 选择转发目标：本地会话（置顶优先/时间倒序）+ 服务端「我的好友/我的群」搜索，
 /// 与安卓 ForwardPickerScreen 同一口径：多选、显示将合并为聊天记录、底部发送按钮常驻。
 struct ForwardPickerView: View {
@@ -340,6 +376,11 @@ struct ForwardPickerView: View {
 
     private func submit() async {
         guard !submitting else { return }
+        /* 不支持单条转发的类型（红包/转账/礼物等）直接给出原因，不发任何一条 */
+        if messages.count == 1, let only = messages.first, !ForwardRules.canForward(only.type) {
+            hint = ForwardRules.blockedHint(only.type)
+            return
+        }
         let targets = picked.compactMap { key -> ForwardRow? in
             if let row = pickedRows[key] { return row }
             return sendableRows.first { $0.key == key }
@@ -354,6 +395,7 @@ struct ForwardPickerView: View {
 
         let payload = messages.count > 1 ? recordPayload(title: title) : nil
         var failed = 0
+        var blockedHint = ""
         for target in targets {
             let parts = target.key.split(separator: ":")
             guard parts.count == 2, let cid = Int64(parts[1]) else { continue }
@@ -372,9 +414,12 @@ struct ForwardPickerView: View {
                 }
             } catch {
                 failed += 1
+                if let fe = error as? ForwardError, case .blocked(let msg) = fe { blockedHint = msg }
             }
         }
-        if failed > 0 {
+        if !blockedHint.isEmpty {
+            hint = blockedHint
+        } else if failed > 0 {
             hint = "有 \(failed) 条转发失败，请重试"
         } else {
             await app.refreshConversations()
@@ -382,48 +427,59 @@ struct ForwardPickerView: View {
         }
     }
 
-    /// 单条转发：与安卓 forwardOne 一致（文本去掉网页端署名后重发、记录重发、媒体重发、其余 [消息]）
+    /// 单条转发：与安卓 forwardOne 完全同口径
+    /// 文本/引用只去网页端署名；媒体与卡片按原 type + 原 content 重发，接收端才能还原。
     private func forwardOne(_ m: Message, convType: String, convId: Int64) async throws -> Message? {
-        let text = m.text ?? ""
+        guard ForwardRules.canForward(m.type) else {
+            throw ForwardError.blocked(ForwardRules.blockedHint(m.type))
+        }
         switch m.type {
-        case 1, 10:
-            // 引用消息只重发正文（不带 quote_*），并去掉网页端转发追加上来的发送者署名
-            let stripped = ForwardByline.strip(text)
-            let content = stripped.isEmpty ? text : stripped
+        case 1:
+            let raw = (m.text ?? "").isEmpty ? (m.content ?? "") : (m.text ?? "")
+            let stripped = ForwardByline.strip(raw)
+            let content = stripped.isEmpty ? raw : stripped
             guard !content.isEmpty else { return nil }
             let res = try await APIClient.shared.sendTypedMessage(
                 convType: convType, convId: convId, type: 1, content: content,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
             return res.message
-        case 16:
+        case 10:
+            // 引用消息：quote JSON 原样保留，只清洗正文末尾的网页署名人
+            let raw = (m.content ?? "").isEmpty ? (m.text ?? "") : (m.content ?? "")
+            let parts = raw.components(separatedBy: "|#|")
+            let bodyRaw = parts.count > 1 ? parts.dropFirst().joined(separator: "|#|") : raw
+            let stripped = ForwardByline.strip(bodyRaw)
+            let body = stripped.isEmpty ? bodyRaw : stripped
+            guard !body.isEmpty else { return nil }
+            let hasQuote = parts.count > 1 && !parts[0].isEmpty
+            let content = hasQuote ? parts[0] + "|#|" + body : body
+            // 位置卡片（type 10 + 纯 JSON）按原类型重发，其余无引用段的消息降为文本
+            let outType = hasQuote || ForwardRules.isLocationPayload(raw, m.text) ? 10 : 1
             let res = try await APIClient.shared.sendTypedMessage(
-                convType: convType, convId: convId, type: 1, content: "[动态分享]",
-                clientId: "ios_fwd_\(UUID().uuidString)"
-            )
-            return res.message
-        case 17:
-            let raw = (m.content ?? "").isEmpty ? text : (m.content ?? "")
-            guard !raw.isEmpty else { return nil }
-            let res = try await APIClient.shared.sendTypedMessage(
-                convType: convType, convId: convId, type: 17, content: raw,
+                convType: convType, convId: convId, type: outType, content: content,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
             return res.message
         case 5, 6, 15:
-            guard !text.isEmpty else { return nil }
+            let raw = (m.content ?? "").isEmpty ? (m.text ?? "") : (m.content ?? "")
+            guard !raw.isEmpty else { return nil }
             let prefix = m.type == 5 && isSticker(m) ? "sticker_" : "ios_fwd_"
             let res = try await APIClient.shared.sendTypedMessage(
-                convType: convType, convId: convId, type: m.type, content: text,
+                convType: convType, convId: convId, type: m.type, content: raw,
                 clientId: prefix + UUID().uuidString
             )
             return res.message
-        default:
+        case 12, 13, 16, 17, 18, 19, 31:
+            let raw = (m.content ?? "").isEmpty ? (m.text ?? "") : (m.content ?? "")
+            guard !raw.isEmpty else { return nil }
             let res = try await APIClient.shared.sendTypedMessage(
-                convType: convType, convId: convId, type: 1, content: "[消息]",
+                convType: convType, convId: convId, type: m.type, content: raw,
                 clientId: "ios_fwd_\(UUID().uuidString)"
             )
             return res.message
+        default:
+            throw ForwardError.blocked(ForwardRules.blockedHint(m.type))
         }
     }
 
@@ -442,6 +498,9 @@ struct ForwardPickerView: View {
             let name = (m.fromName ?? "").isEmpty ? "成员" : (m.fromName ?? "")
             let body: String = {
                 switch m.type {
+                case 2, 20: return "[充值申请]"
+                case 3: return "[提现申请]"
+                case 10: return ForwardRules.isLocationPayload(m.content, m.text) ? "[位置]" : ForwardByline.strip(m.text ?? "")
                 case 5: return isSticker(m) ? "[表情]" : "[图片]"
                 case 6: return "[语音]"
                 case 7, 21: return "[红包]"
@@ -455,6 +514,8 @@ struct ForwardPickerView: View {
                 case 17: return "[聊天记录]"
                 case 18: return "[文件]"
                 case 19: return "[直播]"
+                case 30: return "[该消息类型已下线]"
+                case 31: return "[图片]"
                 default: return ForwardByline.strip(m.text ?? "")
                 }
             }()

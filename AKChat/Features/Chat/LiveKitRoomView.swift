@@ -167,6 +167,11 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
     private let frameProbe = ScreenFrameProbe()
     private var probedTrack: VideoTrack?
 
+    /// 直播页开启：订阅远端视频后把层钉在中层（360p）。
+    /// 画面区只占屏高约 40%，720p 高层在 TCP 回退下只会把服务器上行吃满。
+    var capRemoteVideoQuality = false
+    private var cappedVideoSids = Set<String>()
+
     /// 远端画面最近一帧到达时间；nil 表示还没收到帧
     var lastScreenFrameAt: Date? { frameProbe.lastFrameAt }
 
@@ -213,6 +218,12 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
         for participant in participants {
             for publication in participant.videoTracks {
                 guard let track = publication.track as? VideoTrack else { continue }
+                if capRemoteVideoQuality, publication.isSubscribed {
+                    let sid = publication.sid.stringValue
+                    if cappedVideoSids.insert(sid).inserted {
+                        Task { try? await publication.set(videoQuality: .medium) }
+                    }
+                }
                 if anyVideo == nil { anyVideo = track }
                 if publication.source == .screenShareVideo
                     || publication.name == Track.screenShareVideoName
