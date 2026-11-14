@@ -1255,6 +1255,16 @@ struct ChatView: View {
         return name.isEmpty ? "对方" : name
     }
 
+    /// 回复时要 @ 的显示名：群昵称 → 发送者昵称 → 成员（空名不写进输入框）
+    private func replyMentionName(_ msg: Message) -> String {
+        if let name = members.first(where: { $0.uid == msg.fromUid })?.name,
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        let from = msg.fromName ?? ""
+        return from.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "成员" : from
+    }
+
     /// 输入框上方引用条（对齐安卓 ChatBottomBar 的 replyTo 区域）
     private func replyBar(_ msg: Message) -> some View {
         HStack(spacing: 8) {
@@ -1646,8 +1656,11 @@ struct ChatView: View {
             },
             onAvatarLongPress: {
                 guard isGroup, msg.fromUid != myId else { return }
-                let name = member?.name ?? msg.fromName ?? "成员"
-                insertMention(name: name, uid: msg.fromUid)
+                let memberName = member?.name ?? ""
+                let name = memberName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? (msg.fromName ?? "") : memberName
+                insertMention(name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              ? "成员" : name, uid: msg.fromUid)
             },
             onLongPress: {
                 if selectMode { toggleSelect(msg) } else { menuTarget = msg }
@@ -1719,12 +1732,9 @@ struct ChatView: View {
         switch key {
         case "reply":
             replyTo = msg
-            /* 群里回复谁就带上 @谁：at_uids 驱动对方首页 [有人@我] */
-            if isGroup, msg.fromUid != (app.user?.id ?? 0) {
-                let name = (members.first(where: { $0.uid == msg.fromUid })?.name
-                    ?? msg.fromName ?? "")
-                    .trimmingCharacters(in: .whitespaces)
-                insertMention(name: name.isEmpty ? "成员" : name, uid: msg.fromUid)
+            /* 群里回复谁就带上 @谁：at_uids 驱动对方首页 [有人@我]；私聊与自己的消息不插 @ */
+            if isGroup, msg.fromUid != myId {
+                insertMention(name: replyMentionName(msg), uid: msg.fromUid, skipIfPresent: true)
             }
             inputFocused = true
         case "copy":
@@ -1800,8 +1810,12 @@ struct ChatView: View {
         composer.text += value
     }
 
-    /// @ 某人：替换光标前刚输入的 @关键字，不重复拼 @@
-    private func insertMention(name: String, uid: Int64) {
+    /// @ 某人：替换末尾刚输入的 @关键字，不重复拼 @@
+    private func insertMention(name: String, uid: Int64, skipIfPresent: Bool = false) {
+        let mention = "@\(name) "
+        if !atUids.contains(uid) { atUids.append(uid) }
+        /* 连点「回复」同一条时末尾已经是同一个 @，不再追加 */
+        if skipIfPresent, composer.text.hasSuffix(mention) { return }
         var base = composer.text
         if let at = base.lastIndex(of: "@") {
             let tail = base[base.index(after: at)...]
@@ -1809,8 +1823,7 @@ struct ChatView: View {
                 base = String(base[..<at])
             }
         }
-        composer.text = base + "@\(name) "
-        if !atUids.contains(uid) { atUids.append(uid) }
+        composer.text = base + mention
         inputFocused = true
     }
 
