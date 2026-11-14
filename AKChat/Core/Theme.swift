@@ -60,3 +60,46 @@ extension View {
         self.background(AKColor.card)
     }
 }
+
+/// 页面底色（动态 UIColor）：给 window / UINavigationController 兑底。
+/// SwiftUI 推入新页面时，承载页面的容器默认是系统底色（浅色下纯白）：
+/// 页面内容还没绘制完的那一帧露出来的就是白色，看起来就是「闪白」。
+enum AKPageBackdrop {
+    static var uiColor: UIColor {
+        UIColor { trait in
+            trait.userInterfaceStyle == .dark ? UIColor(hex: 0x121417) : UIColor(hex: 0xF6F7F9)
+        }
+    }
+}
+
+private struct PageBackdropInstaller: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView(frame: .zero)
+        v.isUserInteractionEnabled = false
+        v.isOpaque = false
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard uiView.window != nil else { return }
+        DispatchQueue.main.async {
+            let color = AKPageBackdrop.uiColor
+            uiView.window?.backgroundColor = color
+            /* 页面自己的 hosting view 在导航容器内部：沿 parent 往上找 UINavigationController */
+            var vc = uiView.next as? UIViewController
+            while let cur = vc {
+                if let nav = cur as? UINavigationController {
+                    nav.view.backgroundColor = color
+                }
+                vc = cur.parent
+            }
+        }
+    }
+}
+
+extension View {
+    /// 把承载本页的 window / 导航容器底色刷成页面底色（只改颜色，不介入布局）
+    func appPageBackdrop() -> some View {
+        background(PageBackdropInstaller().frame(width: 0, height: 0))
+    }
+}

@@ -42,5 +42,6 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.2), value: app.isLoggedIn)
         .preferredColorScheme(preferred)
         .updateGate()
+        .appPageBackdrop()
     }
 }

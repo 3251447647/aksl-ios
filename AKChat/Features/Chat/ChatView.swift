@@ -93,6 +93,8 @@ struct ChatView: View {
     @StateObject private var voice = VoiceService()
     @State private var sending = false
     @State private var loading = false
+    /// 首批历史已经成功回来（0 条也算）：之前不能渲染「暂无消息」，否则进会话先闪一下空态
+    @State private var didLoad = false
     @State private var loadingMore = false
     @State private var hasMore = false
     /// 上滑翻页的游标：这一串历史已经翻到的服务端最小 id
@@ -362,6 +364,8 @@ struct ChatView: View {
             }
             .ignoresSafeArea()
         )
+        /* 承载会话页的 window / 导航容器底色也刷成页面底色：push 转场期间不会露白 */
+        .appPageBackdrop()
         .overlay {
             if voice.recording {
                 RecordingOverlay(cancel: voiceCancel)
@@ -960,6 +964,32 @@ struct ChatView: View {
         }
     }
 
+    /// 进会话首帧的骨架：与真实消息行同尺寸、同底色，数据到达后原位替换，
+    /// 避免先渲染一帧空白/「暂无消息」再跳成列表
+    private var messageSkeleton: some View {
+        VStack(spacing: 14) {
+            ForEach(0..<9, id: \.self) { i in
+                let mine = i % 3 == 2
+                HStack(alignment: .top, spacing: 8) {
+                    if mine { Spacer(minLength: 48) }
+                    if !mine {
+                        Circle().fill(AKColor.fill).frame(width: 36, height: 36)
+                    }
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(AKColor.fill)
+                        .frame(width: 120 + CGFloat((i * 37) % 90),
+                               height: 30 + CGFloat(i % 3) * 8)
+                    if !mine { Spacer(minLength: 48) }
+                    if mine {
+                        Circle().fill(AKColor.fill).frame(width: 36, height: 36)
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
     private var messageList: some View {
         /* 派生数据只在消息/成员真的变了时重算：AppState 其它字段的发布
            （别的会话来消息、未读变化）也会重算 body，不该重跑这一整遍 */
@@ -982,22 +1012,28 @@ struct ChatView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    if loading {
-                        ProgressView().padding(.top, 12)
-                    }
-                    if messages.isEmpty && !loading {
-                        VStack(spacing: 6) {
-                            Text(errorText ?? "暂无消息")
-                                .font(.system(size: 12))
-                                .foregroundColor(AKColor.muted)
-                            if errorText != nil {
-                                Button("点击重试") { Task { await load() } }
-                                    .font(.system(size: 13))
-                                    .foregroundColor(AKColor.brand)
+                    if messages.isEmpty {
+                        /* 首帧不能先渲染「暂无消息」：用与气泡同尺寸同底色的骨架占位，
+                           首批历史回来原位替换；真的没消息（didLoad）才显示空态 */
+                        if didLoad && !loading {
+                            VStack(spacing: 6) {
+                                Text(errorText ?? "暂无消息")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AKColor.muted)
+                                if errorText != nil {
+                                    Button("点击重试") { Task { await load() } }
+                                        .font(.system(size: 13))
+                                        .foregroundColor(AKColor.brand)
+                                }
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                        } else {
+                            messageSkeleton
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
+                    } else if loading {
+                        /* 已有消息时的重拉（转发后刷新等）：只在顶部加小菊花，不动列表 */
+                        ProgressView().padding(.top, 12)
                     }
                     if hasMore && !messages.isEmpty {
                         Button {
@@ -2084,7 +2120,10 @@ struct ChatView: View {
 
     private func load() async {
         loading = true
-        defer { loading = false }
+        defer {
+            loading = false
+            didLoad = true
+        }
         do {
             let page = try await app.loadHistoryPage(convType: convType, convId: convId)
             mergeHistoryPage(page)
