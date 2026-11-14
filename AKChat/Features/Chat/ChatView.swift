@@ -3042,6 +3042,8 @@ private struct ChatMessageRow: View, Equatable {
 
     /// 气泡最大宽度：屏宽 68%（对齐安卓 maxBubble 0.68）
     private var maxBubble: CGFloat { UIScreen.main.bounds.width * 0.68 }
+    /// 相册块比普通气泡宽（首图 220 + 间距 4 + 小图 78）：按屏宽减页面内边距 24 与头像列 45 放宽
+    private var maxAlbumBubble: CGFloat { UIScreen.main.bounds.width - 69 }
 
     private var bodyView: MessageBody {
         MessageBody(
@@ -3164,7 +3166,8 @@ private struct ChatMessageRow: View, Equatable {
                         }
                     }
                 }
-                .frame(maxWidth: maxBubble, alignment: mine ? .trailing : .leading)
+                .frame(maxWidth: message.type == 31 ? maxAlbumBubble : maxBubble,
+                       alignment: mine ? .trailing : .leading)
 
                 if mine {
                     Spacer().frame(width: 7)

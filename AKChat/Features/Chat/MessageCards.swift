@@ -283,13 +283,43 @@ struct MessageBody: View {
         let ratio: CGFloat
     }
 
-    /// 网格格子：固定边长 + 填充裁切，未加载时由 AKImage 的 placeholder 保持同尺寸浅灰
-    private func albumCell(_ item: AlbumImg, size: CGFloat, index: Int, urls: [String]) -> some View {
+    /// 相册首图与单图同口径：按原图比例、最长边 220，Fit 不裁切
+    private func albumFirstSize(_ item: AlbumImg) -> CGSize {
+        let r = item.ratio
+        return r >= 1 ? CGSize(width: 220, height: 220 / r)
+                      : CGSize(width: 220 * r, height: 220)
+    }
+
+    /// 首图格子：等比 Fit，圆角 12；未加载时由 AKImage 的 placeholder 保持同尺寸浅灰
+    private func albumFirstCell(_ item: AlbumImg, size: CGSize, index: Int, urls: [String]) -> some View {
+        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(item.url))?.absoluteString,
+                size: size, contentMode: .fit, placeholder: AKColor.fill)
+        .frame(width: size.width, height: size.height)
+        .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { onOpenAlbum(urls, index) }
+    }
+
+    /// 小图格子：固定 78×78 填充裁切、圆角 10；overlay 用于第 9 张上的 +N
+    private func albumCell(_ item: AlbumImg, size: CGFloat, index: Int, urls: [String],
+                           overlay: String? = nil) -> some View {
         AKImage(url: APIClient.fullURL(VoiceService.cleanPath(item.url))?.absoluteString,
                 size: CGSize(width: size, height: size), placeholder: AKColor.fill)
         .frame(width: size, height: size)
-        .clipped()
         .background(AKColor.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            if let overlay {
+                ZStack {
+                    Color.black.opacity(0.45)
+                    Text(overlay)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { onOpenAlbum(urls, index) }
     }
@@ -312,56 +342,62 @@ struct MessageBody: View {
         }()
         let urls = items.map(\.url)
         let caption = cStr("caption")
-        let n = items.count
-        let gap: CGFloat = 3
-        let singleRatio = items.first?.ratio ?? 4.0 / 3.0
-        let singleW = singleRatio >= 1 ? 220 : 220 * singleRatio
-        let singleH = singleRatio >= 1 ? 220 / singleRatio : 220
-        let width: CGFloat = {
-            if n == 1 { return singleW }
-            if n == 3 { return 157 + gap + 77 }
-            if n <= 4 { return 118 * 2 + gap }
-            return 78 * 3 + gap * 2
+        let gap: CGFloat = 4
+        let small: CGFloat = 78
+        let shown = Array(items.prefix(9))
+        let overflow = items.count - shown.count
+        let firstItem = items.first ?? AlbumImg(url: "", ratio: 4.0 / 3.0)
+        let firstSize = albumFirstSize(firstItem)
+        let firstW = firstSize.width
+        let firstH = firstSize.height
+        let sideCount = shown.count > 1 ? min(shown.count - 1, 2) : 0
+        // 首图右侧最多 2 个小图，剩余的按每行 3 个排到底部（记录全局下标，点击从该张开始）
+        let bottomRows: [[Int]] = {
+            guard shown.count - 1 - sideCount > 0 else { return [] }
+            var result: [[Int]] = []
+            var start = 1 + sideCount
+            while start < shown.count {
+                let end = min(start + 3, shown.count)
+                result.append(Array(start..<end))
+                start = end
+            }
+            return result
         }()
+        let bottomCols = bottomRows.first?.count ?? 0
+        let bottomW = bottomCols > 0
+            ? CGFloat(bottomCols) * small + CGFloat(bottomCols - 1) * gap
+            : 0
+        let width = max(firstW + (sideCount > 0 ? gap + small : 0), bottomW)
+        let overlayAt = overflow > 0 ? shown.count - 1 : -1
         return Group {
-            if n > 0 {
+            if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    if n == 1 {
-                        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(items[0].url))?.absoluteString,
-                                size: CGSize(width: singleW, height: singleH),
-                                contentMode: .fit, placeholder: AKColor.fill)
-                        .frame(width: singleW, height: singleH)
-                        .clipped()
-                        .background(AKColor.fill)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onOpenAlbum(urls, 0) }
-                    } else if n == 3 {
-                        HStack(spacing: gap) {
-                            albumCell(items[0], size: 157, index: 0, urls: urls)
-                            VStack(spacing: gap) {
-                                albumCell(items[1], size: 77, index: 1, urls: urls)
-                                albumCell(items[2], size: 77, index: 2, urls: urls)
-                            }
-                        }
-                        .background(AKColor.fill)
+                    if shown.count == 1 {
+                        albumFirstCell(items[0], size: CGSize(width: firstW, height: firstH),
+                                       index: 0, urls: urls)
                     } else {
-                        let cols = (n == 2 || n == 4) ? 2 : 3
-                        let cell: CGFloat = cols == 2 ? 118 : 78
-                        VStack(spacing: gap) {
-                            ForEach(0..<((n + cols - 1) / cols), id: \.self) { row in
-                                HStack(spacing: gap) {
-                                    ForEach(0..<cols, id: \.self) { col in
-                                        let idx = row * cols + col
-                                        if idx < n {
-                                            albumCell(items[idx], size: cell, index: idx, urls: urls)
-                                        } else {
-                                            Color.clear.frame(width: cell, height: cell)
-                                        }
+                        HStack(alignment: firstH >= 86 ? VerticalAlignment.center : VerticalAlignment.top,
+                               spacing: gap) {
+                            albumFirstCell(items[0], size: CGSize(width: firstW, height: firstH),
+                                           index: 0, urls: urls)
+                            if sideCount > 0 {
+                                VStack(spacing: gap) {
+                                    ForEach(1...sideCount, id: \.self) { i in
+                                        albumCell(items[i], size: small, index: i, urls: urls,
+                                                  overlay: i == overlayAt ? "+\(overflow)" : nil)
                                     }
                                 }
                             }
                         }
-                        .background(AKColor.fill)
+                        ForEach(bottomRows, id: \.self) { row in
+                            HStack(spacing: gap) {
+                                ForEach(row, id: \.self) { i in
+                                    albumCell(items[i], size: small, index: i, urls: urls,
+                                              overlay: i == overlayAt ? "+\(overflow)" : nil)
+                                }
+                            }
+                            .padding(.top, gap)
+                        }
                     }
                     if !caption.isEmpty {
                         Text(caption)
@@ -369,10 +405,13 @@ struct MessageBody: View {
                             .foregroundColor(AKColor.text)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 7)
+                            .frame(width: width, alignment: .leading)
+                            .background(shown.count == 1 ? Color.clear : AKColor.card)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
-                .frame(width: width)
-                .background(AKColor.card)
+                .frame(width: width, alignment: .leading)
+                .background(shown.count == 1 ? AKColor.card : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
