@@ -219,10 +219,8 @@ final class LiveKitRoomObserver: NSObject, ObservableObject, RoomDelegate {
             for publication in participant.videoTracks {
                 guard let track = publication.track as? VideoTrack else { continue }
                 if capRemoteVideoQuality, publication.isSubscribed {
-                    let sid = publication.sid.stringValue
-                    if cappedVideoSids.insert(sid).inserted {
-                        Task { try? await publication.set(videoQuality: .medium) }
-                    }
+                    /* 低带宽观众默认拿低层：不手动设画质（SDK 该接口不公开），改由 adaptiveStream 按可视尺寸挑层 */
+                    _ = publication
                 }
                 if anyVideo == nil { anyVideo = track }
                 if publication.source == .screenShareVideo
