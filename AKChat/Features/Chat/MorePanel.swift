@@ -1,14 +1,12 @@
 import SwiftUI
 
-/// 聊天「+」面板：安卓式 4 列图标网格（相册/视频/通话/直播间/红包/礼物/转账）
+/// 聊天「+」面板：相册、群通话、直播、红包、礼物与转账。
 struct MorePanel: View {
     var isGroup: Bool
     var onPhoto: () -> Void
-    var onVideo: () -> Void
     var onRedPacket: () -> Void
     var onTransfer: () -> Void
     var onGift: () -> Void
-    var onVideoCall: () -> Void = {}
     var onGroupCall: (Int) -> Void = { _ in }
     var onGroupLive: () -> Void = {}
 
@@ -20,15 +18,10 @@ struct MorePanel: View {
     }
 
     private var items: [Item] {
-        var list: [Item] = [
-            Item(title: "相册", icon: "photo", action: onPhoto),
-            Item(title: "视频", icon: "film", action: onVideo)
-        ]
+        var list: [Item] = [Item(title: "相册", icon: "photo", action: onPhoto)]
         if isGroup {
             list.append(Item(title: "群通话", icon: "phone", action: { onGroupCall(2) }))
             list.append(Item(title: "直播间", icon: "dot.radiowaves.left.and.right", action: onGroupLive))
-        } else {
-            list.append(Item(title: "视频通话", icon: "video", action: onVideoCall))
         }
         list.append(Item(title: "红包", icon: "gift", action: onRedPacket))
         list.append(Item(title: "礼物", icon: "gift.fill", action: onGift))

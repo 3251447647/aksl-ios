@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import Photos
 import Combine
 import UIKit
 import AVKit
@@ -151,9 +152,8 @@ struct ChatView: View {
     @State private var groupExtras: GroupInfoExtras?
     @State private var showGroupCall = false
     @State private var showMore = false
-    @State private var showPhotoPicker = false
-    @State private var showVideoPicker = false
-    @State private var videoItem: PhotosPickerItem?
+    @State private var showMediaPicker = false
+    @State private var pendingVideoAsset: PHAsset?
     /// 视频上传百分比（键为消息 listKey），气泡上显示「视频 N%」
     @State private var uploadProgress: [String: Double] = [:]
     @State private var pendingVideos: [String: PendingVideo] = [:]
@@ -170,7 +170,6 @@ struct ChatView: View {
     @State private var menuTarget: Message?
     @State private var selectMode = false
     @State private var selectedKeys: Set<String> = []
-    @State private var photoItems: [PhotosPickerItem] = []
     @State private var pendingPhotos: [UIImage] = []
     @State private var showPhotoPreview = false
     @State private var photoCaption = ""
@@ -330,12 +329,14 @@ struct ChatView: View {
                 if showMore {
                     MorePanel(
                         isGroup: isGroup,
-                        onPhoto: { showMore = false; showPhotoPicker = true },
-                        onVideo: { showMore = false; showVideoPicker = true },
+                        onPhoto: {
+                            showMore = false
+                            pendingPhotos = []
+                            showMediaPicker = true
+                        },
                         onRedPacket: { showMore = false; showRedPacket = true },
                         onTransfer: { showMore = false; showTransfer = true },
                         onGift: { showMore = false; showGift = true },
-                        onVideoCall: { showMore = false; startCall(2) },
                         onGroupCall: { type in
                             showMore = false
                             callType = type
@@ -603,9 +604,20 @@ struct ChatView: View {
         .sheet(isPresented: $showGroupCall) {
             NavigationStack { GroupCallView(gid: convId, callType: callType) }
         }
-        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
-                      maxSelectionCount: 9, matching: .images)
-        .photosPicker(isPresented: $showVideoPicker, selection: $videoItem, matching: .videos)
+        .sheet(isPresented: $showMediaPicker, onDismiss: {
+            if let asset = pendingVideoAsset {
+                pendingVideoAsset = nil
+                Task { await sendVideo(asset) }
+            } else if !pendingPhotos.isEmpty {
+                photoCaption = ""
+                showPhotoPreview = true
+            }
+        }) {
+            ChatMediaPicker(
+                onImages: { images in pendingPhotos = images },
+                onVideo: { asset in pendingVideoAsset = asset }
+            )
+        }
         .photosPicker(isPresented: $showEmojiPicker, selection: $emojiItems,
                       maxSelectionCount: 9, matching: .images)
         .sheet(isPresented: $showRedPacket) {
@@ -748,30 +760,6 @@ struct ChatView: View {
             handle(ev)
         }
         .onChange(of: app.conversations) { _ in syncPeerConv() }
-        .onChange(of: photoItems) { items in
-            guard !items.isEmpty else { return }
-            Task {
-                var images: [UIImage] = []
-                for item in items {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        images.append(image)
-                    }
-                }
-                await MainActor.run {
-                    photoItems = []
-                    guard !images.isEmpty else { return }
-                    pendingPhotos = images
-                    photoCaption = ""
-                    showPhotoPreview = true
-                }
-            }
-        }
-        .onChange(of: videoItem) { item in
-            guard let item else { return }
-            videoItem = nil
-            Task { await sendVideo(item) }
-        }
         .onChange(of: emojiItems) { items in
             guard !items.isEmpty else { return }
             Task {
@@ -2418,22 +2406,15 @@ struct ChatView: View {
     /* ---------------- 视频 ---------------- */
 
     /// 相册选视频：先落临时文件 + 本机气泡，传完再换成服务端消息
-    private func sendVideo(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty else {
+    private func sendVideo(_ asset: PHAsset) async {
+        guard let fileURL = await exportVideo(asset) else {
             flash("视频读取失败")
             return
         }
-        guard data.count <= 60 * 1024 * 1024 else {
+        guard let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              fileSize <= 60 * 1024 * 1024 else {
+            try? FileManager.default.removeItem(at: fileURL)
             flash("视频不能超过 60MB")
-            return
-        }
-        let ext = videoExtension(item)
-        let fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("akchat_video_\(UUID().uuidString).\(ext)")
-        do {
-            try data.write(to: fileURL)
-        } catch {
-            flash("视频读取失败")
             return
         }
 
@@ -2465,6 +2446,39 @@ struct ChatView: View {
             pendingVideos[local.listKey]?.cover = up.url
         }
         await uploadVideo(local)
+    }
+
+    private func exportVideo(_ asset: PHAsset) async -> URL? {
+        guard let resource = PHAssetResource.assetResources(for: asset).first(where: {
+            $0.type == .video || $0.type == .fullSizeVideo
+        }) else { return nil }
+        let ext = resource.originalFilename as NSString
+        let suffix = ext.pathExtension.isEmpty ? "mov" : ext.pathExtension
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("akchat_video_\(UUID().uuidString).\(suffix)")
+        guard FileManager.default.createFile(atPath: url.path, contents: nil),
+              let handle = try? FileHandle(forWritingTo: url) else { return nil }
+
+        return await withCheckedContinuation { continuation in
+            let options = PHAssetResourceRequestOptions()
+            options.isNetworkAccessAllowed = true
+            PHAssetResourceManager.default().requestData(
+                for: resource,
+                options: options,
+                dataReceivedHandler: { data in
+                    try? handle.write(contentsOf: data)
+                },
+                completionHandler: { error in
+                    try? handle.close()
+                    if error != nil {
+                        try? FileManager.default.removeItem(at: url)
+                        continuation.resume(returning: nil)
+                    } else {
+                        continuation.resume(returning: url)
+                    }
+                }
+            )
+        }
     }
 
     /// 上传 + 发送视频（type=15）；失败后点「重发」会从临时文件重传
@@ -2509,13 +2523,6 @@ struct ChatView: View {
         uploadProgress[local.listKey] = nil
         guard let video = pendingVideos.removeValue(forKey: local.listKey) else { return }
         try? FileManager.default.removeItem(at: video.fileURL)
-    }
-
-    private func videoExtension(_ item: PhotosPickerItem) -> String {
-        for type in item.supportedContentTypes {
-            if let ext = type.preferredFilenameExtension { return ext }
-        }
-        return "mov"
     }
 
     /// 时长 / 首帧封面 / 宽高：解不出来只影响封面，不挡发送
