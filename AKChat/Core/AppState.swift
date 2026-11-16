@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     @Published var errorText: String?
     @Published var botUid: Int64 = 0
     @Published var botQuick: [String] = []
+    @Published var ca28BotUid: Int64 = 0
+    @Published var ca28Quick: [String] = []
 
     private let api = APIClient.shared
     private let ws = WSClient()
@@ -67,6 +69,8 @@ final class AppState: ObservableObject {
         guard let cfg = try? await api.appConfig() else { return }
         botUid = cfg.botUid ?? 0
         botQuick = cfg.botQuickButtons ?? []
+        ca28BotUid = cfg.ca28BotUid ?? 0
+        ca28Quick = cfg.ca28QuickButtons ?? []
     }
 
     func login(account: String, password: String) async {

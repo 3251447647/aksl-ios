@@ -167,6 +167,7 @@ struct ChatView: View {
     @State private var callType = 1
     @State private var groupRoute: GroupRoute?
     @State private var showCall = false
+    @State private var showCallPicker = false
     @State private var menuTarget: Message?
     @State private var selectMode = false
     @State private var selectedKeys: Set<String> = []
@@ -195,6 +196,14 @@ struct ChatView: View {
 
     private var myId: Int64 { app.user?.id ?? 0 }
     private var isGroup: Bool { convType == "group" }
+
+    /// 当前会话对应机器人的快捷问题：主 AI 机器人与加拿大28机器人各自一套
+    private var botQuickQuestions: [String]? {
+        guard !isGroup else { return nil }
+        if convId != 0, convId == app.ca28BotUid, !app.ca28Quick.isEmpty { return app.ca28Quick }
+        if convId == app.botUid, !app.botQuick.isEmpty { return app.botQuick }
+        return nil
+    }
 
     /// 会随别人操作变化、需要刷新的卡片类型：充值/提现/红包/转账/礼物
     private let cardMessageTypes: Set<Int> = [2, 3, 7, 8, 9, 20, 21, 22, 23]
@@ -276,10 +285,10 @@ struct ChatView: View {
             }
             messageList
 
-            if !isGroup, convId == app.botUid, !app.botQuick.isEmpty {
+            if let quick = botQuickQuestions {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(app.botQuick, id: \.self) { q in
+                        ForEach(quick, id: \.self) { q in
                             Button {
                                 composer.text = q
                                 Task { await send() }
@@ -333,6 +342,10 @@ struct ChatView: View {
                             showMore = false
                             pendingPhotos = []
                             showMediaPicker = true
+                        },
+                        onCall: {
+                            showMore = false
+                            showCallPicker = true
                         },
                         onRedPacket: { showMore = false; showRedPacket = true },
                         onTransfer: { showMore = false; showTransfer = true },
@@ -600,6 +613,11 @@ struct ChatView: View {
         }
         .fullScreenCover(isPresented: $showCall) {
             CallScreen()
+        }
+        .confirmationDialog("选择通话方式", isPresented: $showCallPicker, titleVisibility: .visible) {
+            Button("视频通话") { startCall(2) }
+            Button("电话通话") { startCall(1) }
+            Button("取消", role: .cancel) {}
         }
         .sheet(isPresented: $showGroupCall) {
             NavigationStack { GroupCallView(gid: convId, callType: callType) }
@@ -1861,7 +1879,9 @@ struct ChatView: View {
                                 VipBadge(level: c.vipLevel)
                             }
                         }
-                        if convId == app.botUid {
+                        if !isGroup, convId == app.ca28BotUid {
+                            BadgeView(text: "游戏机器人🤖", color: AKColor.link, background: AKColor.blueSoft)
+                        } else if !isGroup, convId == app.botUid {
                             BadgeView(text: "AI机器人", color: AKColor.link, background: AKColor.blueSoft)
                         }
                     }

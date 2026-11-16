@@ -1,31 +1,40 @@
 import SwiftUI
 
-/// 聊天「+」面板：相册、群通话、直播、红包、礼物与转账。
+/// 聊天「+」面板：相册、通话、群通话、直播、红包、礼物与转账。
 struct MorePanel: View {
     var isGroup: Bool
     var onPhoto: () -> Void
+    /// 私聊通话：点开后再选视频通话 / 电话通话
+    var onCall: () -> Void = {}
     var onRedPacket: () -> Void
     var onTransfer: () -> Void
     var onGift: () -> Void
     var onGroupCall: (Int) -> Void = { _ in }
     var onGroupLive: () -> Void = {}
 
+    private enum Icon {
+        case symbol(String)
+        case redPacket
+    }
+
     private struct Item: Identifiable {
         let id = UUID()
         let title: String
-        let icon: String
+        let icon: Icon
         let action: () -> Void
     }
 
     private var items: [Item] {
-        var list: [Item] = [Item(title: "相册", icon: "photo", action: onPhoto)]
+        var list: [Item] = [Item(title: "相册", icon: .symbol("photo"), action: onPhoto)]
         if isGroup {
-            list.append(Item(title: "群通话", icon: "phone", action: { onGroupCall(2) }))
-            list.append(Item(title: "直播间", icon: "dot.radiowaves.left.and.right", action: onGroupLive))
+            list.append(Item(title: "群通话", icon: .symbol("phone"), action: { onGroupCall(2) }))
+            list.append(Item(title: "直播间", icon: .symbol("dot.radiowaves.left.and.right"), action: onGroupLive))
+        } else {
+            list.append(Item(title: "通话", icon: .symbol("phone.arrow.up.right"), action: onCall))
         }
-        list.append(Item(title: "红包", icon: "gift", action: onRedPacket))
-        list.append(Item(title: "礼物", icon: "gift.fill", action: onGift))
-        list.append(Item(title: "转账", icon: "arrow.left.arrow.right", action: onTransfer))
+        list.append(Item(title: "红包", icon: .redPacket, action: onRedPacket))
+        list.append(Item(title: "礼物", icon: .symbol("gift.fill"), action: onGift))
+        list.append(Item(title: "转账", icon: .symbol("arrow.left.arrow.right"), action: onTransfer))
         return list
     }
 
@@ -56,9 +65,7 @@ struct MorePanel: View {
             item.action()
         } label: {
             VStack(spacing: 7) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 22))
-                    .foregroundColor(AKColor.sub)
+                iconView(item.icon)
                     .frame(width: 56, height: 56)
                     .background(AKColor.card)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -72,5 +79,37 @@ struct MorePanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func iconView(_ icon: Icon) -> some View {
+        switch icon {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 22))
+                .foregroundColor(AKColor.sub)
+        case .redPacket:
+            RedPacketMark()
+        }
+    }
+}
+
+/// 红包图标的红色信封 + 金色封口，与礼物盒图标区分开
+private struct RedPacketMark: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                .fill(LinearGradient(colors: [Color(hex: 0xF0524A), Color(hex: 0xC92B25)],
+                                     startPoint: .top, endPoint: .bottom))
+            RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                .fill(Color.white.opacity(0.16))
+                .frame(height: 7)
+                .frame(maxHeight: .infinity, alignment: .top)
+            Circle()
+                .fill(Color(hex: 0xF6CE7A))
+                .frame(width: 7, height: 7)
+        }
+        .frame(width: 21, height: 25)
+        .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
     }
 }
