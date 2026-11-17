@@ -379,12 +379,12 @@ struct MessageBody: View {
                             .padding(.horizontal, 9)
                             .padding(.vertical, 7)
                             .frame(width: width, alignment: .leading)
-                            .background(shown.count == 1 ? Color.clear : AKColor.card)
+                            .background(Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
                 .frame(width: width, alignment: .leading)
-                .background(shown.count == 1 ? AKColor.card : Color.clear)
+                .background(AKColor.card)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
