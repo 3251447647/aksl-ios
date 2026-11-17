@@ -343,60 +343,33 @@ struct MessageBody: View {
         let urls = items.map(\.url)
         let caption = cStr("caption")
         let gap: CGFloat = 4
-        let small: CGFloat = 78
         let shown = Array(items.prefix(9))
         let overflow = items.count - shown.count
         let firstItem = items.first ?? AlbumImg(url: "", ratio: 4.0 / 3.0)
         let firstSize = albumFirstSize(firstItem)
-        let firstW = firstSize.width
-        let firstH = firstSize.height
-        let sideCount = shown.count > 1 ? min(shown.count - 1, 2) : 0
-        // 首图右侧最多 2 个小图，剩余的按每行 3 个排到底部（记录全局下标，点击从该张开始）
-        let bottomRows: [[Int]] = {
-            guard shown.count - 1 - sideCount > 0 else { return [] }
-            var result: [[Int]] = []
-            var start = 1 + sideCount
-            while start < shown.count {
-                let end = min(start + 3, shown.count)
-                result.append(Array(start..<end))
-                start = end
-            }
-            return result
-        }()
-        let bottomCols = bottomRows.first?.count ?? 0
-        let bottomW = bottomCols > 0
-            ? CGFloat(bottomCols) * small + CGFloat(bottomCols - 1) * gap
-            : 0
-        let width = max(firstW + (sideCount > 0 ? gap + small : 0), bottomW)
+        /* 多图统一正方形网格：2/4 张两列、其余三列，行宽按列数固定，不再一大两小混排 */
+        let cols = (shown.count == 2 || shown.count == 4) ? 2 : 3
+        let cell: CGFloat = cols == 2 ? 108 : 70
+        let width = shown.count == 1 ? firstSize.width : cell * CGFloat(cols) + gap * CGFloat(cols - 1)
+        let rows: [[Int]] = stride(from: 0, to: shown.count, by: cols).map { start in
+            Array(start..<min(start + cols, shown.count))
+        }
         let overlayAt = overflow > 0 ? shown.count - 1 : -1
         return Group {
             if !items.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     if shown.count == 1 {
-                        albumFirstCell(items[0], size: CGSize(width: firstW, height: firstH),
-                                       index: 0, urls: urls)
+                        albumFirstCell(items[0], size: firstSize, index: 0, urls: urls)
                     } else {
-                        HStack(alignment: firstH >= 86 ? VerticalAlignment.center : VerticalAlignment.top,
-                               spacing: gap) {
-                            albumFirstCell(items[0], size: CGSize(width: firstW, height: firstH),
-                                           index: 0, urls: urls)
-                            if sideCount > 0 {
-                                VStack(spacing: gap) {
-                                    ForEach(1...sideCount, id: \.self) { i in
-                                        albumCell(items[i], size: small, index: i, urls: urls,
+                        VStack(spacing: gap) {
+                            ForEach(rows, id: \.self) { row in
+                                HStack(spacing: gap) {
+                                    ForEach(row, id: \.self) { i in
+                                        albumCell(items[i], size: cell, index: i, urls: urls,
                                                   overlay: i == overlayAt ? "+\(overflow)" : nil)
                                     }
                                 }
                             }
-                        }
-                        ForEach(bottomRows, id: \.self) { row in
-                            HStack(spacing: gap) {
-                                ForEach(row, id: \.self) { i in
-                                    albumCell(items[i], size: small, index: i, urls: urls,
-                                              overlay: i == overlayAt ? "+\(overflow)" : nil)
-                                }
-                            }
-                            .padding(.top, gap)
                         }
                     }
                     if !caption.isEmpty {
