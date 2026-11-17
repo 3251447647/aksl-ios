@@ -2418,10 +2418,34 @@ struct ChatView: View {
         let obj: [String: Any] = [
             "quote_id": msg.id,
             "quote_name": replyDisplayName(msg),
-            "quote_content": digest(msg)
+            "quote_content": digest(msg),
+            "quote_type": msg.type,
+            "quote_url": quoteMediaURL(msg),
+            "quote_sticker": (msg.type == 5 && isStickerMessage(msg)) ? 1 : 0
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return "{}" }
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// 引用图片/视频/相册时带到引用块里的缩略图地址，客户端据此显示原内容而不是 [图片]
+    private func quoteMediaURL(_ msg: Message) -> String {
+        switch msg.type {
+        case 5:
+            return msg.text ?? ""
+        case 15:
+            if let raw = msg.content, let sep = raw.range(of: "|#|") {
+                let tail = String(raw[sep.upperBound...])
+                if let o = MessageBody.jsonObject(tail), let c = o["cover"] as? String, !c.isEmpty { return c }
+            }
+            return msg.text ?? ""
+        case 31:
+            if let raw = msg.content, let o = MessageBody.jsonObject(raw),
+               let arr = o["imgs"] as? [Any], let first = arr.first as? [String: Any],
+               let u = first["url"] as? String { return u }
+            return ""
+        default:
+            return ""
+        }
     }
 
     private func resend(_ msg: Message) async {

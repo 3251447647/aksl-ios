@@ -447,10 +447,13 @@ struct MessageBody: View {
 
     /* ---------------- 引用 ---------------- */
 
-    private var quoteInfo: (id: Int64, name: String, content: String)? {
+    private var quoteInfo: (id: Int64, name: String, content: String, type: Int, url: String, sticker: Int)? {
         let id = Int64(cInt("quote_id"))
         var name = cStr("quote_name")
         var content = cStr("quote_content")
+        var type = cInt("quote_type")
+        var url = cStr("quote_url")
+        var sticker = cInt("quote_sticker")
         /* 本地刚发出/服务端未补 extra 时，从 content 的 JSON 前缀取 */
         if id <= 0, let raw = message.content, let sep = raw.range(of: "|#|") {
             let head = String(raw[raw.startIndex..<sep.lowerBound])
@@ -459,11 +462,14 @@ struct MessageBody: View {
                 if qid > 0 {
                     if name.isEmpty { name = (o["quote_name"] as? String) ?? "" }
                     if content.isEmpty { content = (o["quote_content"] as? String) ?? "" }
+                    if type == 0 { type = (o["quote_type"] as? NSNumber)?.intValue ?? 0 }
+                    if url.isEmpty { url = (o["quote_url"] as? String) ?? "" }
+                    if sticker == 0 { sticker = (o["quote_sticker"] as? NSNumber)?.intValue ?? 0 }
                 }
-                return qid > 0 ? (qid, name, content) : nil
+                return qid > 0 ? (qid, name, content, type, url, sticker) : nil
             }
         }
-        return id > 0 ? (id, name, content) : nil
+        return id > 0 ? (id, name, content, type, url, sticker) : nil
     }
 
     private var quoteBodyText: String {
@@ -484,7 +490,7 @@ struct MessageBody: View {
         }
     }
 
-    private func quoteBubble(_ quote: (id: Int64, name: String, content: String)) -> some View {
+    private func quoteBubble(_ quote: (id: Int64, name: String, content: String, type: Int, url: String, sticker: Int)) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Button {
                 if quote.id > 0 { onQuoteLocate(quote.id) }
@@ -494,10 +500,22 @@ struct MessageBody: View {
                         .font(.system(size: 11.5))
                         .foregroundColor(mine ? Color.white.opacity(0.8) : AKColor.sub)
                         .lineLimit(1)
-                    Text(quote.content.isEmpty ? "[消息]" : quote.content)
-                        .font(.system(size: 12))
-                        .foregroundColor(mine ? Color.white.opacity(0.9) : AKColor.sub)
-                        .lineLimit(2)
+                    if isMediaQuote(type: quote.type, url: quote.url) {
+                        HStack(spacing: 6) {
+                            AKImage(url: APIClient.fullURL(VoiceService.cleanPath(quote.url))?.absoluteString,
+                                    size: CGSize(width: 36, height: 36), placeholder: AKColor.fill)
+                            .frame(width: 36, height: 36)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            Text(mediaQuoteLabel(type: quote.type, sticker: quote.sticker))
+                                .font(.system(size: 12))
+                                .foregroundColor(mine ? Color.white.opacity(0.9) : AKColor.sub)
+                        }
+                    } else {
+                        Text(quote.content.isEmpty ? "[消息]" : quote.content)
+                            .font(.system(size: 12))
+                            .foregroundColor(mine ? Color.white.opacity(0.9) : AKColor.sub)
+                            .lineLimit(2)
+                    }
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 5)
@@ -518,6 +536,19 @@ struct MessageBody: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(mine ? Color.clear : AKColor.line, lineWidth: 0.5)
         )
+    }
+
+    private func isMediaQuote(type: Int, url: String) -> Bool {
+        (type == 5 || type == 15 || type == 31) && !url.isEmpty
+    }
+
+    private func mediaQuoteLabel(type: Int, sticker: Int) -> String {
+        switch type {
+        case 5: return sticker == 1 ? "[表情]" : "[图片]"
+        case 15: return "[视频]"
+        case 31: return "[相册]"
+        default: return "[消息]"
+        }
     }
 
     /* ---------------- 系统消息 ---------------- */
