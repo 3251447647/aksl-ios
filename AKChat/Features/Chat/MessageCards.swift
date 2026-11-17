@@ -503,9 +503,9 @@ struct MessageBody: View {
                     if isMediaQuote(type: quote.type, url: quote.url) {
                         HStack(spacing: 6) {
                             AKImage(url: APIClient.fullURL(VoiceService.cleanPath(quote.url))?.absoluteString,
-                                    size: CGSize(width: 36, height: 36), placeholder: AKColor.fill)
-                            .frame(width: 36, height: 36)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    size: CGSize(width: 56, height: 56), placeholder: AKColor.fill)
+                            .frame(width: 56, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             Text(mediaQuoteLabel(type: quote.type, sticker: quote.sticker))
                                 .font(.system(size: 12))
                                 .foregroundColor(mine ? Color.white.opacity(0.9) : AKColor.sub)
