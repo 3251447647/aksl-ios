@@ -148,7 +148,14 @@ final class AKImageLoader: @unchecked Sendable {
 
     // MARK: 取图
 
+    /// 一次失败后允许延迟重试一次：同一 key 只在视图重建时才会再次触发，失败后头像会一直停在首字
     private func fetch(_ request: AKImageRequest) async -> UIImage? {
+        if let image = await fetchOnce(request) { return image }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        return await fetchOnce(request)
+    }
+
+    private func fetchOnce(_ request: AKImageRequest) async -> UIImage? {
         let started = AKPerf.start()
         let urlRequest = URLRequest(url: request.url)
         let source: String
@@ -208,7 +215,7 @@ final class AKImageLoader: @unchecked Sendable {
     }
 
     /// ImageIO 直接按目标像素解码，位图内存从「原图」降到「展示尺寸」
-    private static func downsample(data: Data, maxPixel: Int) -> UIImage? {
+    static func downsample(data: Data, maxPixel: Int) -> UIImage? {
         let srcOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let src = CGImageSourceCreateWithData(data as CFData, srcOptions) else {
             return fallback(data)

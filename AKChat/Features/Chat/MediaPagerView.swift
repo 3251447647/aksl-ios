@@ -63,10 +63,15 @@ struct MediaPagerView: View {
                 TabView(selection: $index) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
                         Group {
-                            if item.isVideo {
-                                PagerVideoView(url: item.url, active: i == index)
+                            /* 只实例化当前页与左右相邻页：TabView 会预建相邻页，全量创建会让多张大图同时全分辨率解码，内存被顶到上限就会被系统杀进程 */
+                            if abs(i - index) <= 1 {
+                                if item.isVideo {
+                                    PagerVideoView(url: item.url, active: i == index)
+                                } else {
+                                    ZoomableImageView(url: item.url) { dismiss() }
+                                }
                             } else {
-                                ZoomableImageView(url: item.url) { dismiss() }
+                                Color.clear
                             }
                         }
                         .tag(i)
@@ -203,14 +208,17 @@ struct MediaPagerView: View {
 /// 预览器与聊天长按菜单共用：下载后写入系统相册，失败返回 false
 enum AKMediaSaver {
     static func save(url: URL, isVideo: Bool) async -> Bool {
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return false }
         if isVideo {
-            let tmp = FileManager.default.temporaryDirectory
+            /* 视频下载到临时文件再入库：用 data(from:) 整段读进内存时，大视频很容易把 App 顶到内存上限 */
+            guard let (tmpURL, _) = try? await URLSession.shared.download(from: url) else { return false }
+            let dst = FileManager.default.temporaryDirectory
                 .appendingPathComponent("ak_\(UUID().uuidString).mp4")
-            guard (try? data.write(to: tmp)) != nil else { return false }
-            UISaveVideoAtPathToSavedPhotosAlbum(tmp.path, nil, nil, nil)
+            try? FileManager.default.removeItem(at: dst)
+            guard (try? FileManager.default.moveItem(at: tmpURL, to: dst)) != nil else { return false }
+            UISaveVideoAtPathToSavedPhotosAlbum(dst.path, nil, nil, nil)
             return true
         }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return false }
         guard let image = UIImage(data: data) else { return false }
         UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
         return true
@@ -227,17 +235,23 @@ private struct ZoomableImageView: View {
     @State private var offset: CGSize = .zero
     @State private var baseScale: CGFloat = 1
     @State private var baseOffset: CGSize = .zero
+    @State private var image: UIImage?
 
     private let maxScale: CGFloat = 4
 
     var body: some View {
         GeometryReader { geo in
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFit()
+            let request = AKImageRequest(url: url, size: geo.size)
+            Group {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFit()
                 } else {
                     ProgressView().tint(.white)
                 }
+            }
+            /* 预览也走降采样加载器：AsyncImage 会按原图全分辨率解码，4000×3000 的照片单张就要 48MB */
+            .task(id: request.key) {
+                await loadPreview(request)
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .scaleEffect(scale)
@@ -285,6 +299,15 @@ private struct ZoomableImageView: View {
                     }
             )
         }
+    }
+
+    private func loadPreview(_ request: AKImageRequest) async {
+        if let hit = AKImageLoader.shared.cachedImage(for: request) {
+            await MainActor.run { image = hit }
+            return
+        }
+        let loaded = await AKImageLoader.shared.image(for: request)
+        await MainActor.run { image = loaded }
     }
 }
 
@@ -367,11 +390,18 @@ private struct PagerVideoView: View {
             }
         }
         .onAppear {
-            playback.load(url)
-            if active { playback.play() }
+            if active {
+                playback.load(url)
+                playback.play()
+            }
         }
         .onChange(of: active) { on in
-            if on { playback.play() } else { playback.pause() }
+            if on {
+                playback.load(url)
+                playback.play()
+            } else {
+                playback.pause()
+            }
         }
         .onDisappear { playback.pause() }
         /*

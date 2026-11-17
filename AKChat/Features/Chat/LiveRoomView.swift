@@ -1519,6 +1519,8 @@ struct LiveRoomView: View {
         comments = []
         lastCommentId = 0
         phase = "room"
+        /* 接口返回前用户已退出：不要再挂观察者、开轮询，否则返回后轮询会一直在跑 */
+        guard !left, !closing else { return }
         if isHost {
             // 主播重新进入：不自动开麦，避免静默开播
             micOn = false
@@ -1883,7 +1885,7 @@ struct LiveRoomView: View {
     private func startPolling() {
         pollTask?.cancel()
         pollTask = Task {
-            while !Task.isCancelled && phase == "room" {
+            while !Task.isCancelled && !left && phase == "room" {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 if Task.isCancelled { break }
                 guard !inBackground else { continue }

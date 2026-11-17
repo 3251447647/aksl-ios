@@ -209,6 +209,7 @@ struct ChatMediaPicker: View {
 
     private func loadImage(_ asset: PHAsset) async -> UIImage? {
         await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
             let options = PHImageRequestOptions()
             options.deliveryMode = .highQualityFormat
             options.resizeMode = .fast
@@ -227,12 +228,39 @@ struct ChatMediaPicker: View {
             ) { image, info in
                 if (info?[PHImageCancelledKey] as? Bool) == true
                     || (info?[PHImageErrorKey] as? Error) != nil {
-                    continuation.resume(returning: nil)
+                    once.finish(nil)
                 } else if (info?[PHImageResultIsDegradedKey] as? Bool) != true {
-                    continuation.resume(returning: image)
+                    once.finish(image)
                 }
             }
+            /* iCloud 照片取不到时回调可能永远不来，超时兜底，避免选图界面卡死 */
+            DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+                once.finish(nil)
+            }
         }
+    }
+}
+
+/// PHImageManager 对同一张图可能回调多次，而 CheckedContinuation 只能 resume 一次，
+/// 二次 resume 会直接触发运行时崩溃；这里保证只结束一次，并附上超时兜底。
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    private let continuation: CheckedContinuation<UIImage?, Never>
+
+    init(_ continuation: CheckedContinuation<UIImage?, Never>) {
+        self.continuation = continuation
+    }
+
+    func finish(_ image: UIImage?) {
+        lock.lock()
+        if done {
+            lock.unlock()
+            return
+        }
+        done = true
+        lock.unlock()
+        continuation.resume(returning: image)
     }
 }
 

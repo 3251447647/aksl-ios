@@ -1025,7 +1025,7 @@ private struct PublishMomentView: View {
             ForEach(Array(previews.enumerated()), id: \.offset) { idx, data in
                 ZStack(alignment: .topTrailing) {
                     Group {
-                        if let image = UIImage(data: data) {
+                        if let image = AKImageLoader.downsample(data: data, maxPixel: 320) {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
@@ -1038,6 +1038,8 @@ private struct PublishMomentView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                     Button {
+                        /* idx 来自渲染时的序号，previews 可能已被重新选图换成更短的数组，直接删会越界崩溃 */
+                        guard previews.indices.contains(idx) else { return }
                         previews.remove(at: idx)
                         if idx < items.count { items.remove(at: idx) }
                     } label: {

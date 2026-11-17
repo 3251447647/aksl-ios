@@ -108,6 +108,8 @@ struct ChatView: View {
     @State private var confirm: ChatConfirm?
     /// 菜单弹层收起后再弹二次确认：在 sheet 消失动画期间直接改 confirm，alert 会被系统丢掉
     @State private var pendingConfirm: ChatConfirm?
+    /// 菜单/预览收起后再弹出的下一层（转发面板、举报页、置顶确认）：同一拍连续 present 两个弹层会被系统拒绝
+    @State private var pendingAction: (() -> Void)?
     @State private var replyTo: Message?
     @State private var payTarget: Message?
     /// 卡片状态轮询：别人领取红包/转账/礼物后服务端会更新原消息或推送领取事件，
@@ -431,14 +433,16 @@ struct ChatView: View {
                 .transition(.opacity)
             }
         }
-        .fullScreenCover(item: $previewImage, onDismiss: { flushPendingConfirm() }) { item in
+        .fullScreenCover(item: $previewImage, onDismiss: { flushPendingConfirm(); flushPendingAction() }) { item in
             MediaPagerView(
                 items: item.items,
                 index: item.index,
                 onForward: { msg in
-                    forwardMessages = [msg]
-                    forwardTitle = forwardRecordTitle
-                    showForward = true
+                    pendingAction = { [msg] in
+                        forwardMessages = [msg]
+                        forwardTitle = forwardRecordTitle
+                        showForward = true
+                    }
                 },
                 onFavorite: { msg in
                     Task {
@@ -466,8 +470,9 @@ struct ChatView: View {
             }
         }
         .sheet(item: $menuTarget, onDismiss: {
-            /* 菜单是 sheet，撤回/删除的 alert 必须等 sheet 真正收起后再弹 */
+            /* 菜单是 sheet，撤回/删除的 alert、转发/举报/置顶面板都必须等 sheet 真正收起后再弹 */
             flushPendingConfirm()
+            flushPendingAction()
         }) { msg in
             ChatMessageMenuSheet(
                 message: msg,
@@ -1747,9 +1752,11 @@ struct ChatView: View {
             UIPasteboard.general.string = copyText(msg) ?? ""
             flash("已复制")
         case "forward":
-            forwardMessages = [msg]
-            forwardTitle = forwardRecordTitle
-            showForward = true
+            pendingAction = { [msg] in
+                forwardMessages = [msg]
+                forwardTitle = forwardRecordTitle
+                showForward = true
+            }
         case "multi":
             selectedKeys = [msg.listKey]
             selectMode = true
@@ -1766,12 +1773,14 @@ struct ChatView: View {
                 inputFocused = true
             }
         case "pin":
-            if isGroup {
-                Task { await togglePin(msg) }
-            } else if pinMsgId == msg.id {
-                Task { await clearPin() }
-            } else {
-                pinScopeTarget = msg
+            pendingAction = {
+                if isGroup {
+                    Task { await togglePin(msg) }
+                } else if pinMsgId == msg.id {
+                    Task { await clearPin() }
+                } else {
+                    pinScopeTarget = msg
+                }
             }
         case "emoji":
             if let url = msg.text, !url.isEmpty {
@@ -1781,7 +1790,7 @@ struct ChatView: View {
                 }
             }
         case "report":
-            reportTarget = msg
+            pendingAction = { reportTarget = msg }
         case "recall":
             pendingConfirm = .recall(msg)
         case "delete":
@@ -1796,6 +1805,13 @@ struct ChatView: View {
         guard let next = pendingConfirm else { return }
         pendingConfirm = nil
         confirm = next
+    }
+
+    /// 等当前弹层真正收完再弹下一层，否则新 sheet 会被系统丢弃
+    private func flushPendingAction() {
+        guard let action = pendingAction else { return }
+        pendingAction = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { action() }
     }
 
     /// 长按菜单「保存」：图片/视频下载后写入系统相册
@@ -3060,6 +3076,12 @@ private struct ChatMessageRow: View, Equatable {
         return name.isEmpty ? "成员" : name
     }
 
+    /// 机器人等历史消息的 from_avatar 可能为空：群里退回发送者的成员资料头像，私聊维持原样
+    private var avatarURL: String? {
+        if let raw = message.fromAvatar, APIClient.fullURL(raw) != nil { return raw }
+        return isGroup ? member?.avatar : nil
+    }
+
     private var nameColor: Color {
         if let m = member {
             return akNameColor(vipLevel: m.vipLevel, isPretty: m.isPretty, isGroup: true)
@@ -3128,7 +3150,7 @@ private struct ChatMessageRow: View, Equatable {
                 if mine {
                     Spacer(minLength: 44)
                 } else {
-                    AvatarView(url: message.fromAvatar, name: displayName, size: 34)
+                    AvatarView(url: avatarURL, name: displayName, size: 34)
                         .padding(.top, isGroup ? 17 : 0)
                         .onTapGesture { onAvatarTap() }
                         .onLongPressGesture { onAvatarLongPress() }
