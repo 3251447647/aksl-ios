@@ -501,15 +501,11 @@ struct MessageBody: View {
                         .foregroundColor(mine ? Color.white.opacity(0.8) : AKColor.sub)
                         .lineLimit(1)
                     if isMediaQuote(type: quote.type, url: quote.url) {
-                        HStack(spacing: 6) {
-                            AKImage(url: APIClient.fullURL(VoiceService.cleanPath(quote.url))?.absoluteString,
-                                    size: CGSize(width: 56, height: 56), placeholder: AKColor.fill)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            Text(mediaQuoteLabel(type: quote.type, sticker: quote.sticker))
-                                .font(.system(size: 12))
-                                .foregroundColor(mine ? Color.white.opacity(0.9) : AKColor.sub)
-                        }
+                        /* 引用媒体只显示缩略图，不再叠 [图片]/[视频]/[相册] 文字 */
+                        AKImage(url: APIClient.fullURL(VoiceService.cleanPath(quote.url))?.absoluteString,
+                                size: CGSize(width: 56, height: 56), placeholder: AKColor.fill)
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     } else {
                         Text(quote.content.isEmpty ? "[消息]" : quote.content)
                             .font(.system(size: 12))
