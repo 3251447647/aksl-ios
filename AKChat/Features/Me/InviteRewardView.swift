@@ -164,7 +164,7 @@ struct InviteRewardView: View {
     private var inviteURL: URL? {
         if let value = data?.inviteUrl, !value.isEmpty, let url = URL(string: value) { return url }
         guard !code.isEmpty else { return nil }
-        return URL(string: "https://www.aksliao.cn/register.php?invite=\(code)")
+        return URL(string: Endpoints.inviteLink(code: code))
     }
 
     private var inviteLink: String { inviteURL?.absoluteString ?? "" }

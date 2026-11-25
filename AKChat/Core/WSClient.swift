@@ -1,6 +1,6 @@
 import Foundation
 
-/// 与安卓一致的实时通道：连接 wss://www.aksliao.cn/ws，首帧发 token 鉴权，收到 ping 回 pong。
+/// 与安卓一致的实时通道：连接 Endpoints.wsURL，首帧发 token 鉴权，收到 ping 回 pong。
 final class WSClient {
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?

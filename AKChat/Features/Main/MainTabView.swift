@@ -1,5 +1,6 @@
 import SwiftUI
 import QuartzCore
+import Combine
 
 private struct TabIsActiveKey: EnvironmentKey {
     static let defaultValue = true
@@ -166,6 +167,29 @@ struct MainTabView: View {
                 ChatView(convType: c.convType, convId: c.convId, title: c.title)
             }
         }
+        .onAppear { openPendingConversation() }
+        /* 冷启动时通知回调可能早于会话列表加载：列表回来后补一次 */
+        .onChange(of: app.conversations) { _ in openPendingConversation() }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .akOpenConversation)
+                .receive(on: RunLoop.main)
+        ) { _ in openPendingConversation() }
+    }
+
+    /// 通知点击：复用悬浮气泡的全屏 ChatView 打开方式；找不到会话时只切到聊天 tab
+    private func openPendingConversation() {
+        let notifier = LocalNotifier.shared
+        guard let convType = notifier.pendingConvType, let convId = notifier.pendingConvId else { return }
+        select(0)
+        /* 会话列表还没回来：先留着 pending，等 onChange(of: conversations) 再试 */
+        guard !app.conversations.isEmpty else { return }
+        notifier.pendingConvType = nil
+        notifier.pendingConvId = nil
+        notifier.pendingKey = nil
+        guard let conv = app.conversations.first(where: {
+            $0.convType == convType && $0.convId == convId
+        }) else { return }
+        bubbleChat = BubbleChat(convType: conv.convType, convId: conv.convId, title: conv.name ?? "聊天")
     }
 
     @ViewBuilder

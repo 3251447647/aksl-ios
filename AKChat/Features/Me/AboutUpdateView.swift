@@ -13,10 +13,8 @@ private struct AboutSiteConfig: Decodable {
 /// 关于：安卓 AboutScreen 的头部主卡 + 特性 / 简介 / 功能 / 承诺 / 联系 / 协议，不含版本检查
 struct AboutView: View {
     private let siteName = "AK商聊"
-    private static let defaultSite = "https://www.aksliao.cn"
-    /// App 下载页：企业签名分发只走这里，不跟随后台「官方网站」配置
-    private static let downloadPage = URL(string: "https://aksliao.cn/")!
-    @State private var officialSite = AboutView.defaultSite
+    /// 官网地址统一来自 Endpoints，后台未配置时用默认站点
+    @State private var officialSite = Endpoints.officialSite
     private let features: [(String, UInt32, String, String)] = [
         ("💬", 0x2FBE6E, "即时通讯", "文字、图片、语音、表情、引用、转发，一个都不少。"),
         ("⭐", 0xFF4D6D, "靓号系统", "众多珍稀靓号任你挑选，让你的AK号一眼出众。"),
@@ -36,7 +34,7 @@ struct AboutView: View {
     }
 
     private var officialURL: URL {
-        URL(string: officialSite) ?? URL(string: Self.defaultSite) ?? APIClient.base
+        URL(string: officialSite) ?? APIClient.base
     }
 
     /// 后台「设置 → 官方网站」：进入关于页拉一次，失败或未配置时保留默认站点
@@ -47,7 +45,7 @@ struct AboutView: View {
 
     private static func normalizedSite(_ raw: String?) -> String {
         var value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty { return defaultSite }
+        if value.isEmpty { return Endpoints.officialSite }
         let lower = value.lowercased()
         if lower.hasPrefix("http://") {
             // 工程未开 ATS 任意加载，http 页面在内置浏览器里会直接白屏，统一升级为 https
@@ -55,7 +53,7 @@ struct AboutView: View {
         } else if !lower.hasPrefix("https://") {
             value = "https://" + value
         }
-        guard let url = URL(string: value), let host = url.host, host.contains(".") else { return defaultSite }
+        guard let url = URL(string: value), let host = url.host, host.contains(".") else { return Endpoints.officialSite }
         return value
     }
 
@@ -264,7 +262,7 @@ struct AboutView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    UIApplication.shared.open(Self.downloadPage)
+                    UIApplication.shared.open(Endpoints.downloadPage)
                 } label: {
                     Text("下载 App")
                         .font(.system(size: 14, weight: .medium))
@@ -437,9 +435,6 @@ struct PolicyDetailView: View {
 
 /// 检查更新：进入即查 /api/v1/app/version，用服务端 ios_latest_code 与本机 CFBundleVersion 比较
 struct CheckUpdateView: View {
-    /// 企业签名分发：App 内不直连 IPA，统一打开官网下载页，由页面上的 iOS 按钮交给系统安装
-    private static let downloadPage = URL(string: "https://aksliao.cn/")!
-
     @State private var info: AppVersionInfo?
     @State private var checking = false
     @State private var checked = false
@@ -627,7 +622,7 @@ struct CheckUpdateView: View {
             }
 
             Button {
-                UIApplication.shared.open(Self.downloadPage)
+                UIApplication.shared.open(Endpoints.downloadPage)
             } label: {
                 Text("立即更新")
                     .font(.system(size: 14, weight: .medium))

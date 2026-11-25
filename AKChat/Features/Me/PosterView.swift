@@ -27,7 +27,7 @@ struct PosterView: View {
 
     /// 二维码内容仍是邀请链接，只是海报上不显示裸网址
     private var inviteLink: String {
-        "https://www.aksliao.cn/register.php?invite=\(inviteCode)"
+        Endpoints.inviteLink(code: inviteCode)
     }
 
     var body: some View {

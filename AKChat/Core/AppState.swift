@@ -409,6 +409,7 @@ final class AppState: ObservableObject {
                     LocalNotifier.shared.post(
                         convType: message.convType,
                         convId: message.convId,
+                        type: message.type,
                         sender: message.fromName ?? "新消息",
                         body: LocalNotifier.digest(message)
                     )

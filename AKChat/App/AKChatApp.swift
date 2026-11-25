@@ -12,6 +12,9 @@ struct AKChatApp: App {
                 .environmentObject(app)
                 .task {
                     CallKitManager.shared.setup()
+                    /* 通知权限改到首屏再请求（内部延迟 1 秒、每次启动只弹一次），
+                       冷启动不再一进 App 就盖系统弹窗 */
+                    PushManager.shared.requestAuthorizationIfNeeded()
                     await app.bootstrap()
                 }
         }

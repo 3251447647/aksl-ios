@@ -15,7 +15,7 @@ struct QRCodeView: View {
     @State private var saved = false
     @State private var cardImage: UIImage?
 
-    private var link: String { "https://www.aksliao.cn/user.php?id=\(uid)" }
+    private var link: String { Endpoints.userLink(uid: uid) }
 
     private var displayNumber: String {
         if !number.isEmpty { return number }

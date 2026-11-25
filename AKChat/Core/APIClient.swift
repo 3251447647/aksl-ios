@@ -43,8 +43,9 @@ enum ForwardByline {
 
 final class APIClient {
     static let shared = APIClient()
-    static let base = URL(string: "https://www.aksliao.cn/")!
-    static let wsURL = URL(string: "wss://www.aksliao.cn/ws")!
+    /// 域名统一在 Endpoints 维护，这里只做引用，避免散落硬编码
+    static let base = Endpoints.base
+    static let wsURL = Endpoints.wsURL
 
     private let session: URLSession
     /// 上传并发闸门：同时最多 4 个上传，避免多图/视频发送时把带宽占满而拖慢消息
